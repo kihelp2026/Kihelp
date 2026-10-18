@@ -153,6 +153,9 @@ h3.sub{font:800 18px var(--disp);padding:8px 16px}
 body.saver *{animation:none!important;transition:none!important}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 .ptext{white-space:pre-wrap;overflow-wrap:anywhere}
+img.av{object-fit:cover;display:block;background:var(--line)}
+.up span#prev{display:grid;place-items:center;width:56px;height:56px;border-radius:10px;background:var(--soft);flex:none}
+.pmedia{object-fit:cover}
 #auth{position:absolute;inset:0;z-index:40;background:var(--paper);display:none;flex-direction:column;justify-content:center;padding:24px;overflow-y:auto}
 .err{color:var(--coral);font-weight:600;min-height:24px;margin:2px 0 10px}
 .err.okmsg{color:var(--acc)}
@@ -200,6 +203,8 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const hue = s => { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
 const ago = iso => { const m = Math.floor((Date.now() - new Date(iso)) / 60000); if (m < 1) return 'now'; if (m < 60) return m + 'm'; const h = Math.floor(m / 60); if (h < 24) return h + 'h'; return Math.floor(h / 24) + 'd'; };
 
+const safeUrl = u => (typeof u === 'string' && u.startsWith(SUPA_URL + '/storage/')) ? u : null;
+
 const S = {
   tab: 'home', cat: 'All', opt: 'all', q: '', open: new Set(),
   mode: 'system', accent: 'auto', saver: false, lang: 'en', loaded: new Set(),
@@ -222,7 +227,10 @@ const LANGS = {
 const tr = k => (LANGS[S.lang] && LANGS[S.lang][k]) || LANGS.en[k] || k;
 
 const nameOf = id => (S.pf[id] && (S.pf[id].display_name || S.pf[id].username)) || 'Member';
-const av = (name, seed, size) => `<span class="av" style="--h:${hue(seed ?? name)};${size ? `width:${size}px;height:${size}px` : ''}">${esc((name || '?').trim().charAt(0).toUpperCase())}</span>`;
+const av = (name, seed, size, url) => url
+  ? `<img class="av" src="${esc(url)}" alt="" style="${size ? `width:${size}px;height:${size}px` : ''}">`
+  : `<span class="av" style="--h:${hue(seed ?? name)};${size ? `width:${size}px;height:${size}px` : ''}">${esc((name || '?').trim().charAt(0).toUpperCase())}</span>`;
+const avOf = (id, size) => av(nameOf(id), id, size, safeUrl(S.pf[id] && S.pf[id].avatar_url));
 const media = (m, cls) => m ? (m.type === 'video' ? `<video class="m ${cls}" src="${esc(m.url)}" controls playsinline preload="${S.saver ? 'none' : 'metadata'}"></video>` : `<img class="m ${cls}" src="${esc(m.url)}" alt="">`) : '';
 const smedia = (m, cls, key) => (S.saver && !S.loaded.has(key))
   ? `<button class="ph ${cls} saverph" style="--h:200" data-a="load" data-id="${key}">${m.type === 'video' ? 'Tap to load video' : 'Tap to load photo'}<br><small>Data saver is on</small></button>`
@@ -232,11 +240,11 @@ const smedia = (m, cls, key) => (S.saver && !S.loaded.has(key))
 async function loadProfiles(ids) {
   ids = [...new Set(ids)].filter(i => i && !S.pf[i]);
   if (!ids.length) return;
-  const { data } = await sb.from('profiles').select('id,display_name,username,country,bio').in('id', ids);
+  const { data } = await sb.from('profiles').select('id,display_name,username,country,bio,avatar_url').in('id', ids);
   (data || []).forEach(p => S.pf[p.id] = p);
 }
 async function loadFeed() {
-  const { data: posts, error } = await sb.from('posts').select('id,user_id,content,created_at').order('created_at', { ascending: false }).limit(40);
+  const { data: posts, error } = await sb.from('posts').select('id,user_id,content,created_at,media_url,media_type').order('created_at', { ascending: false }).limit(40);
   if (error) throw error;
   const ids = posts.map(p => p.id);
   let likes = [], cms = [];
@@ -250,6 +258,7 @@ async function loadFeed() {
   await loadProfiles([...posts.map(p => p.user_id), ...cms.map(c => c.user_id)]);
   S.posts = posts.map(p => ({
     id: p.id, uid: p.user_id, t: ago(p.created_at), text: p.content,
+    media: safeUrl(p.media_url) ? { type: p.media_type === 'video' ? 'video' : 'image', url: p.media_url } : null,
     likes: likes.filter(l => l.post_id === p.id).length,
     liked: likes.some(l => l.post_id === p.id && l.user_id === S.user.id),
     cm: cms.filter(c => c.post_id === p.id).map(c => ({ w: nameOf(c.user_id), t: c.content }))
@@ -264,7 +273,7 @@ async function loadProducts() {
   S.products = data.map(p => ({
     id: p.id, title: p.title, price: p.price, cur: p.currency, opt: p.price_type, cat: p.category,
     sid: p.seller_id, who: nameOf(p.seller_id), desc: p.description || '', h: hue(p.id + p.title),
-    media: /^https:\/\//.test(p.image_url || '') ? { type: 'image', url: p.image_url } : null
+    media: safeUrl(p.image_url) ? { type: 'image', url: p.image_url } : null
   }));
   S.saved = new Set((sv.data || []).map(x => x.product_id));
   S.ready.market = 1;
@@ -404,8 +413,9 @@ function viewHome() {
   if (!S.posts.length) return `<div class="empty" style="padding:60px 24px">No posts yet.<br>Be the first. Tap <b>${tr('post')}</b> at the top.</div>`;
   return S.posts.map(p => `
     <article class="post">
-      <div class="ph-row">${av(nameOf(p.uid), p.uid)}<div><b>${esc(nameOf(p.uid))}</b><small>${p.t}</small></div></div>
-      <p class="ptext">${esc(p.text)}</p>
+      <div class="ph-row">${avOf(p.uid)}<div><b>${esc(nameOf(p.uid))}</b><small>${p.t}</small></div></div>
+      ${p.text ? `<p class="ptext">${esc(p.text)}</p>` : ''}
+      ${p.media ? smedia(p.media, 'pmedia', 'p' + p.id) : ''}
       <div class="acts">
         <button class="${p.liked ? 'on' : ''}" data-a="like" data-id="${p.id}" aria-label="Like">${I.heart}${p.likes}</button>
         <button data-a="cmt" data-id="${p.id}" aria-label="Comments">${I.cmt}${p.cm.length}</button>
@@ -420,7 +430,7 @@ function viewChat() {
   if (!S.threads.length) return `<div class="empty" style="padding:60px 24px">No chats yet.<br>Open an item in <b>${tr('market')}</b> and tap <b>Message seller</b>.</div>`;
   return S.threads.map(t => {
     const last = t.msgs[t.msgs.length - 1], n = nameOf(t.id);
-    return `<button class="thread" data-a="thread" data-id="${t.id}">${av(n, t.id, 48)}<span class="tx"><b>${esc(n)}</b><span class="l">${last ? (last.me ? 'You: ' : '') + esc(last.t) : ''}</span></span></button>`;
+    return `<button class="thread" data-a="thread" data-id="${t.id}">${avOf(t.id, 48)}<span class="tx"><b>${esc(n)}</b><span class="l">${last ? (last.me ? 'You: ' : '') + esc(last.t) : ''}</span></span></button>`;
   }).join('');
 }
 function listingCard(l) {
@@ -449,12 +459,12 @@ function viewMarket() {
 function viewAlerts() {
   if (gate()) return gate();
   if (!S.notes.length) return `<div class="empty" style="padding:60px 24px">Nothing yet.<br>Likes and comments on your posts will show up here.</div>`;
-  return S.notes.map(n => `<div class="item">${av(nameOf(n.uid), n.uid)}<p>${esc(n.text)}<small>${ago(n.at)}</small></p></div>`).join('');
+  return S.notes.map(n => `<div class="item">${avOf(n.uid)}<p>${esc(n.text)}<small>${ago(n.at)}</small></p></div>`).join('');
 }
 function viewMe() {
   if (gate()) return gate();
   const p = S.profile || {}, mine = S.products.filter(l => l.sid === S.user.id);
-  return `<div class="prof">${av(p.display_name, S.user.id)}<div><div class="big">${esc(p.display_name || 'Member')}</div><div class="ls">${esc(p.country || '')}</div></div></div>
+  return `<div class="prof">${avOf(S.user.id)}<div><div class="big">${esc(p.display_name || 'Member')}</div><div class="ls">${esc(p.country || '')}</div></div></div>
     ${p.bio ? `<p style="padding:0 16px 10px">${esc(p.bio)}</p>` : ''}
     <div class="stats"><div><b>${S.me.posts}</b><span>Posts</span></div><div><b>${S.me.following}</b><span>Following</span></div><div><b>${mine.length}</b><span>Listings</span></div></div>
     <div style="padding:0 16px 8px"><button class="btn alt" data-a="editprofile">Edit profile</button></div>
@@ -473,7 +483,44 @@ function render(keepScroll) {
 /* ---------- sheets, chat, toast ---------- */
 function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 2400); }
 function sheet(html) { $('#sheet').innerHTML = `<div class="bd" data-a="close"></div><div class="panel" role="dialog">${html}</div>`; $('#sheet').classList.add('open'); }
-function closeSheet() { $('#sheet').classList.remove('open'); $('#sheet').innerHTML = ''; }
+function closeSheet() { if (S.draft && S.draft.prev) URL.revokeObjectURL(S.draft.prev); S.draft = null; $('#sheet').classList.remove('open'); $('#sheet').innerHTML = ''; }
+
+/* ---------- uploads ---------- */
+const MAXV = 20 * 1024 * 1024;
+async function compressImage(file) {
+  if (file.type === 'image/gif') return file;
+  const maxW = S.saver ? 960 : 1280, q = S.saver ? 0.7 : 0.8;
+  let bmp = null; try { bmp = await createImageBitmap(file); } catch (e) {}
+  if (!bmp) return file;
+  const r = Math.min(1, maxW / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas'); c.width = Math.round(bmp.width * r); c.height = Math.round(bmp.height * r);
+  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+  return await new Promise(res => c.toBlob(b => res(b || file), 'image/jpeg', q));
+}
+async function uploadMedia(file) {
+  const isVid = file.type.startsWith('video');
+  let blob = file, ext;
+  if (isVid) {
+    if (file.size > MAXV) throw new Error('Video is too big. The limit is 20 MB.');
+    ext = file.type.includes('webm') ? 'webm' : file.type.includes('quicktime') ? 'mov' : 'mp4';
+  } else { blob = await compressImage(file); ext = blob.type === 'image/gif' ? 'gif' : 'jpg'; }
+  const path = `${S.user.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const { error } = await sb.storage.from('media').upload(path, blob, { contentType: blob.type || file.type, cacheControl: '31536000' });
+  if (error) throw error;
+  return { url: sb.storage.from('media').getPublicUrl(path).data.publicUrl, type: isVid ? 'video' : 'image' };
+}
+const upErr = e => /mime|type/i.test(e.message || '') ? 'This file type is not supported. Use JPG, PNG or MP4.' : (e.message || 'Upload failed');
+const uploadField = (accept, label) => `<label class="up"><input type="file" id="file" accept="${accept}" hidden><span id="prev">${I.plus}</span>${label}</label>`;
+function bindUpload() {
+  const f = $('#file'); if (!f) return;
+  f.onchange = () => {
+    const file = f.files[0]; if (!file) return;
+    if (S.draft && S.draft.prev) URL.revokeObjectURL(S.draft.prev);
+    const type = file.type.startsWith('video') ? 'video' : 'image', prev = URL.createObjectURL(file);
+    S.draft = { file, type, prev };
+    $('#prev').innerHTML = type === 'video' ? `<video src="${prev}" muted style="width:56px;height:56px;border-radius:10px;object-fit:cover"></video>` : `<img src="${prev}" alt="Selected photo" style="width:56px;height:56px;border-radius:10px;object-fit:cover">`;
+  };
+}
 
 async function openThread(id, draft) {
   if (id === S.user.id) return toast('This is your own item');
@@ -482,7 +529,7 @@ async function openThread(id, draft) {
   if (!t) { t = { id, msgs: [], last: Date.now() }; S.threads.unshift(t); }
   S.openThread = id;
   const n = nameOf(id);
-  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button>${av(n, id, 38)}<b>${esc(n)}</b></header>
+  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button>${avOf(id, 38)}<b>${esc(n)}</b></header>
     <div class="msgs" id="msgs"></div>
     <div class="compose"><input id="mi" placeholder="Message" maxlength="1000" value="${esc(draft || '')}"><button class="send" data-a="send" data-id="${id}" aria-label="Send">${I.send}</button></div></div>`;
   paintMsgs(t); setTimeout(() => $('#mi') && $('#mi').focus(), 50);
@@ -548,7 +595,7 @@ function openSettings() {
     <h3 class="sub">${tr('account')}</h3>
     <div class="srow"><div class="ls">${esc(S.user ? S.user.email : '')}</div></div>
     <div class="srow"><button class="lbl" data-a="logout" style="color:var(--coral)">${tr('logout')}</button></div>
-    <div class="ls" style="padding:16px">KiHelp 0.3</div>
+    <div class="ls" style="padding:16px">KiHelp 0.4</div>
   </div></div>`;
   document.querySelector('.setbody').scrollTop = scroll;
   showUsage();
@@ -610,7 +657,7 @@ const ACT = {
       <h2>${esc(l.title)}</h2>${price}
       <div class="note"><b>${OPT[l.opt] || esc(l.opt)}.</b> ${info}</div>
       <p style="white-space:pre-wrap">${esc(l.desc)}</p>
-      <div class="sel">${av(l.who, l.sid, 36)}<div><b>${esc(l.who)}</b><div class="ls">${esc(l.cat)}</div></div></div>
+      <div class="sel">${avOf(l.sid, 36)}<div><b>${esc(l.who)}</b><div class="ls">${esc(l.cat)}</div></div></div>
       <button class="btn" data-a="${primary[0]}" data-id="${l.id}">${primary[1]}</button>
       ${mine ? '' : `<div class="row2"><button class="btn alt" data-a="save" data-id="${l.id}">${S.saved.has(l.id) ? 'Saved' : 'Save'}</button>
       <button class="btn alt" data-a="msgseller" data-id="${l.id}">Message seller</button></div>`}`);
@@ -628,20 +675,24 @@ const ACT = {
   sell: () => {
     S.sellOpt = 'fixed';
     sheet(`<h2>Sell an item</h2>
+      <div class="fld">${uploadField('image/*', 'Add a photo')}</div>
       <div class="fld"><label for="st">What are you selling?</label><input id="st" maxlength="120" placeholder="e.g. Wooden chair"></div>
       <div class="fld"><label>How do you want to price it?</label><div class="seg" id="so">${Object.entries(OPT).map(([k, v]) => `<button data-a="sopt" data-id="${k}" class="${k === 'fixed' ? 'on' : ''}">${v}</button>`).join('')}</div></div>
       <div class="fld"><label for="sp">Price</label><div style="display:grid;grid-template-columns:1.4fr 1fr;gap:8px"><input id="sp" type="number" inputmode="decimal" min="0" placeholder="0"><select id="scur" aria-label="Currency">${CURS.map(c => `<option>${c}</option>`).join('')}</select></div></div>
       <div class="fld"><label for="sc">Category</label><select id="sc">${CATS.slice(1).map(c => `<option>${c}</option>`).join('')}</select></div>
       <div class="fld"><label for="sd">Description</label><textarea id="sd" maxlength="1000" placeholder="Condition, size, pickup or delivery"></textarea></div>
       <button class="btn" id="pubbtn" data-a="publish">Publish item</button>`);
+    bindUpload();
   },
   sopt: id => { S.sellOpt = id; document.querySelectorAll('#so button').forEach(b => b.classList.toggle('on', b.dataset.id === id)); },
   publish: async () => {
     const title = $('#st').value.trim(), price = parseFloat($('#sp').value);
     if (!title) return toast('Add a title');
     if (!(price >= 0)) return toast('Add a price');
-    busy('#pubbtn', true, '...');
-    const { error } = await sb.from('products').insert({ seller_id: S.user.id, title, description: $('#sd').value.trim(), price, category: $('#sc').value, price_type: S.sellOpt, currency: $('#scur').value });
+    busy('#pubbtn', true, S.draft ? 'Uploading...' : '...');
+    let m = null;
+    try { if (S.draft) m = await uploadMedia(S.draft.file); } catch (e) { busy('#pubbtn', false, 'Publish item'); return toast(upErr(e)); }
+    const { error } = await sb.from('products').insert({ seller_id: S.user.id, title, description: $('#sd').value.trim(), price, category: $('#sc').value, price_type: S.sellOpt, currency: $('#scur').value, image_url: m ? m.url : null });
     if (error) { busy('#pubbtn', false, 'Publish item'); return toast('Could not publish'); }
     closeSheet(); S.cat = 'All'; S.opt = 'all'; S.q = '';
     try { await loadProducts(); } catch (e) {}
@@ -651,14 +702,17 @@ const ACT = {
   newpost: () => {
     sheet(`<h2>New post</h2>
       <div class="fld"><textarea id="pt" maxlength="3000" placeholder="What's on your mind?"></textarea></div>
+      <div class="fld">${uploadField('image/*,video/mp4,video/webm,video/quicktime', 'Add a photo or video')}</div>
       <button class="btn" id="postbtn" data-a="publishpost">${tr('post')}</button>`);
-    setTimeout(() => $('#pt') && $('#pt').focus(), 60);
+    bindUpload();
   },
   publishpost: async () => {
     const text = $('#pt').value.trim();
-    if (!text) return toast('Write something first');
-    busy('#postbtn', true, '...');
-    const { error } = await sb.from('posts').insert({ user_id: S.user.id, content: text });
+    if (!text && !S.draft) return toast('Write something or add a photo');
+    busy('#postbtn', true, S.draft ? 'Uploading...' : '...');
+    let m = null;
+    try { if (S.draft) m = await uploadMedia(S.draft.file); } catch (e) { busy('#postbtn', false, tr('post')); return toast(upErr(e)); }
+    const { error } = await sb.from('posts').insert({ user_id: S.user.id, content: text, media_url: m ? m.url : null, media_type: m ? m.type : null });
     if (error) { busy('#postbtn', false, tr('post')); return toast('Could not post'); }
     closeSheet(); try { await loadFeed(); } catch (e) {} render(); toast('Posted');
   },
@@ -666,14 +720,17 @@ const ACT = {
   editprofile: () => {
     const p = S.profile || {};
     sheet(`<h2>Edit profile</h2>
+      <div class="fld">${uploadField('image/*', 'Change profile photo')}</div>
       <div class="fld"><label for="pn">Name</label><input id="pn" maxlength="50" value="${esc(p.display_name || '')}"></div>
       <div class="fld"><label for="pc">Country</label><input id="pc" maxlength="50" value="${esc(p.country || '')}"></div>
       <div class="fld"><label for="pb">About you</label><textarea id="pb" maxlength="300">${esc(p.bio || '')}</textarea></div>
       <button class="btn" id="profbtn" data-a="saveprofile">Save</button>`);
+    bindUpload();
   },
   saveprofile: async () => {
     const row = { display_name: $('#pn').value.trim().slice(0, 50) || 'Member', country: $('#pc').value.trim().slice(0, 50) || null, bio: $('#pb').value.trim().slice(0, 300) || null };
-    busy('#profbtn', true, '...');
+    busy('#profbtn', true, S.draft ? 'Uploading...' : '...');
+    try { if (S.draft) row.avatar_url = (await uploadMedia(S.draft.file)).url; } catch (e) { busy('#profbtn', false, 'Save'); return toast(upErr(e)); }
     const { error } = await sb.from('profiles').update(row).eq('id', S.user.id);
     if (error) { busy('#profbtn', false, 'Save'); return toast('Could not save'); }
     S.profile = { ...S.profile, ...row }; S.pf[S.user.id] = S.profile;
