@@ -1297,6 +1297,35 @@ const ACT = {
     closeSheet(); render(true); toast('Saved');
   }
 };
-
 document.addEventListener('click', e => {
-  const rb = $('#rxbar');
+  const rb = $('#rxbar'); if (rb && !e.target.closest('#rxbar')) rb.remove();
+  const a = e.target.closest('[data-a]'); if (!a) return;
+  if (a.classList.contains('bd') && e.target !== a) return;
+  if (a.dataset.a === 'like' && S.lpFired) { S.lpFired = false; return; }
+  const f = ACT[a.dataset.a]; if (f) f(a.dataset.id, a);
+});
+document.addEventListener('submit', e => { if (e.target.id === 'af') { e.preventDefault(); doAuth(); } });
+let searchTimer;
+document.addEventListener('input', e => { if (e.target.id === 'ps') { clearTimeout(searchTimer); const v = e.target.value; searchTimer = setTimeout(() => runSearch(v), 350); }
+  if (e.target.id === 'q') { S.q = e.target.value; $('#grid').innerHTML = gridHTML(); } });
+document.addEventListener('change', e => { if (e.target.id === 'lang') { S.lang = e.target.value; saveSettings(); applyTheme(); render(true); openSettings(); } });
+if (window.matchMedia) { const mq = matchMedia('(prefers-color-scheme: dark)'); if (mq.addEventListener) mq.addEventListener('change', () => { if (S.mode === 'system') applyTheme(); }); }
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target.id === 'mi') { const b = document.querySelector('[data-a="send"]'); if (b) b.click(); }
+  if (e.key === 'Enter' && e.target.matches && e.target.matches('.lm')) e.target.click();
+  if (e.key === 'Escape') { if (S.viewer) closeViewer(); else closeSheet(); }
+  if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && S.tab === 'video' && $('#vf') && !$('#over').innerHTML && !$('#sheet').classList.contains('open') && !/INPUT|TEXTAREA|SELECT/.test((e.target.tagName || ''))) {
+    e.preventDefault(); $('#vf').scrollBy({ top: (e.key === 'ArrowDown' ? 1 : -1) * $('#vf').clientHeight, behavior: 'smooth' });
+  }
+});
+
+async function boot() {
+  const hm = location.hash.match(/^#v=([0-9a-f-]{36})$/i); if (hm) S.focusVideo = hm[1];
+  const hp = location.hash.match(/^#p=([0-9]{1,15})$/); if (hp) S.focusPost = hp[1];
+  applyTheme(); render();
+  if (!sb) return showAuth('Could not load the sign-in service. Check your internet and refresh.');
+  sb.auth.onAuthStateChange(ev => { if (ev === 'SIGNED_OUT' && S.user) resetSession(); });
+  const { data } = await sb.auth.getSession();
+  if (data && data.session) enter(data.session.user); else showAuth();
+}
+boot();
