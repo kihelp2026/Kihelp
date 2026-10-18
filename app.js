@@ -12,7 +12,7 @@ const I = {
   user: ic('<circle cx="12" cy="8" r="4"/><path d="M4 21c1-6 15-6 16 0"/>'),
   heart: ic('<path d="M12 20s-8-5-8-11a4.5 4.5 0 0 1 8-2.5A4.5 4.5 0 0 1 20 9c0 6-8 11-8 11z"/>'),
   cmt: ic('<path d="M4 5h16v11H9l-5 4z"/>'),
-  share: ic('<path d="M4 12v7h16v-7M12 4v11M7 9l5-5 5 5"/>'),
+  share: ic('<path d="M14 4l7 7-7 7v-4.2c-5.5 0-8.6 1.4-11 5.2.6-6.2 4-9.9 11-10.8z"/>'),
   plus: ic('<path d="M12 5v14M5 12h14"/>'),
   back: ic('<path d="M15 5l-7 7 7 7"/>'),
   send: ic('<path d="M4 12l16-8-6 16-3-7z"/>'),
@@ -45,7 +45,7 @@ const S = {
   tab: 'home', cat: 'All', opt: 'all', q: '', open: new Set(),
   mode: 'system', accent: 'auto', saver: false, lang: 'en', loaded: new Set(),
   user: null, profile: null, pf: {}, posts: [], products: [], saved: new Set(), threads: [], notes: [],
-  me: { posts: 0, following: 0, followers: 0, videos: 0 }, videos: [], myVideos: [], muted: true, viewed: new Set(), focusVideo: null, savedPosts: new Set(), prof: null, profPosts: [], savedList: [], myPosts: [], reqs: [], postVis: 'public', allowDl: false, drafts: [], viewer: null, onePost: [], focusPost: null, share: null, pc: { phone: null, allow_phone_search: false, allow_email_search: false }, ready: {}, authMode: 'login', openThread: null, sellOpt: 'fixed'
+  me: { posts: 0, following: 0, followers: 0, videos: 0 }, videos: [], myVideos: [], muted: true, viewed: new Set(), focusVideo: null, savedPosts: new Set(), prof: null, profPosts: [], savedList: [], myPosts: [], reqs: [], postVis: 'public', allowDl: false, drafts: [], viewer: null, onePost: [], focusPost: null, share: null, following: new Set(), fl: null, pc: { phone: null, allow_phone_search: false, allow_email_search: false }, ready: {}, authMode: 'login', openThread: null, sellOpt: 'fixed'
 };
 const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
 try { Object.assign(S, JSON.parse(store.get('kihelp.settings') || '{}')); } catch (e) {}
@@ -79,13 +79,19 @@ async function loadProfiles(ids) {
   const { data } = await sb.from('profiles').select('id,display_name,username,country,bio,avatar_url').in('id', ids);
   (data || []).forEach(p => S.pf[p.id] = p);
 }
+const RX = { love: '❤️', like: '👍', haha: '😂', wow: '😮', sad: '😢', angry: '😡' };
+function rxOf(list) {
+  const rxs = {}; let mine = null;
+  list.forEach(l => { const r = RX[l.reaction] ? l.reaction : 'love'; rxs[r] = (rxs[r] || 0) + 1; if (l.user_id === S.user.id) mine = r; });
+  return { rxs, react: mine, liked: !!mine, likes: list.length };
+}
 const POSTCOLS = 'id,user_id,content,created_at,media_url,media_type,visibility,pinned_at,allow_download';
 async function hydratePosts(posts) {
   const ids = posts.map(p => p.id);
   let likes = [], cms = [], pm = [];
   if (ids.length) {
     const [l, c, m] = await Promise.all([
-      sb.from('post_likes').select('post_id,user_id').in('post_id', ids),
+      sb.from('post_likes').select('post_id,user_id,reaction').in('post_id', ids),
       sb.from('comments').select('id,post_id,user_id,content,created_at').in('post_id', ids).order('created_at', { ascending: true }),
       sb.from('post_media').select('post_id,url,type,position').in('post_id', ids).order('position', { ascending: true })
     ]);
@@ -99,8 +105,7 @@ async function hydratePosts(posts) {
       id: p.id, uid: p.user_id, t: ago(p.created_at), text: p.content, media,
       adl: !!p.allow_download, dl: !!p.allow_download || p.user_id === S.user.id,
       vis: p.visibility || 'public', pin: !!p.pinned_at,
-      likes: likes.filter(l => l.post_id === p.id).length,
-      liked: likes.some(l => l.post_id === p.id && l.user_id === S.user.id),
+      ...rxOf(likes.filter(l => l.post_id === p.id)),
       cm: cms.filter(c => c.post_id === p.id).map(c => ({ w: nameOf(c.user_id), t: c.content }))
     };
   });
@@ -113,6 +118,11 @@ async function loadFeed() {
 async function loadSavedIds() {
   const { data } = await sb.from('saved_posts').select('post_id').eq('user_id', S.user.id);
   S.savedPosts = new Set((data || []).map(x => x.post_id));
+}
+async function loadFollowing() {
+  const { data } = await sb.from('follows').select('following_id').eq('follower_id', S.user.id).limit(2000);
+  S.following = new Set((data || []).map(x => x.following_id));
+  if (S.ready.home || S.ready.me) repaint();
 }
 async function loadProducts() {
   const { data, error } = await sb.from('products').select('*').eq('status', 'active').order('created_at', { ascending: false }).limit(60);
@@ -275,12 +285,14 @@ async function enter(user) {
   try { await ensureProfile(user); } catch (e) { S.profile = { id: user.id, display_name: (user.email || 'Member').split('@')[0] }; S.pf[user.id] = S.profile; }
   loadPrivate().catch(() => {});
   loadSavedIds().catch(() => {});
+  loadFollowing().catch(() => {});
+  if (!store.get('kihelp.tipReact')) { store.set('kihelp.tipReact', '1'); setTimeout(() => toast('Tip: press and hold the heart to pick a reaction'), 3000); }
   hideAuth(); S.tab = S.focusVideo ? 'video' : 'home'; render(); refresh();
   if (S.focusPost) { const pid = S.focusPost; S.focusPost = null; openPost(pid); }
 }
 function resetSession() {
   clearInterval(S.poll); S.openThread = null;
-  Object.assign(S, { user: null, profile: null, pf: {}, posts: [], products: [], saved: new Set(), threads: [], notes: [], videos: [], myVideos: [], savedPosts: new Set(), prof: null, profPosts: [], savedList: [], myPosts: [], reqs: [], ready: {}, authMode: 'login', pc: { phone: null, allow_phone_search: false, allow_email_search: false } });
+  Object.assign(S, { user: null, profile: null, pf: {}, posts: [], products: [], saved: new Set(), threads: [], notes: [], videos: [], myVideos: [], savedPosts: new Set(), prof: null, profPosts: [], savedList: [], myPosts: [], reqs: [], following: new Set(), fl: null, ready: {}, authMode: 'login', pc: { phone: null, allow_phone_search: false, allow_email_search: false } });
   $('#over').innerHTML = ''; closeSheet(); showAuth();
 }
 
@@ -319,13 +331,19 @@ function mediaBlock(p) {
   };
   return `<div class="pcar ${single ? 'single' : ''}"><div class="rail">${m.map(item).join('')}</div>${single ? '' : `<span class="pcount">1 / ${m.length}</span>`}</div>`;
 }
+const fChip = id => (id !== S.user.id && !S.following.has(id)) ? `<button class="fchip" data-a="qfollow" data-id="${id}">Follow</button>` : '';
+function likeBtn(p) {
+  const emoji = p.react && p.react !== 'love' ? RX[p.react] : null;
+  const top = Object.entries(p.rxs).filter(([k, n]) => n > 0 && k !== 'love').sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => RX[k]).join('');
+  return `<button class="${p.liked ? 'on' : ''}" data-a="like" data-id="${p.id}" aria-label="React">${emoji ? `<span class="remo">${emoji}</span>` : I.heart}${top ? `<span class="rsum">${top}</span>` : ''}${p.likes}</button>`;
+}
 function postCard(p) {
   return `<article class="post">
-    <div class="prow"><button class="ph-row" data-a="user" data-id="${p.uid}">${avOf(p.uid)}<div><b>${esc(nameOf(p.uid))}</b><small>${p.t} · ${visIcon(p.vis)}</small></div></button>${p.pin ? '<span class="pbadge">Pinned</span>' : ''}<button class="ibtn" data-a="pmenu" data-id="${p.id}" aria-label="More options">${I.more}</button></div>
+    <div class="prow"><button class="ph-row" data-a="user" data-id="${p.uid}">${avOf(p.uid)}<div><b>${esc(nameOf(p.uid))}</b><small>${p.t} · ${visIcon(p.vis)}</small></div></button>${fChip(p.uid)}${p.pin ? '<span class="pbadge">Pinned</span>' : ''}<span style="flex:1"></span><button class="ibtn" data-a="pmenu" data-id="${p.id}" aria-label="More options">${I.more}</button></div>
     ${p.text ? `<p class="ptext" data-dt="pt" data-id="${p.id}">${fmtText(p.text)}</p>` : ''}
     ${mediaBlock(p)}
     <div class="acts">
-      <button class="${p.liked ? 'on' : ''}" data-a="like" data-id="${p.id}" aria-label="Like">${I.heart}${p.likes}</button>
+      ${likeBtn(p)}
       <button data-a="cmt" data-id="${p.id}" aria-label="Comments">${I.cmt}${p.cm.length}</button>
       <button data-a="share" data-id="${p.id}" aria-label="Share">${I.share}</button>
       <button class="sp ${S.savedPosts.has(p.id) ? 'on' : ''}" data-a="psave" data-id="${p.id}" aria-label="Save post">${I.save}</button>
@@ -350,7 +368,7 @@ function viewVideo() {
       ${S.saver && !S.loaded.has('v' + v.id) ? `<button class="vplay" data-a="vplay" data-id="${v.id}">Tap to play<br><small>Data saver is on</small></button>` : ''}
       <div class="vshade"></div>
       <button class="vmute" data-a="vmute" aria-label="Sound">${S.muted ? I.mute : I.volume}</button>
-      <div class="vinfo"><b>${esc(nameOf(v.uid))}${p.username ? ' <span style="font-weight:500;opacity:.85">@' + esc(p.username) + '</span>' : ''}</b>
+      <div class="vinfo"><b>${esc(nameOf(v.uid))}${p.username ? ' <span style="font-weight:500;opacity:.85">@' + esc(p.username) + '</span>' : ''}</b>${fChip(v.uid)}
         ${v.cap ? `<p>${esc(v.cap)}</p>` : ''}<div style="font-size:13px;opacity:.85;margin-top:4px" data-views="${v.id}">${v.views} views</div></div>
       <div class="vacts">
         <button class="va" data-a="user" data-id="${v.uid}" aria-label="Creator">${avOf(v.uid, 46)}</button>
@@ -404,7 +422,7 @@ function viewMe() {
   const p = S.profile || {}, mine = S.products.filter(l => l.sid === S.user.id);
   return `<div class="prof">${avOf(S.user.id)}<div><div class="big">${esc(p.display_name || 'Member')} <span class="vis" title="Public profile">${I.globe}</span></div><div class="ls">${p.username ? '@' + esc(p.username) + ' · ' : ''}${esc(p.country || '')}</div>${p.username ? '' : '<div class="ls">Add a username in Edit profile</div>'}</div></div>
     ${p.bio ? `<p style="padding:0 16px 10px">${esc(p.bio)}</p>` : ''}
-    <div class="stats"><div><b>${S.me.videos}</b><span>Videos</span></div><div><b>${S.me.followers}</b><span>Followers</span></div><div><b>${S.me.following}</b><span>Following</span></div><div><b>${S.me.posts}</b><span>Posts</span></div></div>
+    <div class="stats"><div><b>${S.me.videos}</b><span>Videos</span></div><button data-a="flist" data-id="${S.user.id}" data-k="followers"><b>${S.me.followers}</b><span>Followers</span></button><button data-a="flist" data-id="${S.user.id}" data-k="following"><b>${S.me.following}</b><span>Following</span></button><div><b>${S.me.posts}</b><span>Posts</span></div></div>
     <div style="padding:0 16px 8px;display:grid;grid-template-columns:1fr 1fr;gap:10px"><button class="btn alt" data-a="editprofile">Edit profile</button><button class="btn alt" data-a="opensaved">Saved posts</button></div>
     <div style="padding:0 16px 8px"><button class="btn alt" data-a="invite">Invite friends</button></div>
     <h3 class="sub">${tr('videos')}</h3>
@@ -584,7 +602,7 @@ async function loadProfileData(id, reset) {
         sb.from('videos').select('id,video_url,views').eq('user_id', id).order('created_at', { ascending: false }).limit(9)
       ]);
       if (S.prof !== P) return;
-      P.following = (f.count || 0) > 0; P.blocked = (bl.count || 0) > 0;
+      P.following = (f.count || 0) > 0; P.blocked = (bl.count || 0) > 0; P.following ? S.following.add(id) : S.following.delete(id);
       const row = fr.data; P.rel = !row ? 'none' : row.status === 'accepted' ? 'friends' : row.requester_id === me ? 'sent' : 'received';
       P.followers = fc.count || 0; P.followingN = fg.count || 0; P.postsN = pc.count || 0;
       P.vids = (vs.data || []).filter(v => safeUrl(v.video_url));
@@ -618,7 +636,7 @@ function paintProfile() {
   b.innerHTML = `<div class="pcenter">${avOf(id, 88)}<div class="big" style="margin-top:10px">${esc(pr.display_name || 'Member')} <span class="vis" title="Public profile">${I.globe}</span></div>
       <div class="ls">${pr.username ? '@' + esc(pr.username) : ''}${pr.country ? (pr.username ? ' · ' : '') + esc(pr.country) : ''}</div>
       ${pr.bio ? `<p style="margin-top:10px;white-space:pre-wrap">${esc(pr.bio)}</p>` : ''}</div>
-    <div class="stats" style="justify-content:center"><div><b>${P.postsN}</b><span>Posts</span></div><div><b>${P.followers}</b><span>Followers</span></div><div><b>${P.followingN}</b><span>Following</span></div></div>
+    <div class="stats" style="justify-content:center"><div><b>${P.postsN}</b><span>Posts</span></div><button data-a="flist" data-id="${id}" data-k="followers"><b>${P.followers}</b><span>Followers</span></button><button data-a="flist" data-id="${id}" data-k="following"><b>${P.followingN}</b><span>Following</span></button></div>
     ${acts}
     ${P.vids.length ? `<h3 class="sub">${tr('videos')}</h3>${vgridHTML(P.vids)}` : ''}
     <h3 class="sub">Posts</h3>
@@ -828,6 +846,59 @@ function bindMulti() {
   };
 }
 
+/* ---------- reactions, follow lists ---------- */
+async function setReaction(p, r) {
+  const snap = { react: p.react, liked: p.liked, likes: p.likes, rxs: { ...p.rxs } }, prev = p.react;
+  if (prev) p.rxs[prev] = Math.max(0, (p.rxs[prev] || 0) - 1);
+  if (r) p.rxs[r] = (p.rxs[r] || 0) + 1;
+  p.react = r; p.liked = !!r; p.likes = Object.values(p.rxs).reduce((a, b) => a + b, 0);
+  repaint();
+  let error = null;
+  if (prev) ({ error } = await sb.from('post_likes').delete().eq('post_id', p.id).eq('user_id', S.user.id));
+  if (!error && r) ({ error } = await sb.from('post_likes').insert({ post_id: p.id, user_id: S.user.id, reaction: r }));
+  if (error) { Object.assign(p, snap); repaint(); toast('Could not update your reaction'); }
+}
+function showReactBar(btn) {
+  const old = $('#rxbar'); if (old) old.remove();
+  const id = btn.dataset.id, r = btn.getBoundingClientRect();
+  const bar = document.createElement('div'); bar.id = 'rxbar'; bar.className = 'rxbar';
+  bar.innerHTML = Object.entries(RX).map(([k, e]) => `<button data-a="react" data-id="${id}" data-r="${k}" aria-label="${k}">${e}</button>`).join('');
+  document.body.appendChild(bar);
+  const w = bar.offsetWidth;
+  bar.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.left)) + 'px';
+  bar.style.top = Math.max(8, r.top - bar.offsetHeight - 8) + 'px';
+}
+document.addEventListener('pointerdown', e => {
+  const b = e.target.closest('[data-a="like"]'); if (!b) return;
+  S.lpFired = false; clearTimeout(S.lpT);
+  S.lpT = setTimeout(() => { S.lpFired = true; showReactBar(b); }, 450);
+});
+['pointerup', 'pointercancel', 'scroll'].forEach(ev => document.addEventListener(ev, () => clearTimeout(S.lpT), true));
+document.addEventListener('contextmenu', e => { if (e.target.closest('[data-a="like"]')) e.preventDefault(); });
+
+function syncFollowUI(id) {
+  const f = S.following.has(id);
+  document.querySelectorAll(`.fchip[data-id="${id}"]`).forEach(b => { if (f) b.remove(); });
+  if (S.prof && S.prof.id === id) { S.prof.following = f; paintProfile(); }
+  if ($('#fl')) paintFollowList();
+}
+async function openFollowList(uid, kind) {
+  S.prof = null;
+  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button><b class="ttl">${kind === 'followers' ? 'Followers' : 'Following'}</b></header><div class="setbody" id="fl"><div class="empty" style="padding:40px">Loading...</div></div></div>`;
+  try {
+    const col = kind === 'followers' ? 'follower_id' : 'following_id', fil = kind === 'followers' ? 'following_id' : 'follower_id';
+    const { data, error } = await sb.from('follows').select(col + ',created_at').eq(fil, uid).order('created_at', { ascending: false }).limit(200);
+    if (error) throw error;
+    const ids = (data || []).map(x => x[col]); await loadProfiles(ids);
+    S.fl = { uid, kind, ids }; paintFollowList();
+  } catch (e) { const b = $('#fl'); if (b) b.innerHTML = '<div class="empty" style="padding:40px">Could not load this list.</div>'; }
+}
+function paintFollowList() {
+  const b = $('#fl'), L = S.fl; if (!b || !L) return;
+  b.innerHTML = L.ids.length ? L.ids.map(id => `<div class="reqrow"><button data-a="user" data-id="${id}" style="display:flex;gap:10px;align-items:center;flex:1;min-width:0">${avOf(id, 46)}<span class="tx"><b>${esc(nameOf(id))}</b>${S.pf[id] && S.pf[id].username ? `<span class="ls" style="display:block">@${esc(S.pf[id].username)}</span>` : ''}</span></button>${id === S.user.id ? '' : `<button class="btn sm2 ${S.following.has(id) ? 'alt' : ''}" data-a="qfollow" data-id="${id}">${S.following.has(id) ? 'Following' : 'Follow'}</button>`}</div>`).join('')
+    : `<div class="empty" style="padding:50px 24px">${L.kind === 'followers' ? 'No followers yet.' : 'Not following anyone yet.'}</div>`;
+}
+
 /* ---------- settings + theme ---------- */
 function applyTheme() {
   const dark = S.mode === 'dark' || (S.mode === 'system' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
@@ -873,7 +944,7 @@ function openSettings() {
     <h3 class="sub">${tr('account')}</h3>
     <div class="srow"><div class="ls">${esc(S.user ? S.user.email : '')}</div></div>
     <div class="srow"><button class="lbl" data-a="logout" style="color:var(--coral)">${tr('logout')}</button></div>
-    <div class="ls" style="padding:16px">KiHelp 0.8</div>
+    <div class="ls" style="padding:16px">KiHelp 0.9</div>
   </div></div>`;
   document.querySelector('.setbody').scrollTop = scroll;
   showUsage();
@@ -942,10 +1013,10 @@ const ACT = {
   pmore: id => loadProfileData(id, false),
   pfollow: async id => {
     const P = S.prof; if (!P || P.id !== id) return;
-    const was = P.following; P.following = !was; P.followers += was ? -1 : 1; paintProfile();
+    const was = P.following; P.following = !was; P.followers += was ? -1 : 1; was ? S.following.delete(id) : S.following.add(id); paintProfile();
     const q = was ? sb.from('follows').delete().eq('follower_id', S.user.id).eq('following_id', id) : sb.from('follows').insert({ follower_id: S.user.id, following_id: id });
     const { error } = await q;
-    if (error) { P.following = was; P.followers += was ? 1 : -1; paintProfile(); toast('Could not update'); }
+    if (error) { P.following = was; P.followers += was ? 1 : -1; was ? S.following.add(id) : S.following.delete(id); paintProfile(); toast('Could not update'); }
   },
   fadd: id => friendAdd(id),
   fcancel: id => friendEnd(id, 'Request cancelled'),
@@ -1083,13 +1154,20 @@ const ACT = {
     if (await savePrivate({ phone: raw || null, allow_phone_search: raw ? S.pc.allow_phone_search : false })) { toast('Saved'); openSettings(); }
   },
 
-  like: async id => {
-    const p = findPost(id), was = p.liked;
-    p.liked = !was; p.likes += was ? -1 : 1; repaint();
-    const q = was ? sb.from('post_likes').delete().eq('post_id', p.id).eq('user_id', S.user.id) : sb.from('post_likes').insert({ post_id: p.id, user_id: S.user.id });
-    const { error } = await q;
-    if (error) { p.liked = was; p.likes += was ? 1 : -1; repaint(); toast('Could not update like'); }
+  like: id => { const p = findPost(id); if (p) setReaction(p, p.react ? null : 'love'); },
+  react: (id, el) => {
+    const bar = $('#rxbar'); if (bar) bar.remove();
+    const p = findPost(id), r = el.dataset.r; if (p && RX[r]) setReaction(p, p.react === r ? null : r);
   },
+  qfollow: async id => {
+    const was = S.following.has(id);
+    was ? S.following.delete(id) : S.following.add(id); syncFollowUI(id);
+    const q = was ? sb.from('follows').delete().eq('follower_id', S.user.id).eq('following_id', id) : sb.from('follows').insert({ follower_id: S.user.id, following_id: id });
+    const { error } = await q;
+    if (error) { was ? S.following.add(id) : S.following.delete(id); syncFollowUI(id); toast('Could not update'); }
+    else if (S.prof && S.prof.id === id) { S.prof.followers += was ? -1 : 1; paintProfile(); }
+  },
+  flist: (id, el) => openFollowList(id, el.dataset.k),
   cmt: id => { id = +id; S.open.has(id) ? S.open.delete(id) : S.open.add(id); repaint(); },
   addcmt: async id => {
     const el = $('#ci' + id), v = el.value.trim(); if (!v) return;
@@ -1221,35 +1299,4 @@ const ACT = {
 };
 
 document.addEventListener('click', e => {
-  const a = e.target.closest('[data-a]'); if (!a) return;
-  if (a.classList.contains('bd') && e.target !== a) return;
-  const f = ACT[a.dataset.a]; if (f) f(a.dataset.id, a);
-});
-document.addEventListener('submit', e => { if (e.target.id === 'af') { e.preventDefault(); doAuth(); } });
-let searchTimer;
-document.addEventListener('input', e => { if (e.target.id === 'ps') { clearTimeout(searchTimer); const v = e.target.value; searchTimer = setTimeout(() => runSearch(v), 350); }
-  if (e.target.id === 'q') { S.q = e.target.value; $('#grid').innerHTML = gridHTML(); } });
-document.addEventListener('change', e => { if (e.target.id === 'lang') { S.lang = e.target.value; saveSettings(); applyTheme(); render(true); openSettings(); } });
-if (window.matchMedia) { const mq = matchMedia('(prefers-color-scheme: dark)'); if (mq.addEventListener) mq.addEventListener('change', () => { if (S.mode === 'system') applyTheme(); }); }
-document.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && e.target.id === 'mi') { const b = document.querySelector('[data-a="send"]'); if (b) b.click(); }
-  if (e.key === 'Enter' && e.target.matches && e.target.matches('.lm')) e.target.click();
-  if (e.key === 'Escape') { if (S.viewer) closeViewer(); else closeSheet(); }
-  if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && S.tab === 'video' && $('#vf') && !$('#over').innerHTML && !$('#sheet').classList.contains('open') && !/INPUT|TEXTAREA|SELECT/.test((e.target.tagName || ''))) {
-    e.preventDefault(); $('#vf').scrollBy({ top: (e.key === 'ArrowDown' ? 1 : -1) * $('#vf').clientHeight, behavior: 'smooth' });
-  }
-});
-
-async function boot() {
-  const hm = location.hash.match(/^#v=([0-9a-f-]{36})$/i); if (hm) S.focusVideo = hm[1];
-  const hp = location.hash.match(/^#p=([0-9]{1,15})$/); if (hp) S.focusPost = hp[1];
-  applyTheme(); render();
-  if (!sb) return showAuth('Could not load the sign-in service. Check your internet and refresh.');
-  sb.auth.onAuthStateChange(ev => { if (ev === 'SIGNED_OUT' && S.user) resetSession(); });
-  const { data } = await sb.auth.getSession();
-  if (data && data.session) enter(data.session.user); else showAuth();
-}
-boot();
-
-
-/* end of app.js */
+  const rb = $('#rxbar');
