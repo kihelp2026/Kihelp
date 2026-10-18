@@ -237,3 +237,25 @@ button.ph-row{width:auto}
 .err{color:var(--coral);font-weight:600;min-height:24px;margin:2px 0 10px}
 .err.okmsg{color:var(--acc)}
 .btn:disabled{opacity:.6}
+
+/* v0.9: card look, uncropped photos, reactions, follow chips, device fit */
+#app{height:100vh;height:100dvh}
+html{-webkit-text-size-adjust:100%}
+.post{margin:10px 10px 0;border:1px solid var(--line);border-radius:16px;background:var(--card);overflow:hidden;padding:12px 0 6px}
+.pcar{border-block:1px solid var(--line)}
+.pit{max-height:min(85dvh,900px)}
+.pcar.single .pit{background:var(--card)}
+.pcar.single .pit img{height:auto;max-height:min(85dvh,900px);object-fit:contain}
+.prow .ph-row{flex:0 1 auto}
+.fchip{flex:none;margin-inline-start:8px;padding:4px 12px;border-radius:99px;border:1.5px solid var(--acc);color:var(--acc);font-weight:700;font-size:13px;line-height:1.3}
+.vinfo .fchip{pointer-events:auto;color:#fff;border-color:#fff}
+.remo{font-size:19px;line-height:1}
+.rsum{font-size:14px;letter-spacing:-2px;margin-inline-end:2px}
+[data-a="like"]{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+.rxbar{position:fixed;z-index:75;display:flex;gap:2px;padding:6px 8px;background:var(--card);border:1px solid var(--line);border-radius:999px;box-shadow:0 8px 24px rgba(0,0,0,.28);animation:rxin .15s ease-out}
+.rxbar button{font-size:28px;line-height:1;width:44px;height:44px;border-radius:50%;display:grid;place-items:center;transition:transform .12s}
+.rxbar button:hover,.rxbar button:active{transform:scale(1.3)}
+@keyframes rxin{from{transform:translateY(8px) scale(.9);opacity:0}to{transform:none;opacity:1}}
+.stats button{font:inherit;color:inherit;text-align:start}
+.stats button b{display:block;font:800 22px var(--disp)}
+.stats button span{color:var(--mute);font-size:14px}
