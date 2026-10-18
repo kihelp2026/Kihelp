@@ -156,6 +156,55 @@ body.saver *{animation:none!important;transition:none!important}
 img.av{object-fit:cover;display:block;background:var(--line)}
 .up span#prev{display:grid;place-items:center;width:56px;height:56px;border-radius:10px;background:var(--soft);flex:none}
 .pmedia{object-fit:cover}
+@media (min-width:600px){#app{max-width:640px;box-shadow:0 0 0 1px var(--line)}}
+.grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}
+.panel{max-width:520px;margin:0 auto}
+#main.vmode{position:relative;overflow:hidden;padding:0;background:#000}
+.vidfeed{position:absolute;inset:0;overflow-y:auto;scroll-snap-type:y mandatory;scrollbar-width:none;overscroll-behavior:contain;outline:none}
+.vidfeed::-webkit-scrollbar{display:none}
+#main.vmode .empty{color:#fff}
+.vid{position:relative;height:100%;scroll-snap-align:start;scroll-snap-stop:always;background:#000;color:#fff;overflow:hidden}
+.vid video{width:100%;height:100%;object-fit:contain;display:block;background:#000;cursor:pointer}
+.vshade{position:absolute;left:0;right:0;bottom:0;height:45%;background:linear-gradient(transparent,rgba(0,0,0,.72));pointer-events:none}
+.vinfo{position:absolute;left:14px;right:84px;bottom:18px;text-shadow:0 1px 4px rgba(0,0,0,.7);pointer-events:none}
+.vinfo b{font-size:17px}
+.vinfo p{margin-top:4px;font-size:15px;max-height:4.5em;overflow:hidden;white-space:pre-wrap;overflow-wrap:anywhere}
+.vacts{position:absolute;right:8px;bottom:22px;display:flex;flex-direction:column;gap:14px;align-items:center}
+.va{display:flex;flex-direction:column;align-items:center;gap:3px;color:#fff;font-weight:700;font-size:13px;text-shadow:0 1px 3px rgba(0,0,0,.7)}
+.va .c{width:50px;height:50px;border-radius:50%;background:rgba(0,0,0,.42);display:grid;place-items:center}
+.va svg{width:26px;height:26px}
+.va.on .c{color:#ff6b4a}.va.on svg{fill:currentColor}
+.va .av{border:2px solid #fff}
+.vmute{position:absolute;top:10px;right:10px;width:44px;height:44px;border-radius:50%;background:rgba(0,0,0,.45);color:#fff;display:grid;place-items:center}
+.vplay{position:absolute;inset:0;display:grid;place-items:center;text-align:center;color:#fff;font-weight:700;background:rgba(0,0,0,.4);line-height:1.4}
+.vgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:3px;padding:3px 16px}
+.vgrid button{position:relative;aspect-ratio:9/12;background:#111;overflow:hidden;border-radius:6px}
+.vgrid video{width:100%;height:100%;object-fit:cover;pointer-events:none}
+.vgrid span{position:absolute;left:6px;bottom:4px;color:#fff;font-size:12px;font-weight:700;text-shadow:0 1px 3px #000}
+@media (min-width:900px){
+  #app{max-width:1120px;display:grid;grid-template-columns:230px 1fr;grid-template-rows:auto 1fr}
+  #nav{grid-column:1;grid-row:1 / span 2;flex-direction:column;justify-content:flex-start;gap:4px;border-top:0;border-right:1px solid var(--line);padding:22px 12px}
+  #nav button{flex-direction:row;justify-content:flex-start;gap:14px;font-size:16px;padding:6px 8px;border-radius:14px}
+  #nav .pill{width:46px;height:38px}
+  #head{grid-column:2;grid-row:1}
+  #main{grid-column:2;grid-row:2;min-height:0}
+  #main:not(.vmode)>*{max-width:780px;margin-left:auto;margin-right:auto}
+  .vidfeed{left:50%;right:auto;width:min(480px,100%);transform:translateX(-50%)}
+  .screen{left:230px}
+  #toast{bottom:28px}
+}
+button.ph-row{width:auto}
+.prow{display:flex;align-items:center;gap:4px;padding-inline-end:6px}
+.prow .ph-row{flex:1;min-width:0}
+.pbadge{font-size:12px;font-weight:700;padding:2px 8px;border-radius:99px;background:var(--soft);white-space:nowrap}
+.acts .sp{margin-inline-start:auto}
+.pcenter{text-align:center;padding:18px 16px 6px}
+.pcenter .av{margin:0 auto}
+.optrow{display:flex;align-items:center;justify-content:space-between;width:100%;padding:14px 4px;border-bottom:1px solid var(--line);font-weight:600}
+.optrow.red{color:var(--coral)}
+.reqrow{display:flex;gap:10px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line)}
+.reqrow .tx{flex:1;min-width:0}
+.btn.sm2{width:auto;padding:8px 14px;flex:none}
 #auth{position:absolute;inset:0;z-index:40;background:var(--paper);display:none;flex-direction:column;justify-content:center;padding:24px;overflow-y:auto}
 .err{color:var(--coral);font-weight:600;min-height:24px;margin:2px 0 10px}
 .err.okmsg{color:var(--acc)}
@@ -193,8 +242,12 @@ const I = {
   back: ic('<path d="M15 5l-7 7 7 7"/>'),
   send: ic('<path d="M4 12l16-8-6 16-3-7z"/>'),
   save: ic('<path d="M7 4h10v17l-5-4-5 4z"/>'),
+  film: ic('<rect x="4" y="5" width="16" height="14" rx="3"/><path d="M10 9l5 3-5 3z"/>'),
+  volume: ic('<path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16 9a4 4 0 0 1 0 6"/>'),
+  mute: ic('<path d="M4 9v6h4l5 4V5L8 9z"/><path d="M17 9l4 6M21 9l-4 6"/>'),
   search: ic('<circle cx="11" cy="11" r="6"/><path d="M20 20l-4-4"/>'),
-  sliders: ic('<path d="M4 7h9M19 7h1M4 17h1M11 17h9"/><circle cx="16" cy="7" r="2.5"/><circle cx="8" cy="17" r="2.5"/>')
+  sliders: ic('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>'),
+  more: ic('<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>')
 };
 const OPT = { fixed: 'Fixed price', negotiable: 'Negotiable', auction: 'Auction', bulk: 'Bulk discount' };
 const CATS = ['All', 'Fashion', 'Phones', 'Home', 'Food', 'Electronics', 'Other'];
@@ -210,19 +263,19 @@ const S = {
   tab: 'home', cat: 'All', opt: 'all', q: '', open: new Set(),
   mode: 'system', accent: 'auto', saver: false, lang: 'en', loaded: new Set(),
   user: null, profile: null, pf: {}, posts: [], products: [], saved: new Set(), threads: [], notes: [],
-  me: { posts: 0, following: 0 }, pc: { phone: null, allow_phone_search: false, allow_email_search: false }, ready: {}, authMode: 'login', openThread: null, sellOpt: 'fixed'
+  me: { posts: 0, following: 0, followers: 0, videos: 0 }, videos: [], myVideos: [], muted: true, viewed: new Set(), focusVideo: null, savedPosts: new Set(), prof: null, profPosts: [], savedList: [], myPosts: [], reqs: [], postVis: 'public', pc: { phone: null, allow_phone_search: false, allow_email_search: false }, ready: {}, authMode: 'login', openThread: null, sellOpt: 'fixed'
 };
 const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
 try { Object.assign(S, JSON.parse(store.get('kihelp.settings') || '{}')); } catch (e) {}
 const saveSettings = () => store.set('kihelp.settings', JSON.stringify({ mode: S.mode, accent: S.accent, saver: S.saver, lang: S.lang }));
 
 const LANGS = {
-  en: { name: 'English', home: 'Home', chat: 'Chat', market: 'Market', alerts: 'Alerts', profile: 'Profile', social: 'Social', chats: 'Chats', marketplace: 'Marketplace', post: 'Post', sell: 'Sell', settings: 'Settings', appearance: 'Appearance', mode: 'Mode', system: 'System', light: 'Light', dark: 'Dark', accent: 'Accent color', auto: 'Auto', data: 'Data and storage', saver: 'Data saver', saverDesc: 'Photos and videos load only when you tap them', storage: 'Storage used', clear: 'Clear cache', cleared: 'Cache cleared', language: 'Language', search: 'Search items', mine: 'Your listings', account: 'Account', logout: 'Log out' },
-  am: { name: 'አማርኛ', home: 'መነሻ', chat: 'ውይይት', market: 'ገበያ', alerts: 'ማሳወቂያ', profile: 'መገለጫ', social: 'ማኅበራዊ', chats: 'ውይይቶች', marketplace: 'ገበያ', post: 'ለጥፍ', sell: 'ሽጥ', settings: 'ቅንብሮች', appearance: 'ገጽታ', mode: 'ሁነታ', system: 'የስልክ ቅንብር', light: 'ብሩህ', dark: 'ጨለማ', accent: 'ቀለም', auto: 'ራስ-ሰር', data: 'ዳታ እና ማከማቻ', saver: 'ዳታ ቆጣቢ', saverDesc: 'ፎቶና ቪዲዮ የሚጫነው ሲነኩት ብቻ ነው', storage: 'ጥቅም ላይ የዋለ ማከማቻ', clear: 'ካሽ አጽዳ', cleared: 'ካሽ ጸድቷል', language: 'ቋንቋ', search: 'ዕቃዎችን ፈልግ', mine: 'የእርስዎ ዕቃዎች', account: 'መለያ', logout: 'ውጣ' },
-  ar: { name: 'العربية', home: 'الرئيسية', chat: 'الدردشة', market: 'السوق', alerts: 'الإشعارات', profile: 'حسابي', social: 'اجتماعي', chats: 'المحادثات', marketplace: 'السوق', post: 'نشر', sell: 'بيع', settings: 'الإعدادات', appearance: 'المظهر', mode: 'الوضع', system: 'النظام', light: 'فاتح', dark: 'داكن', accent: 'لون التمييز', auto: 'تلقائي', data: 'البيانات والتخزين', saver: 'توفير البيانات', saverDesc: 'تُحمَّل الصور والفيديوهات عند الضغط عليها فقط', storage: 'التخزين المستخدم', clear: 'مسح الذاكرة المؤقتة', cleared: 'تم مسح الذاكرة المؤقتة', language: 'اللغة', search: 'ابحث عن منتجات', mine: 'منتجاتك', account: 'الحساب', logout: 'تسجيل الخروج' },
-  fr: { name: 'Français', home: 'Accueil', chat: 'Discussions', market: 'Marché', alerts: 'Alertes', profile: 'Profil', social: 'Social', chats: 'Discussions', marketplace: 'Marché', post: 'Publier', sell: 'Vendre', settings: 'Réglages', appearance: 'Apparence', mode: 'Mode', system: 'Système', light: 'Clair', dark: 'Sombre', accent: "Couleur d'accent", auto: 'Auto', data: 'Données et stockage', saver: 'Économiseur de données', saverDesc: 'Les photos et vidéos ne se chargent que si vous les touchez', storage: 'Stockage utilisé', clear: 'Vider le cache', cleared: 'Cache vidé', language: 'Langue', search: 'Rechercher des articles', mine: 'Vos annonces', account: 'Compte', logout: 'Se déconnecter' },
-  es: { name: 'Español', home: 'Inicio', chat: 'Chat', market: 'Mercado', alerts: 'Avisos', profile: 'Perfil', social: 'Social', chats: 'Chats', marketplace: 'Mercado', post: 'Publicar', sell: 'Vender', settings: 'Ajustes', appearance: 'Apariencia', mode: 'Modo', system: 'Sistema', light: 'Claro', dark: 'Oscuro', accent: 'Color de acento', auto: 'Auto', data: 'Datos y almacenamiento', saver: 'Ahorro de datos', saverDesc: 'Las fotos y los videos se cargan solo al tocarlos', storage: 'Almacenamiento usado', clear: 'Borrar caché', cleared: 'Caché borrada', language: 'Idioma', search: 'Buscar artículos', mine: 'Tus artículos', account: 'Cuenta', logout: 'Cerrar sesión' },
-  sw: { name: 'Kiswahili', home: 'Mwanzo', chat: 'Gumzo', market: 'Soko', alerts: 'Arifa', profile: 'Wasifu', social: 'Jamii', chats: 'Mazungumzo', marketplace: 'Soko', post: 'Chapisha', sell: 'Uza', settings: 'Mipangilio', appearance: 'Mwonekano', mode: 'Hali', system: 'Mfumo', light: 'Mwanga', dark: 'Giza', accent: 'Rangi kuu', auto: 'Otomatiki', data: 'Data na hifadhi', saver: 'Kiokoa data', saverDesc: 'Picha na video hupakiwa unapozigusa tu', storage: 'Hifadhi inayotumika', clear: 'Futa kache', cleared: 'Kache imefutwa', language: 'Lugha', search: 'Tafuta bidhaa', mine: 'Bidhaa zako', account: 'Akaunti', logout: 'Toka' }
+  en: { name: 'English', home: 'Home', chat: 'Chat', videos: 'Videos', video: 'Video', market: 'Market', alerts: 'Alerts', profile: 'Profile', social: 'Social', chats: 'Chats', marketplace: 'Marketplace', post: 'Post', sell: 'Sell', settings: 'Settings', appearance: 'Appearance', mode: 'Mode', system: 'System', light: 'Light', dark: 'Dark', accent: 'Accent color', auto: 'Auto', data: 'Data and storage', saver: 'Data saver', saverDesc: 'Photos and videos load only when you tap them', storage: 'Storage used', clear: 'Clear cache', cleared: 'Cache cleared', language: 'Language', search: 'Search items', mine: 'Your listings', account: 'Account', logout: 'Log out' },
+  am: { name: 'አማርኛ', home: 'መነሻ', chat: 'ውይይት', videos: 'ቪዲዮዎች', video: 'ቪዲዮ', market: 'ገበያ', alerts: 'ማሳወቂያ', profile: 'መገለጫ', social: 'ማኅበራዊ', chats: 'ውይይቶች', marketplace: 'ገበያ', post: 'ለጥፍ', sell: 'ሽጥ', settings: 'ቅንብሮች', appearance: 'ገጽታ', mode: 'ሁነታ', system: 'የስልክ ቅንብር', light: 'ብሩህ', dark: 'ጨለማ', accent: 'ቀለም', auto: 'ራስ-ሰር', data: 'ዳታ እና ማከማቻ', saver: 'ዳታ ቆጣቢ', saverDesc: 'ፎቶና ቪዲዮ የሚጫነው ሲነኩት ብቻ ነው', storage: 'ጥቅም ላይ የዋለ ማከማቻ', clear: 'ካሽ አጽዳ', cleared: 'ካሽ ጸድቷል', language: 'ቋንቋ', search: 'ዕቃዎችን ፈልግ', mine: 'የእርስዎ ዕቃዎች', account: 'መለያ', logout: 'ውጣ' },
+  ar: { name: 'العربية', home: 'الرئيسية', chat: 'الدردشة', videos: 'الفيديوهات', video: 'فيديو', market: 'السوق', alerts: 'الإشعارات', profile: 'حسابي', social: 'اجتماعي', chats: 'المحادثات', marketplace: 'السوق', post: 'نشر', sell: 'بيع', settings: 'الإعدادات', appearance: 'المظهر', mode: 'الوضع', system: 'النظام', light: 'فاتح', dark: 'داكن', accent: 'لون التمييز', auto: 'تلقائي', data: 'البيانات والتخزين', saver: 'توفير البيانات', saverDesc: 'تُحمَّل الصور والفيديوهات عند الضغط عليها فقط', storage: 'التخزين المستخدم', clear: 'مسح الذاكرة المؤقتة', cleared: 'تم مسح الذاكرة المؤقتة', language: 'اللغة', search: 'ابحث عن منتجات', mine: 'منتجاتك', account: 'الحساب', logout: 'تسجيل الخروج' },
+  fr: { name: 'Français', home: 'Accueil', chat: 'Discussions', videos: 'Vidéos', video: 'Vidéo', market: 'Marché', alerts: 'Alertes', profile: 'Profil', social: 'Social', chats: 'Discussions', marketplace: 'Marché', post: 'Publier', sell: 'Vendre', settings: 'Réglages', appearance: 'Apparence', mode: 'Mode', system: 'Système', light: 'Clair', dark: 'Sombre', accent: "Couleur d'accent", auto: 'Auto', data: 'Données et stockage', saver: 'Économiseur de données', saverDesc: 'Les photos et vidéos ne se chargent que si vous les touchez', storage: 'Stockage utilisé', clear: 'Vider le cache', cleared: 'Cache vidé', language: 'Langue', search: 'Rechercher des articles', mine: 'Vos annonces', account: 'Compte', logout: 'Se déconnecter' },
+  es: { name: 'Español', home: 'Inicio', chat: 'Chat', videos: 'Videos', video: 'Video', market: 'Mercado', alerts: 'Avisos', profile: 'Perfil', social: 'Social', chats: 'Chats', marketplace: 'Mercado', post: 'Publicar', sell: 'Vender', settings: 'Ajustes', appearance: 'Apariencia', mode: 'Modo', system: 'Sistema', light: 'Claro', dark: 'Oscuro', accent: 'Color de acento', auto: 'Auto', data: 'Datos y almacenamiento', saver: 'Ahorro de datos', saverDesc: 'Las fotos y los videos se cargan solo al tocarlos', storage: 'Almacenamiento usado', clear: 'Borrar caché', cleared: 'Caché borrada', language: 'Idioma', search: 'Buscar artículos', mine: 'Tus artículos', account: 'Cuenta', logout: 'Cerrar sesión' },
+  sw: { name: 'Kiswahili', home: 'Mwanzo', chat: 'Gumzo', videos: 'Video', video: 'Video', market: 'Soko', alerts: 'Arifa', profile: 'Wasifu', social: 'Jamii', chats: 'Mazungumzo', marketplace: 'Soko', post: 'Chapisha', sell: 'Uza', settings: 'Mipangilio', appearance: 'Mwonekano', mode: 'Hali', system: 'Mfumo', light: 'Mwanga', dark: 'Giza', accent: 'Rangi kuu', auto: 'Otomatiki', data: 'Data na hifadhi', saver: 'Kiokoa data', saverDesc: 'Picha na video hupakiwa unapozigusa tu', storage: 'Hifadhi inayotumika', clear: 'Futa kache', cleared: 'Kache imefutwa', language: 'Lugha', search: 'Tafuta bidhaa', mine: 'Bidhaa zako', account: 'Akaunti', logout: 'Toka' }
 };
 
 const tr = k => (LANGS[S.lang] && LANGS[S.lang][k]) || LANGS.en[k] || k;
@@ -244,9 +297,8 @@ async function loadProfiles(ids) {
   const { data } = await sb.from('profiles').select('id,display_name,username,country,bio,avatar_url').in('id', ids);
   (data || []).forEach(p => S.pf[p.id] = p);
 }
-async function loadFeed() {
-  const { data: posts, error } = await sb.from('posts').select('id,user_id,content,created_at,media_url,media_type').order('created_at', { ascending: false }).limit(40);
-  if (error) throw error;
+const POSTCOLS = 'id,user_id,content,created_at,media_url,media_type,visibility,pinned_at';
+async function hydratePosts(posts) {
   const ids = posts.map(p => p.id);
   let likes = [], cms = [];
   if (ids.length) {
@@ -257,14 +309,23 @@ async function loadFeed() {
     likes = l.data || []; cms = c.data || [];
   }
   await loadProfiles([...posts.map(p => p.user_id), ...cms.map(c => c.user_id)]);
-  S.posts = posts.map(p => ({
+  return posts.map(p => ({
     id: p.id, uid: p.user_id, t: ago(p.created_at), text: p.content,
     media: safeUrl(p.media_url) ? { type: p.media_type === 'video' ? 'video' : 'image', url: p.media_url } : null,
+    vis: p.visibility || 'public', pin: !!p.pinned_at,
     likes: likes.filter(l => l.post_id === p.id).length,
     liked: likes.some(l => l.post_id === p.id && l.user_id === S.user.id),
     cm: cms.filter(c => c.post_id === p.id).map(c => ({ w: nameOf(c.user_id), t: c.content }))
   }));
-  S.ready.home = 1;
+}
+async function loadFeed() {
+  const { data, error } = await sb.from('posts').select(POSTCOLS).order('created_at', { ascending: false }).limit(40);
+  if (error) throw error;
+  S.posts = await hydratePosts(data); S.ready.home = 1;
+}
+async function loadSavedIds() {
+  const { data } = await sb.from('saved_posts').select('post_id').eq('user_id', S.user.id);
+  S.savedPosts = new Set((data || []).map(x => x.post_id));
 }
 async function loadProducts() {
   const { data, error } = await sb.from('products').select('*').eq('status', 'active').order('created_at', { ascending: false }).limit(60);
@@ -295,6 +356,8 @@ async function loadThreads() {
 }
 async function loadAlerts() {
   const me = S.user.id;
+  const rq = await sb.from('friendships').select('requester_id').eq('addressee_id', me).eq('status', 'pending').order('created_at', { ascending: false }).limit(30);
+  S.reqs = (rq.data || []).map(x => x.requester_id); await loadProfiles(S.reqs);
   const { data: mine } = await sb.from('posts').select('id').eq('user_id', me).limit(100);
   const ids = (mine || []).map(p => p.id);
   let items = [];
@@ -315,12 +378,45 @@ async function loadAlerts() {
 }
 async function loadMe() {
   const me = S.user.id;
-  const [a, b] = await Promise.all([
+  const [a, b, c, d, vs] = await Promise.all([
     sb.from('posts').select('id', { count: 'exact', head: true }).eq('user_id', me),
-    sb.from('follows').select('following_id', { count: 'exact', head: true }).eq('follower_id', me)
+    sb.from('follows').select('following_id', { count: 'exact', head: true }).eq('follower_id', me),
+    sb.from('follows').select('follower_id', { count: 'exact', head: true }).eq('following_id', me),
+    sb.from('videos').select('id', { count: 'exact', head: true }).eq('user_id', me),
+    sb.from('videos').select('id,video_url,views').eq('user_id', me).order('created_at', { ascending: false }).limit(30)
   ]);
-  S.me = { posts: a.count || 0, following: b.count || 0 };
+  S.me = { posts: a.count || 0, following: b.count || 0, followers: c.count || 0, videos: d.count || 0 };
+  S.myVideos = (vs.data || []).filter(v => safeUrl(v.video_url));
+  const pin = await sb.from('posts').select(POSTCOLS).eq('user_id', me).not('pinned_at', 'is', null).order('pinned_at', { ascending: false });
+  const rec = await sb.from('posts').select(POSTCOLS).eq('user_id', me).is('pinned_at', null).order('created_at', { ascending: false }).limit(20);
+  S.myPosts = await hydratePosts([...(pin.data || []), ...(rec.data || [])]);
   await loadProducts(); S.ready.me = 1;
+}
+async function loadVideos() {
+  const cols = 'id,user_id,video_url,caption,views,created_at';
+  const { data: vs, error } = await sb.from('videos').select(cols).order('created_at', { ascending: false }).limit(30);
+  if (error) throw error;
+  let list = vs;
+  if (S.focusVideo && !list.some(v => v.id === S.focusVideo)) {
+    const { data: one } = await sb.from('videos').select(cols).eq('id', S.focusVideo).maybeSingle();
+    if (one) list = [one, ...list];
+  }
+  const ids = list.map(v => v.id); let likes = [], cms = [];
+  if (ids.length) {
+    const [l, c] = await Promise.all([
+      sb.from('video_likes').select('video_id,user_id').in('video_id', ids),
+      sb.from('video_comments').select('video_id').in('video_id', ids)
+    ]);
+    likes = l.data || []; cms = c.data || [];
+  }
+  await loadProfiles(list.map(v => v.user_id));
+  S.videos = list.filter(v => safeUrl(v.video_url)).map(v => ({
+    id: v.id, uid: v.user_id, url: v.video_url, cap: v.caption, views: Number(v.views) || 0,
+    likes: likes.filter(x => x.video_id === v.id).length,
+    liked: likes.some(x => x.video_id === v.id && x.user_id === S.user.id),
+    cc: cms.filter(x => x.video_id === v.id).length
+  }));
+  S.ready.video = 1;
 }
 async function refresh() {
   const t = S.tab;
@@ -329,6 +425,7 @@ async function refresh() {
     else if (t === 'market') await loadProducts();
     else if (t === 'chat') await loadThreads();
     else if (t === 'alerts') await loadAlerts();
+    else if (t === 'video') await loadVideos();
     else if (t === 'me') await loadMe();
   } catch (e) { S.ready[t] = 'err'; toast('Could not load. Check your internet.'); }
   if (S.tab === t && !$('#over').innerHTML) render(true);
@@ -386,16 +483,17 @@ async function enter(user) {
   S.user = user; S.ready = {};
   try { await ensureProfile(user); } catch (e) { S.profile = { id: user.id, display_name: (user.email || 'Member').split('@')[0] }; S.pf[user.id] = S.profile; }
   loadPrivate().catch(() => {});
-  hideAuth(); S.tab = 'home'; render(); refresh();
+  loadSavedIds().catch(() => {});
+  hideAuth(); S.tab = S.focusVideo ? 'video' : 'home'; render(); refresh();
 }
 function resetSession() {
   clearInterval(S.poll); S.openThread = null;
-  Object.assign(S, { user: null, profile: null, pf: {}, posts: [], products: [], saved: new Set(), threads: [], notes: [], ready: {}, authMode: 'login', pc: { phone: null, allow_phone_search: false, allow_email_search: false } });
+  Object.assign(S, { user: null, profile: null, pf: {}, posts: [], products: [], saved: new Set(), threads: [], notes: [], videos: [], myVideos: [], savedPosts: new Set(), prof: null, profPosts: [], savedList: [], myPosts: [], reqs: [], ready: {}, authMode: 'login', pc: { phone: null, allow_phone_search: false, allow_email_search: false } });
   $('#over').innerHTML = ''; closeSheet(); showAuth();
 }
 
 /* ---------- views ---------- */
-const TABS = [['home', 'home', 'home'], ['chat', 'chat', 'chat'], ['market', 'market', 'shop'], ['alerts', 'alerts', 'bell'], ['me', 'profile', 'user']];
+const TABS = [['home', 'home', 'home'], ['video', 'videos', 'film'], ['market', 'market', 'shop'], ['chat', 'chat', 'chat'], ['me', 'profile', 'user']];
 const gate = () => {
   const r = S.ready[S.tab];
   if (r === 'err') return `<div class="empty" style="padding:50px 20px">Could not load.<br><br><button class="btn sm" data-a="retry">Try again</button></div>`;
@@ -405,27 +503,56 @@ const gate = () => {
 
 function head() {
   const t = S.tab;
-  const title = tr({ home: 'social', chat: 'chats', market: 'marketplace', alerts: 'alerts', me: 'profile' }[t]);
+  const title = tr({ home: 'social', video: 'videos', chat: 'chats', market: 'marketplace', alerts: 'alerts', me: 'profile' }[t]);
   const act = t === 'home' ? `<button class="hbtn" data-a="newpost">${I.plus}${tr('post')}</button>`
+    : t === 'video' ? `<button class="hbtn" data-a="vupload">${I.plus}${tr('video')}</button>`
     : t === 'market' ? `<button class="hbtn" data-a="sell">${I.plus}${tr('sell')}</button>` : '';
-  return `<div><div class="mark">KiHelp</div><div class="sect">${title}</div></div><div class="hr">${act}<button class="ibtn" data-a="search" aria-label="Search people">${I.search}</button><button class="ibtn" data-a="settings" aria-label="${tr('settings')}">${I.sliders}</button></div>`;
+  return `<div><div class="mark">KiHelp</div><div class="sect">${title}</div></div><div class="hr">${act}<button class="ibtn" data-a="alerts" aria-label="${tr('alerts')}">${I.bell}</button><button class="ibtn" data-a="search" aria-label="Search people">${I.search}</button><button class="ibtn" data-a="settings" aria-label="${tr('settings')}">${I.sliders}</button></div>`;
+}
+const postLists = () => $('#pposts') ? [S.profPosts] : $('#spl') ? [S.savedList] : S.tab === 'me' ? [S.myPosts] : [S.posts];
+const findPost = id => postLists()[0].find(x => x.id == id) || [...S.posts, ...S.myPosts, ...S.profPosts, ...S.savedList].find(x => x.id == id);
+function repaint() { if ($('#pposts')) paintProfile(); else if ($('#spl')) paintSaved(); else render(true); }
+function postCard(p) {
+  const badge = (p.pin ? '<span class="pbadge">Pinned</span>' : '') + (p.vis === 'friends' ? '<span class="pbadge">Friends</span>' : p.vis === 'private' ? '<span class="pbadge">Only me</span>' : '');
+  return `<article class="post">
+    <div class="prow"><button class="ph-row" data-a="user" data-id="${p.uid}">${avOf(p.uid)}<div><b>${esc(nameOf(p.uid))}</b><small>${p.t}</small></div></button>${badge}<button class="ibtn" data-a="pmenu" data-id="${p.id}" aria-label="More options">${I.more}</button></div>
+    ${p.text ? `<p class="ptext">${esc(p.text)}</p>` : ''}
+    ${p.media ? smedia(p.media, 'pmedia', 'p' + p.id) : ''}
+    <div class="acts">
+      <button class="${p.liked ? 'on' : ''}" data-a="like" data-id="${p.id}" aria-label="Like">${I.heart}${p.likes}</button>
+      <button data-a="cmt" data-id="${p.id}" aria-label="Comments">${I.cmt}${p.cm.length}</button>
+      <button data-a="share" aria-label="Share">${I.share}</button>
+      <button class="sp ${S.savedPosts.has(p.id) ? 'on' : ''}" data-a="psave" data-id="${p.id}" aria-label="Save post">${I.save}</button>
+    </div>
+    ${S.open.has(p.id) ? `<div class="cmts">${p.cm.map(c => `<div class="cmt"><b>${esc(c.w)}</b>${esc(c.t)}</div>`).join('')}
+      <div class="cin"><input id="ci${p.id}" placeholder="Write a comment" maxlength="1000"><button class="send" data-a="addcmt" data-id="${p.id}" aria-label="Send comment">${I.send}</button></div></div>` : ''}
+  </article>`;
 }
 function viewHome() {
   if (gate()) return gate();
   if (!S.posts.length) return `<div class="empty" style="padding:60px 24px">No posts yet.<br>Be the first. Tap <b>${tr('post')}</b> at the top.</div>`;
-  return S.posts.map(p => `
-    <article class="post">
-      <button class="ph-row" data-a="user" data-id="${p.uid}" style="width:100%">${avOf(p.uid)}<div><b>${esc(nameOf(p.uid))}</b><small>${p.t}</small></div></button>
-      ${p.text ? `<p class="ptext">${esc(p.text)}</p>` : ''}
-      ${p.media ? smedia(p.media, 'pmedia', 'p' + p.id) : ''}
-      <div class="acts">
-        <button class="${p.liked ? 'on' : ''}" data-a="like" data-id="${p.id}" aria-label="Like">${I.heart}${p.likes}</button>
-        <button data-a="cmt" data-id="${p.id}" aria-label="Comments">${I.cmt}${p.cm.length}</button>
-        <button data-a="share" aria-label="Share">${I.share}Share</button>
-      </div>
-      ${S.open.has(p.id) ? `<div class="cmts">${p.cm.map(c => `<div class="cmt"><b>${esc(c.w)}</b>${esc(c.t)}</div>`).join('')}
-        <div class="cin"><input id="ci${p.id}" placeholder="Write a comment" maxlength="1000"><button class="send" data-a="addcmt" data-id="${p.id}" aria-label="Send comment">${I.send}</button></div></div>` : ''}
-    </article>`).join('');
+  return S.posts.map(postCard).join('');
+}
+const vgridHTML = list => list.length ? `<div class="vgrid">${list.map(v => `<button data-a="watch" data-id="${v.id}" aria-label="Watch video">${S.saver ? `<div class="ph" style="--h:${hue(v.id)};width:100%;height:100%"></div>` : `<video src="${esc(v.video_url)}#t=0.1" muted playsinline preload="metadata"></video>`}<span>${Number(v.views) || 0} views</span></button>`).join('')}</div>` : '';
+function viewVideo() {
+  if (gate()) return gate();
+  if (!S.videos.length) return `<div class="empty" style="padding:60px 24px;color:#fff">No videos yet.<br>Tap <b>${tr('video')}</b> at the top to post the first one.</div>`;
+  return `<div class="vidfeed" id="vf" tabindex="0">${S.videos.map(v => {
+    const p = S.pf[v.uid] || {};
+    return `<section class="vid" data-vid="${v.id}">
+      <video data-a="vtoggle" data-id="${v.id}" data-vid="${v.id}" src="${esc(v.url)}" loop playsinline muted preload="${S.saver ? 'none' : 'metadata'}"></video>
+      ${S.saver && !S.loaded.has('v' + v.id) ? `<button class="vplay" data-a="vplay" data-id="${v.id}">Tap to play<br><small>Data saver is on</small></button>` : ''}
+      <div class="vshade"></div>
+      <button class="vmute" data-a="vmute" aria-label="Sound">${S.muted ? I.mute : I.volume}</button>
+      <div class="vinfo"><b>${esc(nameOf(v.uid))}${p.username ? ' <span style="font-weight:500;opacity:.85">@' + esc(p.username) + '</span>' : ''}</b>
+        ${v.cap ? `<p>${esc(v.cap)}</p>` : ''}<div style="font-size:13px;opacity:.85;margin-top:4px" data-views="${v.id}">${v.views} views</div></div>
+      <div class="vacts">
+        <button class="va" data-a="user" data-id="${v.uid}" aria-label="Creator">${avOf(v.uid, 46)}</button>
+        <button class="va ${v.liked ? 'on' : ''}" data-lk="${v.id}" data-a="vlike" data-id="${v.id}" aria-label="Like"><span class="c">${I.heart}</span><span class="n">${v.likes}</span></button>
+        <button class="va" data-a="vcmt" data-id="${v.id}" aria-label="Comments"><span class="c">${I.cmt}</span><span data-cc="${v.id}">${v.cc}</span></button>
+        <button class="va" data-a="vshare" data-id="${v.id}" aria-label="Share"><span class="c">${I.share}</span>Share</button>
+      </div></section>`;
+  }).join('')}</div>`;
 }
 function viewChat() {
   if (gate()) return gate();
@@ -460,26 +587,63 @@ function viewMarket() {
 }
 function viewAlerts() {
   if (gate()) return gate();
-  if (!S.notes.length) return `<div class="empty" style="padding:60px 24px">Nothing yet.<br>Likes and comments on your posts will show up here.</div>`;
-  return S.notes.map(n => `<div class="item">${avOf(n.uid)}<p>${esc(n.text)}<small>${ago(n.at)}</small></p></div>`).join('');
+  const reqs = S.reqs.map(id => `<div class="reqrow"><button data-a="user" data-id="${id}" aria-label="View profile">${avOf(id, 46)}</button><div class="tx"><b>${esc(nameOf(id))}</b><div class="ls">wants to be your friend</div></div><button class="btn sm2" data-a="fyes" data-id="${id}">Accept</button><button class="btn alt sm2" data-a="fno" data-id="${id}">Decline</button></div>`).join('');
+  const notes = S.notes.map(n => `<div class="item">${avOf(n.uid)}<p>${esc(n.text)}<small>${ago(n.at)}</small></p></div>`).join('');
+  if (!reqs && !notes) return `<div class="empty" style="padding:60px 24px">Nothing yet.<br>Friend requests, likes and comments will show up here.</div>`;
+  return (reqs ? `<h3 class="sub">Friend requests</h3>${reqs}` : '') + (notes ? `<h3 class="sub">Activity</h3>${notes}` : '');
 }
 function viewMe() {
   if (gate()) return gate();
   const p = S.profile || {}, mine = S.products.filter(l => l.sid === S.user.id);
   return `<div class="prof">${avOf(S.user.id)}<div><div class="big">${esc(p.display_name || 'Member')}</div><div class="ls">${p.username ? '@' + esc(p.username) + ' · ' : ''}${esc(p.country || '')}</div>${p.username ? '' : '<div class="ls">Add a username in Edit profile</div>'}</div></div>
     ${p.bio ? `<p style="padding:0 16px 10px">${esc(p.bio)}</p>` : ''}
-    <div class="stats"><div><b>${S.me.posts}</b><span>Posts</span></div><div><b>${S.me.following}</b><span>Following</span></div><div><b>${mine.length}</b><span>Listings</span></div></div>
-    <div style="padding:0 16px 8px"><button class="btn alt" data-a="editprofile">Edit profile</button></div>
+    <div class="stats"><div><b>${S.me.videos}</b><span>Videos</span></div><div><b>${S.me.followers}</b><span>Followers</span></div><div><b>${S.me.following}</b><span>Following</span></div><div><b>${S.me.posts}</b><span>Posts</span></div></div>
+    <div style="padding:0 16px 8px;display:grid;grid-template-columns:1fr 1fr;gap:10px"><button class="btn alt" data-a="editprofile">Edit profile</button><button class="btn alt" data-a="opensaved">Saved posts</button></div>
+    <div style="padding:0 16px 8px"><button class="btn alt" data-a="invite">Invite friends</button></div>
+    <h3 class="sub">${tr('videos')}</h3>
+    ${S.myVideos.length ? vgridHTML(S.myVideos) : `<div class="empty" style="padding:20px 16px">No videos yet. Open Videos and tap Video.</div>`}
+    <h3 class="sub">Posts</h3>
+    ${S.myPosts.length ? S.myPosts.map(postCard).join('') : `<div class="empty" style="padding:20px 16px">No posts yet.</div>`}
     <h3 class="sub">${tr('mine')}</h3>
     ${mine.length ? `<div class="grid">${mine.map(listingCard).join('')}</div>` : `<div class="empty" style="padding:20px 16px">Nothing for sale yet. Tap Market, then Sell.</div>`}`;
 }
 function render(keepScroll) {
-  const top = $('#main').scrollTop;
+  const top = $('#main').scrollTop, vf = $('#vf'), vtop = vf ? vf.scrollTop : 0;
   document.body.classList.toggle('market', S.tab === 'market');
+  $('#main').classList.toggle('vmode', S.tab === 'video');
   $('#head').innerHTML = head();
-  $('#main').innerHTML = { home: viewHome, chat: viewChat, market: viewMarket, alerts: viewAlerts, me: viewMe }[S.tab]();
+  $('#main').innerHTML = { home: viewHome, video: viewVideo, chat: viewChat, market: viewMarket, alerts: viewAlerts, me: viewMe }[S.tab]();
   $('#nav').innerHTML = TABS.map(([k, l, i]) => `<button class="${S.tab === k ? 'on' : ''}" data-a="tab" data-id="${k}" aria-label="${tr(l)}"><span class="pill">${I[i]}</span>${tr(l)}</button>`).join('');
   $('#main').scrollTop = keepScroll ? top : 0;
+  if (S.tab === 'video') { const nf = $('#vf'); if (nf && keepScroll && vtop) nf.scrollTop = vtop; wireVideos(); }
+}
+function wireVideos() {
+  if (S.vio) { S.vio.disconnect(); S.vio = null; }
+  const feed = $('#vf'); if (!feed) return;
+  if (S.focusVideo) { const t = feed.querySelector(`.vid[data-vid="${S.focusVideo}"]`); if (t) feed.scrollTop = t.offsetTop; S.focusVideo = null; }
+  S.vio = new IntersectionObserver(es => es.forEach(e => {
+    const v = e.target.querySelector('video'); if (!v) return;
+    if (e.isIntersecting && e.intersectionRatio >= 0.7) {
+      if (!(S.saver && !S.loaded.has('v' + v.dataset.id))) { v.muted = S.muted; v.play().catch(() => {}); }
+    } else v.pause();
+  }), { root: feed, threshold: [0, 0.7, 1] });
+  feed.querySelectorAll('.vid').forEach(el => S.vio.observe(el));
+  feed.querySelectorAll('video').forEach(v => v.addEventListener('play', () => setTimeout(() => { if (!v.paused) countView(v.dataset.id); }, 2000)));
+}
+async function countView(id) {
+  if (S.viewed.has(id)) return; S.viewed.add(id);
+  const { data } = await sb.rpc('record_video_view', { vid: id });
+  if (data) { const v = S.videos.find(x => x.id === id); if (v) { v.views++; const el = document.querySelector(`[data-views="${id}"]`); if (el) el.textContent = v.views + ' views'; } }
+}
+const videoDuration = url => new Promise(res => { const v = document.createElement('video'); v.preload = 'metadata'; v.onloadedmetadata = () => res(v.duration); v.onerror = () => res(NaN); v.src = url; });
+function paintLike(v) { const b = document.querySelector(`[data-lk="${v.id}"]`); if (b) { b.classList.toggle('on', v.liked); b.querySelector('.n').textContent = v.likes; } }
+async function paintVComments(id) {
+  const { data, error } = await sb.from('video_comments').select('user_id,content,created_at').eq('video_id', id).order('created_at', { ascending: true }).limit(100);
+  const box = $('#vcl'); if (!box) return;
+  if (error) { box.textContent = 'Could not load comments.'; return; }
+  await loadProfiles(data.map(c => c.user_id));
+  box.innerHTML = data.length ? data.map(c => `<div class="cmt"><b>${esc(nameOf(c.user_id))}</b>${esc(c.content)}</div>`).join('') : '<div class="ls">No comments yet. Be the first.</div>';
+  const v = S.videos.find(x => x.id === id); if (v) { v.cc = data.length; const el = document.querySelector(`[data-cc="${id}"]`); if (el) el.textContent = data.length; }
 }
 
 /* ---------- sheets, chat, toast ---------- */
@@ -488,7 +652,7 @@ function sheet(html) { $('#sheet').innerHTML = `<div class="bd" data-a="close"><
 function closeSheet() { if (S.draft && S.draft.prev) URL.revokeObjectURL(S.draft.prev); S.draft = null; $('#sheet').classList.remove('open'); $('#sheet').innerHTML = ''; }
 
 /* ---------- uploads ---------- */
-const MAXV = 20 * 1024 * 1024;
+const MAXV = 50 * 1024 * 1024;
 async function compressImage(file) {
   if (file.type === 'image/gif') return file;
   const maxW = S.saver ? 960 : 1280, q = S.saver ? 0.7 : 0.8;
@@ -503,7 +667,7 @@ async function uploadMedia(file) {
   const isVid = file.type.startsWith('video');
   let blob = file, ext;
   if (isVid) {
-    if (file.size > MAXV) throw new Error('Video is too big. The limit is 20 MB.');
+    if (file.size > MAXV) throw new Error('Video is too big. The limit is 50 MB.');
     ext = file.type.includes('webm') ? 'webm' : file.type.includes('quicktime') ? 'mov' : 'mp4';
   } else { blob = await compressImage(file); ext = blob.type === 'image/gif' ? 'gif' : 'jpg'; }
   const path = `${S.user.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
@@ -590,23 +754,121 @@ async function runSearch(q) {
 }
 async function openUser(id) {
   if (id === S.user.id) { closeSheet(); $('#over').innerHTML = ''; S.tab = 'me'; render(); refresh(); return; }
+  closeSheet(); clearInterval(S.poll); S.openThread = null;
   await loadProfiles([id]);
-  const p = S.pf[id] || {};
-  let following = false, followers = 0;
+  S.prof = { id, loading: true, rel: 'none', following: false, blocked: false, followers: 0, followingN: 0, postsN: 0, vids: [], pinned: [], posts: [], more: false, offset: 0 };
+  S.profPosts = [];
+  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button><b class="ttl">${esc(nameOf(id))}</b><span style="flex:1"></span><button class="ibtn" data-a="pfmenu" data-id="${id}" aria-label="More options">${I.more}</button></header><div class="setbody" id="pbody"></div></div>`;
+  paintProfile();
+  loadProfileData(id, true);
+}
+async function loadProfileData(id, reset) {
+  const me = S.user.id, P = S.prof; if (!P || P.id !== id) return;
   try {
-    const [f, c] = await Promise.all([
-      sb.from('follows').select('follower_id', { count: 'exact', head: true }).eq('follower_id', S.user.id).eq('following_id', id),
-      sb.from('follows').select('follower_id', { count: 'exact', head: true }).eq('following_id', id)
-    ]);
-    following = (f.count || 0) > 0; followers = c.count || 0;
-  } catch (e) {}
-  sheet(`<div style="display:flex;justify-content:center">${avOf(id, 84)}</div>
-    <h2 style="margin:10px 0 2px;text-align:center">${esc(p.display_name || 'Member')}</h2>
-    <div class="ls" style="text-align:center">${p.username ? '@' + esc(p.username) : ''}${p.country ? (p.username ? ' · ' : '') + esc(p.country) : ''}</div>
-    ${p.bio ? `<p style="margin:12px 0;text-align:center;white-space:pre-wrap">${esc(p.bio)}</p>` : ''}
-    <div class="ls" style="text-align:center;margin:8px 0 14px">${followers} follower${followers === 1 ? '' : 's'}</div>
-    <div class="row2" style="grid-template-columns:1fr 1fr"><button class="btn ${following ? 'alt' : ''}" data-a="follow" data-id="${id}" data-f="${following ? 1 : 0}">${following ? 'Following' : 'Follow'}</button>
-    <button class="btn alt" data-a="dm" data-id="${id}">Message</button></div>`);
+    if (reset) {
+      const pair = `and(requester_id.eq.${me},addressee_id.eq.${id}),and(requester_id.eq.${id},addressee_id.eq.${me})`;
+      const [f, fr, bl, fc, fg, pc, vs] = await Promise.all([
+        sb.from('follows').select('follower_id', { count: 'exact', head: true }).eq('follower_id', me).eq('following_id', id),
+        sb.from('friendships').select('requester_id,addressee_id,status').or(pair).maybeSingle(),
+        sb.from('blocks').select('blocked_id', { count: 'exact', head: true }).eq('blocker_id', me).eq('blocked_id', id),
+        sb.from('follows').select('follower_id', { count: 'exact', head: true }).eq('following_id', id),
+        sb.from('follows').select('following_id', { count: 'exact', head: true }).eq('follower_id', id),
+        sb.from('posts').select('id', { count: 'exact', head: true }).eq('user_id', id),
+        sb.from('videos').select('id,video_url,views').eq('user_id', id).order('created_at', { ascending: false }).limit(9)
+      ]);
+      if (S.prof !== P) return;
+      P.following = (f.count || 0) > 0; P.blocked = (bl.count || 0) > 0;
+      const row = fr.data; P.rel = !row ? 'none' : row.status === 'accepted' ? 'friends' : row.requester_id === me ? 'sent' : 'received';
+      P.followers = fc.count || 0; P.followingN = fg.count || 0; P.postsN = pc.count || 0;
+      P.vids = (vs.data || []).filter(v => safeUrl(v.video_url));
+      const pin = await sb.from('posts').select(POSTCOLS).eq('user_id', id).not('pinned_at', 'is', null).order('pinned_at', { ascending: false });
+      P.pinned = await hydratePosts(pin.data || []); P.posts = []; P.offset = 0;
+    }
+    const r = await sb.from('posts').select(POSTCOLS).eq('user_id', id).is('pinned_at', null).order('created_at', { ascending: false }).range(P.offset, P.offset + 19);
+    const rows = r.data || [];
+    P.more = rows.length === 20; P.offset += rows.length;
+    P.posts = P.posts.concat(await hydratePosts(rows));
+    if (S.prof !== P) return;
+    S.profPosts = [...P.pinned, ...P.posts];
+  } catch (e) { toast('Could not load this profile'); }
+  if (S.prof === P) { P.loading = false; paintProfile(); }
+}
+function paintProfile() {
+  const b = $('#pbody'), P = S.prof; if (!b || !P) return;
+  const top = b.scrollTop, id = P.id, pr = S.pf[id] || {};
+  let acts = '';
+  if (!P.loading) {
+    if (P.blocked) acts = `<div style="padding:0 16px 12px"><div class="note">You blocked this person. They cannot see your posts or message you.</div><button class="btn alt" data-a="unblock" data-id="${id}">Unblock</button></div>`;
+    else {
+      const fr = { none: ['fadd', 'Add friend', ''], sent: ['fcancel', 'Request sent', 'alt'], received: ['fyes', 'Accept request', ''], friends: ['funf', 'Friends', 'alt'] }[P.rel];
+      acts = `<div style="padding:0 16px 12px"><div class="row2" style="grid-template-columns:1fr 1fr;margin-top:0">
+        <button class="btn ${P.following ? 'alt' : ''}" data-a="pfollow" data-id="${id}">${P.following ? 'Following' : 'Follow'}</button>
+        <button class="btn ${fr[2]}" data-a="${fr[0]}" data-id="${id}">${fr[1]}</button></div>
+        <div style="display:grid;grid-template-columns:${P.rel === 'received' ? '1fr 1fr' : '1fr'};gap:10px;margin-top:10px"><button class="btn alt" data-a="dm" data-id="${id}">Message</button>${P.rel === 'received' ? `<button class="btn alt" data-a="fno" data-id="${id}">Decline</button>` : ''}</div></div>`;
+    }
+  }
+  const all = [...P.pinned, ...P.posts];
+  b.innerHTML = `<div class="pcenter">${avOf(id, 88)}<div class="big" style="margin-top:10px">${esc(pr.display_name || 'Member')}</div>
+      <div class="ls">${pr.username ? '@' + esc(pr.username) : ''}${pr.country ? (pr.username ? ' · ' : '') + esc(pr.country) : ''}</div>
+      ${pr.bio ? `<p style="margin-top:10px;white-space:pre-wrap">${esc(pr.bio)}</p>` : ''}</div>
+    <div class="stats" style="justify-content:center"><div><b>${P.postsN}</b><span>Posts</span></div><div><b>${P.followers}</b><span>Followers</span></div><div><b>${P.followingN}</b><span>Following</span></div></div>
+    ${acts}
+    ${P.vids.length ? `<h3 class="sub">${tr('videos')}</h3>${vgridHTML(P.vids)}` : ''}
+    <h3 class="sub">Posts</h3>
+    <div id="pposts">${P.loading ? '<div class="empty" style="padding:30px">Loading...</div>' : all.length ? all.map(postCard).join('') : `<div class="empty" style="padding:30px 20px">${P.blocked ? '' : 'No posts to show.'}</div>`}</div>
+    ${P.more && !P.loading ? `<div style="padding:12px 16px"><button class="btn alt" data-a="pmore" data-id="${id}">Load more</button></div>` : ''}`;
+  b.scrollTop = top;
+}
+async function friendAdd(id) {
+  const { error } = await sb.from('friendships').insert({ requester_id: S.user.id, addressee_id: id, status: 'pending' });
+  if (error) return toast('Could not send request');
+  if (S.prof && S.prof.id === id) { S.prof.rel = 'sent'; paintProfile(); }
+  toast('Friend request sent');
+}
+async function friendEnd(id, msg) {
+  const me = S.user.id;
+  const { error } = await sb.from('friendships').delete().or(`and(requester_id.eq.${me},addressee_id.eq.${id}),and(requester_id.eq.${id},addressee_id.eq.${me})`);
+  if (error) return toast('Could not update');
+  S.reqs = S.reqs.filter(x => x !== id);
+  if (S.prof && S.prof.id === id) { S.prof.rel = 'none'; paintProfile(); } else if (S.tab === 'alerts' && !$('#over').innerHTML) render(true);
+  if (msg) toast(msg);
+}
+async function friendAccept(id) {
+  const { error } = await sb.from('friendships').update({ status: 'accepted' }).eq('requester_id', id).eq('addressee_id', S.user.id);
+  if (error) return toast('Could not accept');
+  S.reqs = S.reqs.filter(x => x !== id);
+  if (S.prof && S.prof.id === id) { S.prof.rel = 'friends'; paintProfile(); } else if (S.tab === 'alerts' && !$('#over').innerHTML) render(true);
+  toast('You are now friends');
+}
+async function blockUser(id) {
+  if (!confirm('Block this person? They will not be able to see your posts, message you, or follow you.')) return;
+  const { error } = await sb.rpc('block_user', { target: id });
+  if (error) return toast('Could not block');
+  closeSheet();
+  if (S.prof && S.prof.id === id) { Object.assign(S.prof, { blocked: true, rel: 'none', following: false, pinned: [], posts: [], more: false }); S.profPosts = []; paintProfile(); }
+  else { try { await loadFeed(); } catch (e) {} repaint(); }
+  toast('Blocked');
+}
+async function openSaved() {
+  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button><b class="ttl">Saved posts</b></header><div class="setbody"><div id="spl"><div class="empty" style="padding:40px">Loading...</div></div></div></div>`;
+  try {
+    const { data } = await sb.from('saved_posts').select('post_id').eq('user_id', S.user.id).order('created_at', { ascending: false }).limit(50);
+    const ids = (data || []).map(x => x.post_id); let list = [];
+    if (ids.length) { const r = await sb.from('posts').select(POSTCOLS).in('id', ids); const hy = await hydratePosts(r.data || []); list = ids.map(i => hy.find(p => p.id === i)).filter(Boolean); }
+    S.savedList = list;
+  } catch (e) { S.savedList = []; toast('Could not load saved posts'); }
+  paintSaved();
+}
+function paintSaved() {
+  const b = $('#spl'); if (!b) return;
+  b.innerHTML = S.savedList.length ? S.savedList.map(postCard).join('') : '<div class="empty" style="padding:50px 24px">No saved posts yet.<br>Tap the bookmark on a post to save it.</div>';
+}
+async function openBlocked() {
+  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button><b class="ttl">Blocked users</b></header><div class="setbody" id="bl"><div class="empty" style="padding:40px">Loading...</div></div></div>`;
+  const { data } = await sb.from('blocks').select('blocked_id').eq('blocker_id', S.user.id);
+  const ids = (data || []).map(x => x.blocked_id); await loadProfiles(ids);
+  const box = $('#bl'); if (!box) return;
+  box.innerHTML = ids.length ? ids.map(id => `<div class="reqrow">${avOf(id, 46)}<div class="tx"><b>${esc(nameOf(id))}</b></div><button class="btn alt sm2" data-a="unblock2" data-id="${id}">Unblock</button></div>`).join('') : '<div class="empty" style="padding:50px 24px">You have not blocked anyone.</div>';
 }
 
 /* ---------- settings + theme ---------- */
@@ -648,10 +910,13 @@ function openSettings() {
     <div class="srow"><div><div class="lbl">Find me by email</div><div class="ls">Only people who type your exact email can find you</div></div>${sw(S.pc.allow_email_search, 'tglemail')}</div>
     <div class="srow col"><div class="lbl">Phone number</div><input id="phone" type="tel" inputmode="tel" placeholder="+251912345678" value="${esc(S.pc.phone || '')}" maxlength="20" autocomplete="tel"><div class="ls">Include your country code. Only you can see it.</div><button class="btn alt" data-a="savephone">Save phone</button></div>
     <div class="srow"><div><div class="lbl">Find me by phone</div><div class="ls">Only people who type your exact number can find you</div></div>${sw(S.pc.allow_phone_search, 'tglphone')}</div>
+    <h3 class="sub">People</h3>
+    <div class="srow"><button class="lbl" data-a="invite" style="flex:1">Invite friends</button></div>
+    <div class="srow"><button class="lbl" data-a="blocked" style="flex:1">Blocked users</button></div>
     <h3 class="sub">${tr('account')}</h3>
     <div class="srow"><div class="ls">${esc(S.user ? S.user.email : '')}</div></div>
     <div class="srow"><button class="lbl" data-a="logout" style="color:var(--coral)">${tr('logout')}</button></div>
-    <div class="ls" style="padding:16px">KiHelp 0.5</div>
+    <div class="ls" style="padding:16px">KiHelp 0.7</div>
   </div></div>`;
   document.querySelector('.setbody').scrollTop = scroll;
   showUsage();
@@ -671,6 +936,139 @@ const ACT = {
   logout: async () => { await sb.auth.signOut(); resetSession(); },
   load: id => { S.loaded.add(id); render(true); },
   search: () => openSearch(),
+  opensaved: () => openSaved(),
+  blocked: () => openBlocked(),
+  unblock2: async id => { const { error } = await sb.from('blocks').delete().eq('blocker_id', S.user.id).eq('blocked_id', id); if (error) return toast('Could not unblock'); toast('Unblocked'); openBlocked(); },
+  invite: () => {
+    const url = location.origin + location.pathname, text = 'Join me on KiHelp: connect, share videos and trade in one app.';
+    if (navigator.share) navigator.share({ title: 'KiHelp', text, url }).catch(() => {});
+    else { try { navigator.clipboard.writeText(url); } catch (e) {} toast('Invite link copied'); }
+  },
+  pmore: id => loadProfileData(id, false),
+  pfollow: async id => {
+    const P = S.prof; if (!P || P.id !== id) return;
+    const was = P.following; P.following = !was; P.followers += was ? -1 : 1; paintProfile();
+    const q = was ? sb.from('follows').delete().eq('follower_id', S.user.id).eq('following_id', id) : sb.from('follows').insert({ follower_id: S.user.id, following_id: id });
+    const { error } = await q;
+    if (error) { P.following = was; P.followers += was ? 1 : -1; paintProfile(); toast('Could not update'); }
+  },
+  fadd: id => friendAdd(id),
+  fcancel: id => friendEnd(id, 'Request cancelled'),
+  fyes: id => friendAccept(id),
+  fno: id => friendEnd(id, 'Request declined'),
+  funf: id => { if (confirm('Remove this friend?')) friendEnd(id, 'Friend removed'); },
+  block: id => blockUser(id),
+  pblock: id => blockUser(id),
+  unblock: async id => {
+    const { error } = await sb.from('blocks').delete().eq('blocker_id', S.user.id).eq('blocked_id', id);
+    if (error) return toast('Could not unblock');
+    if (S.prof && S.prof.id === id) { S.prof.blocked = false; S.prof.loading = true; paintProfile(); loadProfileData(id, true); }
+    toast('Unblocked');
+  },
+  pfmenu: id => sheet(`<h2>${esc(nameOf(id))}</h2>
+    <button class="optrow" data-a="invite">Invite friends to KiHelp</button>
+    ${S.prof && S.prof.blocked ? `<button class="optrow" data-a="unblock" data-id="${id}" onclick="">Unblock</button>` : `<button class="optrow red" data-a="block" data-id="${id}">Block ${esc(nameOf(id))}</button>`}`),
+  psave: async id => {
+    id = +id; const was = S.savedPosts.has(id);
+    was ? S.savedPosts.delete(id) : S.savedPosts.add(id);
+    if (was && $('#spl')) S.savedList = S.savedList.filter(p => p.id !== id);
+    closeSheet(); repaint();
+    const q = was ? sb.from('saved_posts').delete().eq('user_id', S.user.id).eq('post_id', id) : sb.from('saved_posts').insert({ user_id: S.user.id, post_id: id });
+    const { error } = await q;
+    if (error) { was ? S.savedPosts.add(id) : S.savedPosts.delete(id); repaint(); toast('Could not save'); }
+    else toast(was ? 'Removed from saved' : 'Post saved');
+  },
+  pmenu: id => {
+    const p = findPost(id); if (!p) return;
+    if (p.uid === S.user.id) {
+      sheet(`<h2>Your post</h2>
+        <button class="optrow" data-a="ppin" data-id="${p.id}">${p.pin ? 'Unpin from your profile' : 'Pin to your profile'}</button>
+        <div class="lbl" style="padding:14px 4px 6px">Who can see this post</div>
+        <div class="seg c3">${[['public', 'Public'], ['friends', 'Friends'], ['private', 'Only me']].map(([k, l]) => `<button class="${p.vis === k ? 'on' : ''}" data-a="pvis" data-id="${p.id}" data-v="${k}">${l}</button>`).join('')}</div>
+        <button class="optrow red" style="margin-top:12px" data-a="pdel" data-id="${p.id}">Delete post</button>`);
+    } else {
+      sheet(`<h2>Post options</h2>
+        <button class="optrow" data-a="psave" data-id="${p.id}">${S.savedPosts.has(p.id) ? 'Remove from saved' : 'Save post'}</button>
+        <button class="optrow" data-a="user" data-id="${p.uid}">View profile</button>
+        <button class="optrow red" data-a="pblock" data-id="${p.uid}">Block ${esc(nameOf(p.uid))}</button>`);
+    }
+  },
+  ppin: async id => {
+    const p = findPost(id); if (!p) return;
+    const { error } = await sb.from('posts').update({ pinned_at: p.pin ? null : new Date().toISOString() }).eq('id', p.id).eq('user_id', S.user.id);
+    if (error) return toast(/pin up to/i.test(error.message || '') ? 'You can pin up to 3 posts' : 'Could not update');
+    closeSheet(); toast(p.pin ? 'Unpinned' : 'Pinned');
+    try { await loadMe(); } catch (e) {} try { await loadFeed(); } catch (e) {} repaint();
+  },
+  pvis: async (id, el) => {
+    const p = findPost(id), v = el.dataset.v; if (!p || p.vis === v) return closeSheet();
+    const { error } = await sb.from('posts').update({ visibility: v }).eq('id', p.id).eq('user_id', S.user.id);
+    if (error) return toast('Could not update');
+    p.vis = v; closeSheet(); repaint(); toast('Updated');
+  },
+  pdel: async id => {
+    const p = findPost(id); if (!p) return;
+    if (!confirm('Delete this post? You cannot undo this.')) return;
+    const { error } = await sb.from('posts').update({ deleted_at: new Date().toISOString() }).eq('id', p.id).eq('user_id', S.user.id);
+    if (error) return toast('Could not delete');
+    for (const k of ['posts', 'myPosts', 'profPosts', 'savedList']) S[k] = S[k].filter(x => x.id !== p.id);
+    closeSheet(); repaint(); toast('Deleted');
+  },
+  pvsel: (id, el) => { S.postVis = id; document.querySelectorAll('#pvs button').forEach(b => b.classList.toggle('on', b.dataset.id === id)); },
+  alerts: () => { S.tab = 'alerts'; render(); refresh(); },
+  watch: id => { closeSheet(); $('#over').innerHTML = ''; S.focusVideo = id; S.tab = 'video'; S.ready.video = 0; render(); refresh(); },
+  vtoggle: (id, el) => { if (el.paused) { el.muted = S.muted; el.play().catch(() => {}); } else el.pause(); },
+  vplay: (id, el) => {
+    S.loaded.add('v' + id); el.remove();
+    const v = document.querySelector(`video[data-vid="${id}"]`); if (v) { v.preload = 'auto'; v.muted = S.muted; v.play().catch(() => {}); }
+  },
+  vmute: () => {
+    S.muted = !S.muted;
+    document.querySelectorAll('.vid video').forEach(v => { v.muted = S.muted; });
+    document.querySelectorAll('.vmute').forEach(b => { b.innerHTML = S.muted ? I.mute : I.volume; });
+  },
+  vlike: async id => {
+    const v = S.videos.find(x => x.id === id), was = v.liked;
+    v.liked = !was; v.likes += was ? -1 : 1; paintLike(v);
+    const q = was ? sb.from('video_likes').delete().eq('video_id', id).eq('user_id', S.user.id) : sb.from('video_likes').insert({ video_id: id, user_id: S.user.id });
+    const { error } = await q;
+    if (error) { v.liked = was; v.likes += was ? 1 : -1; paintLike(v); toast('Could not update like'); }
+  },
+  vcmt: async id => {
+    sheet(`<h2>Comments</h2><div id="vcl"><div class="ls">Loading...</div></div>
+      <div class="cin" style="margin-top:12px"><input id="vci" maxlength="1000" placeholder="Write a comment"><button class="send" data-a="vaddcmt" data-id="${id}" aria-label="Send comment">${I.send}</button></div>`);
+    await paintVComments(id);
+  },
+  vaddcmt: async id => {
+    const el = $('#vci'), v = el.value.trim(); if (!v) return;
+    const { error } = await sb.from('video_comments').insert({ video_id: id, user_id: S.user.id, content: v });
+    if (error) return toast('Could not comment');
+    el.value = ''; await paintVComments(id);
+  },
+  vshare: id => {
+    const v = S.videos.find(x => x.id === id), url = location.origin + location.pathname + '#v=' + id;
+    if (navigator.share) navigator.share({ title: 'KiHelp video', text: (v && v.cap) || 'Watch this video on KiHelp', url }).catch(() => {});
+    else { try { navigator.clipboard.writeText(url); } catch (e) {} toast('Video link copied'); }
+  },
+  vupload: () => {
+    sheet(`<h2>New video</h2>
+      <div class="fld">${uploadField('video/mp4,video/webm,video/quicktime', 'Choose a video')}</div>
+      <div class="ls" style="margin:-4px 0 12px">Up to 60 seconds and 50 MB.</div>
+      <div class="fld"><label for="vc">Caption</label><textarea id="vc" maxlength="300" placeholder="Say something about your video"></textarea></div>
+      <button class="btn" id="vbtn" data-a="vpublish">Post video</button>`);
+    bindUpload();
+  },
+  vpublish: async () => {
+    if (!S.draft || S.draft.type !== 'video') return toast('Choose a video first');
+    const dur = await videoDuration(S.draft.prev);
+    if (isFinite(dur) && dur > 61) return toast('Video must be 60 seconds or less');
+    busy('#vbtn', true, 'Uploading...');
+    let m;
+    try { m = await uploadMedia(S.draft.file); } catch (e) { busy('#vbtn', false, 'Post video'); return toast(upErr(e)); }
+    const { error } = await sb.from('videos').insert({ user_id: S.user.id, video_url: m.url, caption: ($('#vc') ? $('#vc').value : '').trim().slice(0, 300) });
+    if (error) { busy('#vbtn', false, 'Post video'); return toast('Could not post video'); }
+    closeSheet(); S.tab = 'video'; S.ready.video = 0; render(); refresh(); toast('Video posted');
+  },
   user: id => openUser(id),
   dm: id => { closeSheet(); openThread(id); },
   follow: async (id, el) => {
@@ -692,23 +1090,23 @@ const ACT = {
   },
 
   like: async id => {
-    const p = S.posts.find(x => x.id == id), was = p.liked;
-    p.liked = !was; p.likes += was ? -1 : 1; render(true);
+    const p = findPost(id), was = p.liked;
+    p.liked = !was; p.likes += was ? -1 : 1; repaint();
     const q = was ? sb.from('post_likes').delete().eq('post_id', p.id).eq('user_id', S.user.id) : sb.from('post_likes').insert({ post_id: p.id, user_id: S.user.id });
     const { error } = await q;
-    if (error) { p.liked = was; p.likes += was ? 1 : -1; render(true); toast('Could not update like'); }
+    if (error) { p.liked = was; p.likes += was ? 1 : -1; repaint(); toast('Could not update like'); }
   },
-  cmt: id => { id = +id; S.open.has(id) ? S.open.delete(id) : S.open.add(id); render(true); },
+  cmt: id => { id = +id; S.open.has(id) ? S.open.delete(id) : S.open.add(id); repaint(); },
   addcmt: async id => {
     const el = $('#ci' + id), v = el.value.trim(); if (!v) return;
     const { error } = await sb.from('comments').insert({ post_id: +id, user_id: S.user.id, content: v });
     if (error) return toast('Could not comment');
-    try { await loadFeed(); } catch (e) {}
-    S.open.add(+id); render(true);
+    const p = findPost(id); if (p) p.cm.push({ w: nameOf(S.user.id), t: v });
+    S.open.add(+id); repaint();
   },
   share: () => { try { navigator.clipboard.writeText(location.href); } catch (e) {} toast('Link copied'); },
   thread: id => openThread(id),
-  back: () => { clearInterval(S.poll); S.openThread = null; $('#over').innerHTML = ''; render(true); if (S.tab === 'chat') refresh(); },
+  back: () => { clearInterval(S.poll); S.openThread = null; S.prof = null; $('#over').innerHTML = ''; render(true); if (S.tab === 'chat') refresh(); },
   send: id => sendMsg(id),
   cat: id => { S.cat = id; $('#cats').innerHTML = catChips(); $('#grid').innerHTML = gridHTML(); },
   opt: id => { S.opt = id; $('#opts').innerHTML = optChips(); $('#grid').innerHTML = gridHTML(); },
@@ -776,9 +1174,11 @@ const ACT = {
   },
 
   newpost: () => {
+    S.postVis = 'public';
     sheet(`<h2>New post</h2>
       <div class="fld"><textarea id="pt" maxlength="3000" placeholder="What's on your mind?"></textarea></div>
       <div class="fld">${uploadField('image/*,video/mp4,video/webm,video/quicktime', 'Add a photo or video')}</div>
+      <div class="fld"><label>Who can see this post?</label><div class="seg c3" id="pvs">${[['public', 'Public'], ['friends', 'Friends'], ['private', 'Only me']].map(([k, l]) => `<button data-a="pvsel" data-id="${k}" class="${k === 'public' ? 'on' : ''}">${l}</button>`).join('')}</div></div>
       <button class="btn" id="postbtn" data-a="publishpost">${tr('post')}</button>`);
     bindUpload();
   },
@@ -788,7 +1188,7 @@ const ACT = {
     busy('#postbtn', true, S.draft ? 'Uploading...' : '...');
     let m = null;
     try { if (S.draft) m = await uploadMedia(S.draft.file); } catch (e) { busy('#postbtn', false, tr('post')); return toast(upErr(e)); }
-    const { error } = await sb.from('posts').insert({ user_id: S.user.id, content: text, media_url: m ? m.url : null, media_type: m ? m.type : null });
+    const { error } = await sb.from('posts').insert({ user_id: S.user.id, content: text, media_url: m ? m.url : null, media_type: m ? m.type : null, visibility: S.postVis });
     if (error) { busy('#postbtn', false, tr('post')); return toast('Could not post'); }
     closeSheet(); try { await loadFeed(); } catch (e) {} render(); toast('Posted');
   },
@@ -832,9 +1232,13 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.id === 'mi') { const b = document.querySelector('[data-a="send"]'); if (b) b.click(); }
   if (e.key === 'Enter' && e.target.matches && e.target.matches('.lm')) e.target.click();
   if (e.key === 'Escape') closeSheet();
+  if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && S.tab === 'video' && $('#vf') && !$('#over').innerHTML && !$('#sheet').classList.contains('open') && !/INPUT|TEXTAREA|SELECT/.test((e.target.tagName || ''))) {
+    e.preventDefault(); $('#vf').scrollBy({ top: (e.key === 'ArrowDown' ? 1 : -1) * $('#vf').clientHeight, behavior: 'smooth' });
+  }
 });
 
 async function boot() {
+  const hm = location.hash.match(/^#v=([0-9a-f-]{36})$/i); if (hm) S.focusVideo = hm[1];
   applyTheme(); render();
   if (!sb) return showAuth('Could not load the sign-in service. Check your internet and refresh.');
   sb.auth.onAuthStateChange(ev => { if (ev === 'SIGNED_OUT' && S.user) resetSession(); });
