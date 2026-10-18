@@ -193,6 +193,7 @@ const I = {
   back: ic('<path d="M15 5l-7 7 7 7"/>'),
   send: ic('<path d="M4 12l16-8-6 16-3-7z"/>'),
   save: ic('<path d="M7 4h10v17l-5-4-5 4z"/>'),
+  search: ic('<circle cx="11" cy="11" r="6"/><path d="M20 20l-4-4"/>'),
   sliders: ic('<path d="M4 7h9M19 7h1M4 17h1M11 17h9"/><circle cx="16" cy="7" r="2.5"/><circle cx="8" cy="17" r="2.5"/>')
 };
 const OPT = { fixed: 'Fixed price', negotiable: 'Negotiable', auction: 'Auction', bulk: 'Bulk discount' };
@@ -209,7 +210,7 @@ const S = {
   tab: 'home', cat: 'All', opt: 'all', q: '', open: new Set(),
   mode: 'system', accent: 'auto', saver: false, lang: 'en', loaded: new Set(),
   user: null, profile: null, pf: {}, posts: [], products: [], saved: new Set(), threads: [], notes: [],
-  me: { posts: 0, following: 0 }, ready: {}, authMode: 'login', openThread: null, sellOpt: 'fixed'
+  me: { posts: 0, following: 0 }, pc: { phone: null, allow_phone_search: false, allow_email_search: false }, ready: {}, authMode: 'login', openThread: null, sellOpt: 'fixed'
 };
 const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
 try { Object.assign(S, JSON.parse(store.get('kihelp.settings') || '{}')); } catch (e) {}
@@ -384,11 +385,12 @@ async function ensureProfile(user) {
 async function enter(user) {
   S.user = user; S.ready = {};
   try { await ensureProfile(user); } catch (e) { S.profile = { id: user.id, display_name: (user.email || 'Member').split('@')[0] }; S.pf[user.id] = S.profile; }
+  loadPrivate().catch(() => {});
   hideAuth(); S.tab = 'home'; render(); refresh();
 }
 function resetSession() {
   clearInterval(S.poll); S.openThread = null;
-  Object.assign(S, { user: null, profile: null, pf: {}, posts: [], products: [], saved: new Set(), threads: [], notes: [], ready: {}, authMode: 'login' });
+  Object.assign(S, { user: null, profile: null, pf: {}, posts: [], products: [], saved: new Set(), threads: [], notes: [], ready: {}, authMode: 'login', pc: { phone: null, allow_phone_search: false, allow_email_search: false } });
   $('#over').innerHTML = ''; closeSheet(); showAuth();
 }
 
@@ -406,14 +408,14 @@ function head() {
   const title = tr({ home: 'social', chat: 'chats', market: 'marketplace', alerts: 'alerts', me: 'profile' }[t]);
   const act = t === 'home' ? `<button class="hbtn" data-a="newpost">${I.plus}${tr('post')}</button>`
     : t === 'market' ? `<button class="hbtn" data-a="sell">${I.plus}${tr('sell')}</button>` : '';
-  return `<div><div class="mark">KiHelp</div><div class="sect">${title}</div></div><div class="hr">${act}<button class="ibtn" data-a="settings" aria-label="${tr('settings')}">${I.sliders}</button></div>`;
+  return `<div><div class="mark">KiHelp</div><div class="sect">${title}</div></div><div class="hr">${act}<button class="ibtn" data-a="search" aria-label="Search people">${I.search}</button><button class="ibtn" data-a="settings" aria-label="${tr('settings')}">${I.sliders}</button></div>`;
 }
 function viewHome() {
   if (gate()) return gate();
   if (!S.posts.length) return `<div class="empty" style="padding:60px 24px">No posts yet.<br>Be the first. Tap <b>${tr('post')}</b> at the top.</div>`;
   return S.posts.map(p => `
     <article class="post">
-      <div class="ph-row">${avOf(p.uid)}<div><b>${esc(nameOf(p.uid))}</b><small>${p.t}</small></div></div>
+      <button class="ph-row" data-a="user" data-id="${p.uid}" style="width:100%">${avOf(p.uid)}<div><b>${esc(nameOf(p.uid))}</b><small>${p.t}</small></div></button>
       ${p.text ? `<p class="ptext">${esc(p.text)}</p>` : ''}
       ${p.media ? smedia(p.media, 'pmedia', 'p' + p.id) : ''}
       <div class="acts">
@@ -464,7 +466,7 @@ function viewAlerts() {
 function viewMe() {
   if (gate()) return gate();
   const p = S.profile || {}, mine = S.products.filter(l => l.sid === S.user.id);
-  return `<div class="prof">${avOf(S.user.id)}<div><div class="big">${esc(p.display_name || 'Member')}</div><div class="ls">${esc(p.country || '')}</div></div></div>
+  return `<div class="prof">${avOf(S.user.id)}<div><div class="big">${esc(p.display_name || 'Member')}</div><div class="ls">${p.username ? '@' + esc(p.username) + ' · ' : ''}${esc(p.country || '')}</div>${p.username ? '' : '<div class="ls">Add a username in Edit profile</div>'}</div></div>
     ${p.bio ? `<p style="padding:0 16px 10px">${esc(p.bio)}</p>` : ''}
     <div class="stats"><div><b>${S.me.posts}</b><span>Posts</span></div><div><b>${S.me.following}</b><span>Following</span></div><div><b>${mine.length}</b><span>Listings</span></div></div>
     <div style="padding:0 16px 8px"><button class="btn alt" data-a="editprofile">Edit profile</button></div>
@@ -557,6 +559,56 @@ async function sendMsg(id) {
   if (error) { t.msgs.pop(); paintMsgs(t); i.value = v; toast('Message not sent'); }
 }
 
+/* ---------- people search, profiles, privacy ---------- */
+async function loadPrivate() {
+  const { data } = await sb.from('private_contacts').select('phone,allow_phone_search,allow_email_search').eq('user_id', S.user.id).maybeSingle();
+  S.pc = data || { phone: null, allow_phone_search: false, allow_email_search: false };
+}
+async function savePrivate(patch) {
+  const next = { ...S.pc, ...patch };
+  const { error } = await sb.from('private_contacts').upsert({ user_id: S.user.id, phone: next.phone || null, allow_phone_search: !!next.allow_phone_search, allow_email_search: !!next.allow_email_search, updated_at: new Date().toISOString() });
+  if (error) { toast('Could not save'); return false; }
+  S.pc = next; return true;
+}
+function openSearch() {
+  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button>
+    <input id="ps" type="search" placeholder="Name, @username, email or phone" aria-label="Search people" maxlength="60" style="flex:1" autocomplete="off"></header>
+    <div class="setbody" id="pres"><div class="empty" style="padding:40px 24px">Search people by name or @username.<br><br>You can also find someone by their exact email or phone number, if they allowed it in their privacy settings.</div></div></div>`;
+  setTimeout(() => $('#ps') && $('#ps').focus(), 50);
+}
+async function runSearch(q) {
+  const box = $('#pres'); if (!box) return;
+  q = q.trim();
+  if (q.length < 2) { box.innerHTML = '<div class="empty" style="padding:40px 24px">Type at least 2 characters.</div>'; return; }
+  box.innerHTML = '<div class="empty" style="padding:40px 24px">Searching...</div>';
+  const { data, error } = await sb.rpc('search_people', { q });
+  const cur = $('#ps'); if (!cur || cur.value.trim() !== q) return;
+  if (error) { box.innerHTML = '<div class="empty" style="padding:40px 24px">Search failed. Try again.</div>'; return; }
+  data.forEach(p => { S.pf[p.id] = Object.assign({}, S.pf[p.id], p); });
+  box.innerHTML = data.length ? data.map(p => `<button class="thread" data-a="user" data-id="${p.id}">${avOf(p.id, 48)}<span class="tx"><b>${esc(p.display_name || 'Member')}</b><span class="l">${p.username ? '@' + esc(p.username) : ''}${p.country ? (p.username ? ' · ' : '') + esc(p.country) : ''}</span></span></button>`).join('')
+    : '<div class="empty" style="padding:40px 24px">No one found.</div>';
+}
+async function openUser(id) {
+  if (id === S.user.id) { closeSheet(); $('#over').innerHTML = ''; S.tab = 'me'; render(); refresh(); return; }
+  await loadProfiles([id]);
+  const p = S.pf[id] || {};
+  let following = false, followers = 0;
+  try {
+    const [f, c] = await Promise.all([
+      sb.from('follows').select('follower_id', { count: 'exact', head: true }).eq('follower_id', S.user.id).eq('following_id', id),
+      sb.from('follows').select('follower_id', { count: 'exact', head: true }).eq('following_id', id)
+    ]);
+    following = (f.count || 0) > 0; followers = c.count || 0;
+  } catch (e) {}
+  sheet(`<div style="display:flex;justify-content:center">${avOf(id, 84)}</div>
+    <h2 style="margin:10px 0 2px;text-align:center">${esc(p.display_name || 'Member')}</h2>
+    <div class="ls" style="text-align:center">${p.username ? '@' + esc(p.username) : ''}${p.country ? (p.username ? ' · ' : '') + esc(p.country) : ''}</div>
+    ${p.bio ? `<p style="margin:12px 0;text-align:center;white-space:pre-wrap">${esc(p.bio)}</p>` : ''}
+    <div class="ls" style="text-align:center;margin:8px 0 14px">${followers} follower${followers === 1 ? '' : 's'}</div>
+    <div class="row2" style="grid-template-columns:1fr 1fr"><button class="btn ${following ? 'alt' : ''}" data-a="follow" data-id="${id}" data-f="${following ? 1 : 0}">${following ? 'Following' : 'Follow'}</button>
+    <button class="btn alt" data-a="dm" data-id="${id}">Message</button></div>`);
+}
+
 /* ---------- settings + theme ---------- */
 function applyTheme() {
   const dark = S.mode === 'dark' || (S.mode === 'system' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
@@ -592,10 +644,14 @@ function openSettings() {
     <div class="srow"><div><div class="lbl">${tr('storage')}</div><div class="ls" id="usage">...</div></div><button class="btn sm" data-a="clearcache">${tr('clear')}</button></div>
     <h3 class="sub">${tr('language')}</h3>
     <div class="srow col"><select id="lang" aria-label="${tr('language')}">${Object.entries(LANGS).map(([k, v]) => `<option value="${k}" ${S.lang === k ? 'selected' : ''}>${v.name}</option>`).join('')}</select></div>
+    <h3 class="sub">Privacy and search</h3>
+    <div class="srow"><div><div class="lbl">Find me by email</div><div class="ls">Only people who type your exact email can find you</div></div>${sw(S.pc.allow_email_search, 'tglemail')}</div>
+    <div class="srow col"><div class="lbl">Phone number</div><input id="phone" type="tel" inputmode="tel" placeholder="+251912345678" value="${esc(S.pc.phone || '')}" maxlength="20" autocomplete="tel"><div class="ls">Include your country code. Only you can see it.</div><button class="btn alt" data-a="savephone">Save phone</button></div>
+    <div class="srow"><div><div class="lbl">Find me by phone</div><div class="ls">Only people who type your exact number can find you</div></div>${sw(S.pc.allow_phone_search, 'tglphone')}</div>
     <h3 class="sub">${tr('account')}</h3>
     <div class="srow"><div class="ls">${esc(S.user ? S.user.email : '')}</div></div>
     <div class="srow"><button class="lbl" data-a="logout" style="color:var(--coral)">${tr('logout')}</button></div>
-    <div class="ls" style="padding:16px">KiHelp 0.4</div>
+    <div class="ls" style="padding:16px">KiHelp 0.5</div>
   </div></div>`;
   document.querySelector('.setbody').scrollTop = scroll;
   showUsage();
@@ -614,6 +670,26 @@ const ACT = {
   clearcache: () => clearCache(),
   logout: async () => { await sb.auth.signOut(); resetSession(); },
   load: id => { S.loaded.add(id); render(true); },
+  search: () => openSearch(),
+  user: id => openUser(id),
+  dm: id => { closeSheet(); openThread(id); },
+  follow: async (id, el) => {
+    const was = el.dataset.f === '1'; el.disabled = true;
+    const q = was ? sb.from('follows').delete().eq('follower_id', S.user.id).eq('following_id', id) : sb.from('follows').insert({ follower_id: S.user.id, following_id: id });
+    const { error } = await q; el.disabled = false;
+    if (error) return toast('Could not update');
+    el.dataset.f = was ? '0' : '1'; el.textContent = was ? 'Follow' : 'Following'; el.classList.toggle('alt', !was);
+  },
+  tglemail: async () => { if (await savePrivate({ allow_email_search: !S.pc.allow_email_search })) openSettings(); },
+  tglphone: async () => {
+    if (!S.pc.phone && !S.pc.allow_phone_search) return toast('Save your phone number first');
+    if (await savePrivate({ allow_phone_search: !S.pc.allow_phone_search })) openSettings();
+  },
+  savephone: async () => {
+    const raw = $('#phone').value.replace(/[\s\-()]/g, '');
+    if (raw && !/^\+[0-9]{7,15}$/.test(raw)) return toast('Use the format +251912345678');
+    if (await savePrivate({ phone: raw || null, allow_phone_search: raw ? S.pc.allow_phone_search : false })) { toast('Saved'); openSettings(); }
+  },
 
   like: async id => {
     const p = S.posts.find(x => x.id == id), was = p.liked;
@@ -722,17 +798,20 @@ const ACT = {
     sheet(`<h2>Edit profile</h2>
       <div class="fld">${uploadField('image/*', 'Change profile photo')}</div>
       <div class="fld"><label for="pn">Name</label><input id="pn" maxlength="50" value="${esc(p.display_name || '')}"></div>
+      <div class="fld"><label for="pu">Username</label><div style="display:flex;align-items:center;gap:6px"><span class="lbl">@</span><input id="pu" maxlength="20" autocapitalize="none" autocomplete="off" value="${esc(p.username || '')}" placeholder="yourname"></div><div class="ls" style="margin-top:4px">3 to 20 letters, numbers or underscores</div></div>
       <div class="fld"><label for="pc">Country</label><input id="pc" maxlength="50" value="${esc(p.country || '')}"></div>
       <div class="fld"><label for="pb">About you</label><textarea id="pb" maxlength="300">${esc(p.bio || '')}</textarea></div>
       <button class="btn" id="profbtn" data-a="saveprofile">Save</button>`);
     bindUpload();
   },
   saveprofile: async () => {
-    const row = { display_name: $('#pn').value.trim().slice(0, 50) || 'Member', country: $('#pc').value.trim().slice(0, 50) || null, bio: $('#pb').value.trim().slice(0, 300) || null };
+    const uname = $('#pu').value.trim().toLowerCase().replace(/^@/, '');
+    if (uname && !/^[a-z0-9_]{3,20}$/.test(uname)) return toast('Username: 3 to 20 letters, numbers or _');
+    const row = { username: uname || null, display_name: $('#pn').value.trim().slice(0, 50) || 'Member', country: $('#pc').value.trim().slice(0, 50) || null, bio: $('#pb').value.trim().slice(0, 300) || null };
     busy('#profbtn', true, S.draft ? 'Uploading...' : '...');
     try { if (S.draft) row.avatar_url = (await uploadMedia(S.draft.file)).url; } catch (e) { busy('#profbtn', false, 'Save'); return toast(upErr(e)); }
     const { error } = await sb.from('profiles').update(row).eq('id', S.user.id);
-    if (error) { busy('#profbtn', false, 'Save'); return toast('Could not save'); }
+    if (error) { busy('#profbtn', false, 'Save'); return toast(error.code === '23505' ? 'That username is taken' : error.code === '23514' ? 'That username is not allowed' : 'Could not save'); }
     S.profile = { ...S.profile, ...row }; S.pf[S.user.id] = S.profile;
     closeSheet(); render(true); toast('Saved');
   }
@@ -744,7 +823,9 @@ document.addEventListener('click', e => {
   const f = ACT[a.dataset.a]; if (f) f(a.dataset.id, a);
 });
 document.addEventListener('submit', e => { if (e.target.id === 'af') { e.preventDefault(); doAuth(); } });
-document.addEventListener('input', e => { if (e.target.id === 'q') { S.q = e.target.value; $('#grid').innerHTML = gridHTML(); } });
+let searchTimer;
+document.addEventListener('input', e => { if (e.target.id === 'ps') { clearTimeout(searchTimer); const v = e.target.value; searchTimer = setTimeout(() => runSearch(v), 350); }
+  if (e.target.id === 'q') { S.q = e.target.value; $('#grid').innerHTML = gridHTML(); } });
 document.addEventListener('change', e => { if (e.target.id === 'lang') { S.lang = e.target.value; saveSettings(); applyTheme(); render(true); openSettings(); } });
 if (window.matchMedia) { const mq = matchMedia('(prefers-color-scheme: dark)'); if (mq.addEventListener) mq.addEventListener('change', () => { if (S.mode === 'system') applyTheme(); }); }
 document.addEventListener('keydown', e => {
