@@ -29,6 +29,9 @@ const I = {
   lock: ic('<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>'),
   users: ic('<circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.5 3-5 6-5s6 1.5 6 5M16 5.5a3 3 0 0 1 0 5M18 15c2 .6 3 2 3 5"/>'),
   heartfill: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-8.5-5.4-8.5-11.5A4.7 4.7 0 0 1 12 6.8a4.7 4.7 0 0 1 8.5 2.7C20.5 15.6 12 21 12 21z"/></svg>',
+  clip: ic('<path d="M21 11.5l-8.5 8.5a5 5 0 0 1-7-7L14 4.5a3.5 3.5 0 0 1 5 5L10.5 18a2 2 0 0 1-3-3L15 7.5"/>'),
+  mic: ic('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>'),
+  trash: ic('<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>'),
   more: ic('<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>')
 };
 const OPT = { fixed: 'Fixed price', negotiable: 'Negotiable', auction: 'Auction', bulk: 'Bulk discount' };
@@ -45,7 +48,7 @@ const S = {
   tab: 'home', cat: 'All', opt: 'all', q: '', open: new Set(),
   mode: 'system', accent: 'auto', saver: false, lang: 'en', loaded: new Set(),
   user: null, profile: null, pf: {}, posts: [], products: [], saved: new Set(), threads: [], notes: [],
-  me: { posts: 0, following: 0, followers: 0, videos: 0 }, videos: [], myVideos: [], muted: true, viewed: new Set(), focusVideo: null, savedPosts: new Set(), prof: null, profPosts: [], savedList: [], myPosts: [], reqs: [], postVis: 'public', allowDl: false, drafts: [], viewer: null, onePost: [], focusPost: null, share: null, following: new Set(), fl: null, pc: { phone: null, allow_phone_search: false, allow_email_search: false }, ready: {}, authMode: 'login', openThread: null, sellOpt: 'fixed'
+  me: { posts: 0, following: 0, followers: 0, videos: 0 }, videos: [], myVideos: [], muted: true, viewed: new Set(), focusVideo: null, savedPosts: new Set(), prof: null, profPosts: [], savedList: [], myPosts: [], reqs: [], postVis: 'public', allowDl: false, drafts: [], viewer: null, onePost: [], focusPost: null, share: null, following: new Set(), fl: null, reply: null, editM: null, editC: null, replyC: null, rec: null, sig: {}, pc: { phone: null, allow_phone_search: false, allow_email_search: false }, ready: {}, authMode: 'login', openThread: null, sellOpt: 'fixed'
 };
 const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
 try { Object.assign(S, JSON.parse(store.get('kihelp.settings') || '{}')); } catch (e) {}
@@ -85,14 +88,14 @@ function rxOf(list) {
   list.forEach(l => { const r = RX[l.reaction] ? l.reaction : 'love'; rxs[r] = (rxs[r] || 0) + 1; if (l.user_id === S.user.id) mine = r; });
   return { rxs, react: mine, liked: !!mine, likes: list.length };
 }
-const POSTCOLS = 'id,user_id,content,created_at,media_url,media_type,visibility,pinned_at,allow_download';
+const POSTCOLS = 'id,user_id,content,created_at,media_url,media_type,visibility,pinned_at,allow_download,edited_at';
 async function hydratePosts(posts) {
   const ids = posts.map(p => p.id);
   let likes = [], cms = [], pm = [];
   if (ids.length) {
     const [l, c, m] = await Promise.all([
       sb.from('post_likes').select('post_id,user_id,reaction').in('post_id', ids),
-      sb.from('comments').select('id,post_id,user_id,content,created_at').in('post_id', ids).order('created_at', { ascending: true }),
+      sb.from('comments').select('id,post_id,user_id,content,created_at,parent_id,edited_at').in('post_id', ids).order('created_at', { ascending: true }),
       sb.from('post_media').select('post_id,url,type,position').in('post_id', ids).order('position', { ascending: true })
     ]);
     likes = l.data || []; cms = c.data || []; pm = m.data || [];
@@ -103,10 +106,10 @@ async function hydratePosts(posts) {
     if (!media.length && safeUrl(p.media_url)) media = [{ type: p.media_type === 'video' ? 'video' : 'image', url: p.media_url }];
     return {
       id: p.id, uid: p.user_id, t: ago(p.created_at), text: p.content, media,
-      adl: !!p.allow_download, dl: !!p.allow_download || p.user_id === S.user.id,
+      adl: !!p.allow_download, dl: !!p.allow_download || p.user_id === S.user.id, ed: !!p.edited_at,
       vis: p.visibility || 'public', pin: !!p.pinned_at,
       ...rxOf(likes.filter(l => l.post_id === p.id)),
-      cm: cms.filter(c => c.post_id === p.id).map(c => ({ w: nameOf(c.user_id), t: c.content }))
+      cm: cms.filter(c => c.post_id === p.id).map(c => ({ id: c.id, uid: c.user_id, w: nameOf(c.user_id), t: c.content, pid: c.parent_id, ed: !!c.edited_at, at: c.created_at }))
     };
   });
 }
@@ -137,15 +140,22 @@ async function loadProducts() {
   S.saved = new Set((sv.data || []).map(x => x.product_id));
   S.ready.market = 1;
 }
+const MSGCOLS = 'id,sender_id,receiver_id,body,created_at,reply_to,forwarded,edited_at,deleted_at,media_path,media_type,media_name,media_size';
+const mapMsg = (m, me) => ({ id: m.id, me: m.sender_id === me, t: m.deleted_at ? '' : m.body, at: m.created_at, reply: m.reply_to, fwd: !!m.forwarded, ed: !!m.edited_at, del: !!m.deleted_at, media: m.media_path ? { path: m.media_path, type: m.media_type, name: m.media_name, size: m.media_size } : null });
+const msgPreview = x => x.del ? 'Message deleted' : x.media ? ({ image: '📷 Photo', audio: '🎤 Voice message', video: '🎥 Video', file: '📎 ' + (x.media.name || 'File') }[x.media.type] || '📎 File') : SHARE_RE.test(x.t || '') ? 'Shared a post' : (x.t || '');
+const hm = at => { try { return new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } };
+const fsize = n => n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+const curThread = () => S.threads.find(x => x.id === S.openThread);
+const msgById = id => { const t = curThread(); return t && t.msgs.find(x => String(x.id) === String(id)); };
 async function loadThreads() {
   const me = S.user.id;
-  const { data, error } = await sb.from('messages').select('id,sender_id,receiver_id,body,created_at').or(`sender_id.eq.${me},receiver_id.eq.${me}`).order('created_at', { ascending: true }).limit(500);
+  const { data, error } = await sb.from('messages').select(MSGCOLS).or(`sender_id.eq.${me},receiver_id.eq.${me}`).order('created_at', { ascending: true }).limit(500);
   if (error) throw error;
   const map = new Map();
   data.forEach(m => {
     const other = m.sender_id === me ? m.receiver_id : m.sender_id;
     if (!map.has(other)) map.set(other, { id: other, msgs: [], last: 0 });
-    const t = map.get(other); t.msgs.push({ me: m.sender_id === me, t: m.body }); t.last = new Date(m.created_at).getTime();
+    const t = map.get(other); t.msgs.push(mapMsg(m, me)); t.last = new Date(m.created_at).getTime();
   });
   await loadProfiles([...map.keys()]);
   S.threads = [...map.values()].sort((a, b) => b.last - a.last);
@@ -331,6 +341,15 @@ function mediaBlock(p) {
   };
   return `<div class="pcar ${single ? 'single' : ''}"><div class="rail">${m.map(item).join('')}</div>${single ? '' : `<span class="pcount">1 / ${m.length}</span>`}</div>`;
 }
+function commentsHTML(p) {
+  const top = p.cm.filter(c => !c.pid), kids = c => p.cm.filter(x => x.pid === c.id);
+  const row = (c, sub) => (S.editC && S.editC.id === c.id)
+    ? `<div class="cmt${sub ? ' sub' : ''}"><input id="ec${c.id}" value="${esc(c.t)}" maxlength="1000"><div class="crow"><button class="btn sm2" data-a="csave" data-id="${c.id}" data-p="${p.id}">Save</button><button class="btn alt sm2" data-a="ccancel">Cancel</button></div></div>`
+    : `<div class="cmt${sub ? ' sub' : ''}"><b>${esc(c.w)}</b>${fmtText(c.t)}${c.ed ? ' <small class="ls">(edited)</small>' : ''}
+      <div class="cact"><span class="ls">${ago(c.at)}</span><button data-a="creply" data-id="${c.id}" data-p="${p.id}">Reply</button>${c.uid === S.user.id ? `<button data-a="cedit" data-id="${c.id}">Edit</button><button data-a="cdel" data-id="${c.id}" data-p="${p.id}">Delete</button>` : ''}</div></div>`;
+  return top.map(c => row(c, false) + kids(c).map(k => row(k, true)).join('')).join('');
+}
+const replyChip = p => S.replyC && S.replyC.p === p.id ? `<div class="rchip">Replying to <b>${esc(S.replyC.name)}</b><button data-a="creplyx" aria-label="Cancel reply">${I.x}</button></div>` : '';
 const fChip = id => (id !== S.user.id && !S.following.has(id)) ? `<button class="fchip" data-a="qfollow" data-id="${id}">Follow</button>` : '';
 function likeBtn(p) {
   const emoji = p.react && p.react !== 'love' ? RX[p.react] : null;
@@ -339,7 +358,7 @@ function likeBtn(p) {
 }
 function postCard(p) {
   return `<article class="post">
-    <div class="prow"><button class="ph-row" data-a="user" data-id="${p.uid}">${avOf(p.uid)}<div><b>${esc(nameOf(p.uid))}</b><small>${p.t} · ${visIcon(p.vis)}</small></div></button>${fChip(p.uid)}${p.pin ? '<span class="pbadge">Pinned</span>' : ''}<span style="flex:1"></span><button class="ibtn" data-a="pmenu" data-id="${p.id}" aria-label="More options">${I.more}</button></div>
+    <div class="prow"><button class="ph-row" data-a="user" data-id="${p.uid}">${avOf(p.uid)}<div><b>${esc(nameOf(p.uid))}</b><small>${p.t}${p.ed ? ' · edited' : ''} · ${visIcon(p.vis)}</small></div></button>${fChip(p.uid)}${p.pin ? '<span class="pbadge">Pinned</span>' : ''}<span style="flex:1"></span><button class="ibtn" data-a="pmenu" data-id="${p.id}" aria-label="More options">${I.more}</button></div>
     ${p.text ? `<p class="ptext" data-dt="pt" data-id="${p.id}">${fmtText(p.text)}</p>` : ''}
     ${mediaBlock(p)}
     <div class="acts">
@@ -348,7 +367,8 @@ function postCard(p) {
       <button data-a="share" data-id="${p.id}" aria-label="Share">${I.share}</button>
       <button class="sp ${S.savedPosts.has(p.id) ? 'on' : ''}" data-a="psave" data-id="${p.id}" aria-label="Save post">${I.save}</button>
     </div>
-    ${S.open.has(p.id) ? `<div class="cmts">${p.cm.map(c => `<div class="cmt"><b>${esc(c.w)}</b>${fmtText(c.t)}</div>`).join('')}
+    ${S.open.has(p.id) ? `<div class="cmts">${commentsHTML(p)}
+      ${replyChip(p)}
       <div class="cin"><input id="ci${p.id}" data-mention placeholder="Write a comment" maxlength="1000"><button class="send" data-a="addcmt" data-id="${p.id}" aria-label="Send comment">${I.send}</button></div></div>` : ''}
   </article>`;
 }
@@ -384,7 +404,7 @@ function viewChat() {
   if (!S.threads.length) return `<div class="empty" style="padding:60px 24px">No chats yet.<br>Open an item in <b>${tr('market')}</b> and tap <b>Message seller</b>.</div>`;
   return S.threads.map(t => {
     const last = t.msgs[t.msgs.length - 1], n = nameOf(t.id);
-    return `<button class="thread" data-a="thread" data-id="${t.id}">${avOf(t.id, 48)}<span class="tx"><b>${esc(n)}</b><span class="l">${last ? (last.me ? 'You: ' : '') + esc(SHARE_RE.test(last.t) ? 'Shared a post' : last.t) : ''}</span></span></button>`;
+    return `<button class="thread" data-a="thread" data-id="${t.id}">${avOf(t.id, 48)}<span class="tx"><b>${esc(n)}</b><span class="l">${last ? (last.me ? 'You: ' : '') + esc(msgPreview(last)) : ''}</span></span></button>`;
   }).join('');
 }
 function listingCard(l) {
@@ -518,34 +538,160 @@ async function openThread(id, draft) {
   await loadProfiles([id]);
   let t = S.threads.find(x => x.id === id);
   if (!t) { t = { id, msgs: [], last: Date.now() }; S.threads.unshift(t); }
-  S.openThread = id;
+  S.openThread = id; S.reply = null; S.editM = null;
   const n = nameOf(id);
   $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button>${avOf(id, 38)}<b>${esc(n)}</b></header>
     <div class="msgs" id="msgs"></div>
-    <div class="compose"><input id="mi" placeholder="Message" maxlength="1000" value="${esc(draft || '')}"><button class="send" data-a="send" data-id="${id}" aria-label="Send">${I.send}</button></div></div>`;
-  paintMsgs(t); setTimeout(() => $('#mi') && $('#mi').focus(), 50);
+    <div id="cbar"></div>
+    <div id="emop" class="emop" hidden></div>
+    <div class="compose" id="compose">
+      <button class="ibtn" data-a="attach" aria-label="Attach">${I.clip}</button>
+      <input id="mi" placeholder="Message" maxlength="1000" value="${esc(draft || '')}" autocomplete="off">
+      <button class="ibtn" data-a="emo" data-t="#mi" data-p="#emop" aria-label="Emoji">😊</button>
+      <button class="send" id="sendb" data-a="send" data-id="${id}" aria-label="Send">${I.send}</button>
+      <button class="send" id="micb" data-a="mic" aria-label="Record voice message">${I.mic}</button>
+    </div>
+    <div class="compose rec" id="recbar" hidden><button class="ibtn" data-a="reccancel" aria-label="Cancel recording">${I.trash}</button><span class="rdot"></span><span id="rtime">0:00</span><span style="flex:1"></span><button class="send" data-a="recsend" aria-label="Send voice message">${I.send}</button></div>
+    <input type="file" id="cph" accept="image/*,video/*" hidden><input type="file" id="ccam" accept="image/*" capture="environment" hidden><input type="file" id="cfile" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,audio/*" hidden></div>`;
+  ['cph', 'ccam', 'cfile'].forEach(k => { $('#' + k).onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) sendAttachment(f); }; });
+  syncSendBtn(); paintMsgs(t); setTimeout(() => $('#mi') && $('#mi').focus(), 50);
   clearInterval(S.poll); S.poll = setInterval(() => pollThread(id), 5000); pollThread(id);
+}
+function syncSendBtn() {
+  const i = $('#mi'), has = !!(i && i.value.trim()) || !!S.editM, s = $('#sendb'), m = $('#micb');
+  if (s) s.hidden = !has; if (m) m.hidden = has;
+}
+document.addEventListener('input', e => { if (e.target.id === 'mi') syncSendBtn(); });
+function paintCbar() {
+  const b = $('#cbar'); if (!b) return;
+  const t = curThread();
+  if (S.editM) b.innerHTML = `<div class="cbar"><span>Editing message</span><button data-a="cbarx" aria-label="Cancel">${I.x}</button></div>`;
+  else if (S.reply) { const r = t && t.msgs.find(y => y.id === S.reply.id); b.innerHTML = `<div class="cbar"><span class="qt">Replying to <b>${S.reply.me ? 'yourself' : esc(nameOf(S.openThread))}</b>: ${esc(r ? msgPreview(r).slice(0, 60) : '')}</span><button data-a="cbarx" aria-label="Cancel">${I.x}</button></div>`; }
+  else b.innerHTML = '';
+  syncSendBtn();
 }
 function paintMsgs(t) {
   const m = $('#msgs'); if (!m) return;
-  m.innerHTML = t.msgs.length ? t.msgs.map(bubble).join('') : `<div class="empty">Say hello.</div>`;
-  m.scrollTop = m.scrollHeight;
+  const stick = !m.dataset.init || m.scrollHeight - m.scrollTop - m.clientHeight < 140;
+  m.innerHTML = t.msgs.length ? t.msgs.map(x => bubble(x, t)).join('') : `<div class="empty">Say hello.</div>`;
+  if (stick) m.scrollTop = m.scrollHeight;
+  m.dataset.init = '1'; fillMedia();
+}
+async function fillMedia() {
+  const els = [...document.querySelectorAll('[data-mp]')]; if (!els.length) return;
+  const need = [...new Set(els.map(e => e.dataset.mp).filter(p => !S.sig[p] || S.sig[p].exp < Date.now()))];
+  if (need.length) {
+    const { data } = await sb.storage.from('chat-media').createSignedUrls(need, 3600);
+    (data || []).forEach(x => { if (x.signedUrl && x.path) S.sig[x.path] = { url: x.signedUrl, exp: Date.now() + 3300000 }; });
+  }
+  document.querySelectorAll('[data-mp]').forEach(e => { const s = S.sig[e.dataset.mp]; if (s && e.getAttribute('src') !== s.url) e.setAttribute('src', s.url); });
 }
 async function pollThread(id) {
   if (S.openThread !== id) return;
   const me = S.user.id, t = S.threads.find(x => x.id === id);
-  const { data } = await sb.from('messages').select('sender_id,body').or(`and(sender_id.eq.${me},receiver_id.eq.${id}),and(sender_id.eq.${id},receiver_id.eq.${me})`).order('created_at', { ascending: true }).limit(200);
-  if (!data || S.openThread !== id || !t || t.sending) return;
-  const msgs = data.map(m => ({ me: m.sender_id === me, t: m.body }));
-  if (msgs.length !== t.msgs.length) { t.msgs = msgs; paintMsgs(t); }
+  const { data } = await sb.from('messages').select(MSGCOLS).or(`and(sender_id.eq.${me},receiver_id.eq.${id}),and(sender_id.eq.${id},receiver_id.eq.${me})`).order('created_at', { ascending: true }).limit(200);
+  if (!data || S.openThread !== id || !t || t.sending || S.rec) return;
+  const msgs = data.map(m => mapMsg(m, me));
+  const sig = a => a.map(m => m.id + (m.ed ? 'e' : '') + (m.del ? 'd' : '')).join(',');
+  if (sig(msgs) !== sig(t.msgs.filter(m => m.id))) { t.msgs = msgs; paintMsgs(t); }
+}
+async function insertMsg(to, extra) {
+  const t = S.threads.find(x => x.id === to);
+  const row = Object.assign({ sender_id: S.user.id, receiver_id: to, body: '', reply_to: S.reply ? S.reply.id : null }, extra);
+  const { data, error } = await sb.from('messages').insert(row).select(MSGCOLS).single();
+  if (error) throw error;
+  const m = mapMsg(data, S.user.id); t.msgs.push(m); t.last = Date.now(); S.reply = null; paintCbar(); paintMsgs(t); return m;
 }
 async function sendMsg(id) {
   const i = $('#mi'), v = i.value.trim(); if (!v) return;
-  const t = S.threads.find(x => x.id === id); i.value = '';
-  t.msgs.push({ me: true, t: v }); t.sending = 1; paintMsgs(t);
-  const { error } = await sb.from('messages').insert({ sender_id: S.user.id, receiver_id: id, body: v });
+  if (S.editM) return saveEdit(v);
+  const t = S.threads.find(x => x.id === id);
+  const tmp = { me: true, t: v, at: new Date().toISOString(), reply: S.reply ? S.reply.id : null };
+  i.value = ''; syncSendBtn(); t.msgs.push(tmp); t.sending = 1; paintMsgs(t);
+  const { data, error } = await sb.from('messages').insert({ sender_id: S.user.id, receiver_id: id, body: v, reply_to: tmp.reply }).select(MSGCOLS).single();
   t.sending = 0;
-  if (error) { t.msgs.pop(); paintMsgs(t); i.value = v; toast('Message not sent'); }
+  if (error) { t.msgs.splice(t.msgs.indexOf(tmp), 1); paintMsgs(t); i.value = v; syncSendBtn(); return toast('Message not sent'); }
+  Object.assign(tmp, mapMsg(data, S.user.id)); S.reply = null; paintCbar(); paintMsgs(t);
+}
+async function saveEdit(v) {
+  const t = curThread(), m = t && S.editM && t.msgs.find(x => x.id === S.editM.id), i = $('#mi');
+  if (!m) { S.editM = null; paintCbar(); return; }
+  const { error } = await sb.rpc('edit_message', { mid: m.id, new_body: v });
+  if (error) return toast('Could not edit this message');
+  m.t = v; m.ed = true; S.editM = null; i.value = ''; paintCbar(); paintMsgs(t);
+}
+async function uploadChat(blob, ext, to) {
+  const path = `${S.user.id}/${to}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const ct = ((blob.type || '').split(';')[0]) || 'application/octet-stream';
+  const { error } = await sb.storage.from('chat-media').upload(path, blob, { contentType: ct, cacheControl: '3600' });
+  if (error) throw error;
+  return path;
+}
+async function sendAttachment(file) {
+  const id = S.openThread; if (!id) return;
+  if (file.size > 25 * 1024 * 1024) return toast('This file is over 25 MB');
+  const type = file.type.startsWith('image/') ? 'image' : file.type.startsWith('video/') ? 'video' : file.type.startsWith('audio/') ? 'audio' : 'file';
+  let blob = file, ext = ((file.name.split('.').pop() || 'bin').toLowerCase()).slice(0, 5);
+  if (type === 'image' && file.type !== 'image/gif') { blob = await compressImage(file); ext = 'jpg'; }
+  toast('Sending...');
+  try { const path = await uploadChat(blob, ext, id); await insertMsg(id, { media_path: path, media_type: type, media_name: file.name.slice(0, 120), media_size: blob.size }); }
+  catch (e) { toast(/mime|type/i.test(e.message || '') ? 'This file type is not allowed' : 'Could not send the file'); }
+}
+function paintRec(on) { const r = $('#recbar'), c = $('#compose'); if (r) r.hidden = !on; if (c) c.hidden = on; }
+async function startRec() {
+  if (S.rec) return;
+  if (!navigator.mediaDevices || !window.MediaRecorder) return toast('Voice messages are not supported on this browser');
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'].find(m => MediaRecorder.isTypeSupported(m)) || '';
+    const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined), chunks = [];
+    rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+    const r = S.rec = { rec, chunks, stream, start: Date.now(), cancel: false, type: rec.mimeType || mime || 'audio/webm' };
+    rec.onstop = () => {
+      stream.getTracks().forEach(x => x.stop()); clearInterval(r.timer); S.rec = null; paintRec(false);
+      if (r.cancel) return;
+      const secs = Math.round((Date.now() - r.start) / 1000);
+      if (secs < 1) return toast('Hold on a little longer');
+      sendVoice(new Blob(chunks, { type: r.type }), secs, r.type);
+    };
+    rec.start(); paintRec(true);
+    r.timer = setInterval(() => { const s = Math.floor((Date.now() - r.start) / 1000), el = $('#rtime'); if (el) el.textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); if (s >= 120) stopRec(false); }, 250);
+  } catch (e) { toast('Please allow the microphone to record'); }
+}
+function stopRec(cancel) { const r = S.rec; if (!r) return; r.cancel = !!cancel; try { r.rec.stop(); } catch (e) {} }
+function stopRecCancel() { if (S.rec) stopRec(true); }
+async function sendVoice(blob, secs, mime) {
+  const id = S.openThread; if (!id) return;
+  const base = (mime || 'audio/webm').split(';')[0], ext = base.includes('mp4') ? 'm4a' : base.includes('ogg') ? 'ogg' : base.includes('mpeg') ? 'mp3' : 'webm';
+  toast('Sending voice message...');
+  try { const path = await uploadChat(new Blob([blob], { type: base }), ext, id); await insertMsg(id, { media_path: path, media_type: 'audio', media_name: 'Voice message ' + secs + 's', media_size: blob.size }); }
+  catch (e) { toast('Could not send the voice message'); }
+}
+const EMO = {
+  '😀': '😀 😃 😄 😁 😆 😅 😂 🤣 😊 😇 🙂 😉 😍 🥰 😘 😋 😛 😜 🤪 🤔 🤨 😐 😶 🙄 😏 😴 😌 😎 🤓 🥳 😢 😭 😤 😡 🤯 😱 😨 🥺 🤗 🤭'.split(' '),
+  '👍': '👍 👎 👌 ✌️ 🤞 🤝 🙏 👏 🙌 💪 🫶 👋 🤙 ☝️ ✋ 👀 🧠'.split(' '),
+  '❤️': '❤️ 🧡 💛 💚 💙 💜 🖤 🤍 💔 💖 💗 💓 💕 💞 🔥 ✨ ⭐ 🌟 💯'.split(' '),
+  '🎉': '🎉 🎁 🎂 🍕 ☕ 🍰 🎵 🎶 📷 📌 🛍️ 💰 🚚 🏠 ✅ ❌ ⚡ 💡 🌍 🌙 ☀️ 🌈'.split(' ')
+};
+function emojiPanel(target, panel, tab) {
+  const cats = Object.keys(EMO); tab = tab || cats[0];
+  return `<div class="etabs">${cats.map(c => `<button class="${c === tab ? 'on' : ''}" data-a="etab" data-k="${c}" data-t="${target}" data-p="${panel}">${c}</button>`).join('')}</div><div class="egrid">${EMO[tab].map(e => `<button data-a="epick" data-e="${e}" data-t="${target}">${e}</button>`).join('')}</div>`;
+}
+function mediaBubble(md) {
+  if (md.type === 'image') return `<img class="chatimg" data-mp="${esc(md.path)}" alt="Photo" data-a="mview" data-p="${esc(md.path)}">`;
+  if (md.type === 'video') return `<video class="chatvid" data-mp="${esc(md.path)}" controls playsinline preload="metadata"></video>`;
+  if (md.type === 'audio') return `<audio class="chataud" data-mp="${esc(md.path)}" controls preload="none"></audio>`;
+  return `<button class="fileb" data-a="mfile" data-p="${esc(md.path)}" data-n="${esc(md.name || 'file')}"><span>📎</span><span class="fn"><b>${esc(md.name || 'File')}</b><small>${md.size ? fsize(md.size) : ''}</small></span></button>`;
+}
+async function forwardMsg(mid, to) {
+  const m = msgById(mid); if (!m) throw new Error('missing');
+  const row = { sender_id: S.user.id, receiver_id: to, body: m.t || '', forwarded: true };
+  if (m.media) {
+    const ext = m.media.path.split('.').pop() || 'bin', np = `${S.user.id}/${to}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const { error: ce } = await sb.storage.from('chat-media').copy(m.media.path, np); if (ce) throw ce;
+    Object.assign(row, { media_path: np, media_type: m.media.type, media_name: m.media.name, media_size: m.media.size });
+  }
+  const { error } = await sb.from('messages').insert(row); if (error) throw error;
 }
 
 /* ---------- people search, profiles, privacy ---------- */
@@ -697,10 +843,17 @@ async function openBlocked() {
 }
 
 /* ---------- viewer, taps, sharing, mentions, multi-upload ---------- */
-function bubble(x) {
-  const m = SHARE_RE.exec(x.t);
-  if (m) return `<button class="bub sharecard ${x.me ? 'me' : ''}" data-a="openshared" data-k="${m[1].toLowerCase()}" data-id="${m[2]}"><b>${m[1].toLowerCase() === 'video' ? 'Shared a video' : 'Shared a post'}</b><br><small>Tap to open</small></button>`;
-  return `<div class="bub ${x.me ? 'me' : ''}">${fmtText(x.t)}</div>`;
+function bubble(x, t) {
+  const cls = 'bub' + (x.me ? ' me' : '');
+  if (x.del) return `<div class="${cls} del">Message deleted</div>`;
+  const sm = !x.media && SHARE_RE.exec(x.t || '');
+  let inner = '';
+  if (x.reply) { const r = t && t.msgs.find(y => y.id === x.reply); inner += `<div class="quote">${r ? esc(msgPreview(r).slice(0, 120)) : 'Original message'}</div>`; }
+  if (x.fwd) inner += '<div class="fwd">Forwarded</div>';
+  if (x.media) inner += mediaBubble(x.media);
+  if (sm) inner += `<button class="sharecardb" data-a="openshared" data-k="${sm[1].toLowerCase()}" data-id="${sm[2]}"><span><b>${sm[1].toLowerCase() === 'video' ? 'Shared a video' : 'Shared a post'}</b><br><small>Tap to open</small></span></button>`;
+  else if (x.t) inner += `<div class="bt">${fmtText(x.t)}</div>`;
+  return `<div class="${cls}"${x.id ? ` data-a="mmenu" data-id="${x.id}"` : ''}>${inner}<small class="meta">${x.ed ? 'edited · ' : ''}${hm(x.at)}</small></div>`;
 }
 function openViewer(items, idx, dl) {
   if (!items || !items.length) return;
@@ -769,12 +922,13 @@ function paintOne() { const b = $('#onep'); if (b) b.innerHTML = S.onePost.map(p
 
 async function openShare(kind, id) {
   S.share = { kind, id };
-  sheet(`<h2>Share</h2>
-    <button class="optrow" data-a="shext">Share outside KiHelp ${I.share}</button>
-    <div class="lbl" style="padding:14px 4px 6px">Send to someone on KiHelp</div>
+  const fw = kind === 'msg';
+  sheet(`<h2>${fw ? 'Forward to' : 'Share'}</h2>
+    ${fw ? '' : `<button class="optrow" data-a="shext">Share outside KiHelp ${I.share}</button>
+    <div class="lbl" style="padding:14px 4px 6px">Send to someone on KiHelp</div>`}
     <input id="shq" placeholder="Search name or @username" maxlength="60" autocomplete="off">
     <div id="shl"><div class="ls" style="padding:12px 4px">Loading...</div></div>
-    <div class="ls" style="padding:10px 4px">Sending to groups will come with groups.</div>`);
+    ${fw ? '' : '<div class="ls" style="padding:10px 4px">Sending to groups will come with groups.</div>'}`);
   try {
     const me = S.user.id;
     if (!S.ready.chat) await loadThreads().catch(() => {});
@@ -944,7 +1098,7 @@ function openSettings() {
     <h3 class="sub">${tr('account')}</h3>
     <div class="srow"><div class="ls">${esc(S.user ? S.user.email : '')}</div></div>
     <div class="srow"><button class="lbl" data-a="logout" style="color:var(--coral)">${tr('logout')}</button></div>
-    <div class="ls" style="padding:16px">KiHelp 0.9</div>
+    <div class="ls" style="padding:16px">KiHelp 0.10</div>
   </div></div>`;
   document.querySelector('.setbody').scrollTop = scroll;
   showUsage();
@@ -982,9 +1136,11 @@ const ACT = {
   tgldl: () => { S.allowDl = !S.allowDl; const b = $('#dlsw'); if (b) { b.classList.toggle('on', S.allowDl); b.setAttribute('aria-checked', String(S.allowDl)); } },
   shsend: async (id, el) => {
     const sh = S.share; if (!sh) return; el.disabled = true;
-    const { error } = await sb.from('messages').insert({ sender_id: S.user.id, receiver_id: id, body: `kihelp://${sh.kind}/${sh.id}` });
-    if (error) { el.disabled = false; return toast('Could not send'); }
-    el.textContent = 'Sent'; el.classList.add('alt');
+    try {
+      if (sh.kind === 'msg') await forwardMsg(sh.id, id);
+      else { const { error } = await sb.from('messages').insert({ sender_id: S.user.id, receiver_id: id, body: `kihelp://${sh.kind}/${sh.id}` }); if (error) throw error; }
+      el.textContent = 'Sent'; el.classList.add('alt');
+    } catch (e) { el.disabled = false; toast('Could not send'); }
   },
   shext: () => {
     const sh = S.share; if (!sh) return;
@@ -1048,6 +1204,7 @@ const ACT = {
     const p = findPost(id); if (!p) return;
     if (p.uid === S.user.id) {
       sheet(`<h2>Your post</h2>
+        <button class="optrow" data-a="pedit" data-id="${p.id}">Edit post</button>
         <button class="optrow" data-a="ppin" data-id="${p.id}">${p.pin ? 'Unpin from your profile' : 'Pin to your profile'}</button>
         ${p.media.length ? `<button class="optrow" data-a="pdl" data-id="${p.id}">${p.adl ? 'Saving is allowed. Tap to turn off' : 'Saving is off. Tap to allow'}</button>` : ''}
         <div class="lbl" style="padding:14px 4px 6px">Who can see this post</div>
@@ -1171,15 +1328,97 @@ const ACT = {
   cmt: id => { id = +id; S.open.has(id) ? S.open.delete(id) : S.open.add(id); repaint(); },
   addcmt: async id => {
     const el = $('#ci' + id), v = el.value.trim(); if (!v) return;
-    const { error } = await sb.from('comments').insert({ post_id: +id, user_id: S.user.id, content: v });
+    const parent = S.replyC && S.replyC.p === +id ? S.replyC.id : null;
+    const { data, error } = await sb.from('comments').insert({ post_id: +id, user_id: S.user.id, content: v, parent_id: parent }).select('id,created_at').single();
     if (error) return toast('Could not comment');
-    const p = findPost(id); if (p) p.cm.push({ w: nameOf(S.user.id), t: v });
-    saveMentions(v, +id); hideMbar();
+    const p = findPost(id); if (p) p.cm.push({ id: data.id, uid: S.user.id, w: nameOf(S.user.id), t: v, pid: parent, ed: false, at: data.created_at });
+    S.replyC = null; saveMentions(v, +id); hideMbar();
     S.open.add(+id); repaint();
+  },
+  creply: (id, el) => {
+    const p = findPost(el.dataset.p); if (!p) return;
+    const c = p.cm.find(x => String(x.id) === String(id)); if (!c) return;
+    S.replyC = { p: p.id, id: c.pid || c.id, name: c.w }; S.open.add(p.id); repaint();
+    setTimeout(() => { const i = $('#ci' + p.id); if (i) i.focus(); }, 30);
+  },
+  creplyx: () => { S.replyC = null; repaint(); },
+  cedit: id => { S.editC = { id: +id }; repaint(); setTimeout(() => { const i = $('#ec' + id); if (i) i.focus(); }, 30); },
+  ccancel: () => { S.editC = null; repaint(); },
+  csave: async (id, el) => {
+    const text = (($('#ec' + id) || {}).value || '').trim(); if (!text) return toast('Write something first');
+    const { error } = await sb.from('comments').update({ content: text, edited_at: new Date().toISOString() }).eq('id', +id).eq('user_id', S.user.id);
+    if (error) return toast('Could not save');
+    const p = findPost(el.dataset.p), c = p && p.cm.find(x => String(x.id) === String(id)); if (c) { c.t = text; c.ed = true; }
+    S.editC = null; repaint();
+  },
+  cdel: async (id, el) => {
+    if (!confirm('Delete this comment?')) return;
+    const { error } = await sb.from('comments').delete().eq('id', +id).eq('user_id', S.user.id);
+    if (error) return toast('Could not delete');
+    const p = findPost(el.dataset.p); if (p) p.cm = p.cm.filter(x => String(x.id) !== String(id) && String(x.pid) !== String(id));
+    repaint(); toast('Comment deleted');
+  },
+  pedit: id => {
+    const p = findPost(id); if (!p) return;
+    sheet(`<h2>Edit post</h2><div class="fld"><textarea id="et" data-mention maxlength="3000">${esc(p.text || '')}</textarea></div><button class="btn" id="etbtn" data-a="psaveedit" data-id="${p.id}">Save</button>`);
+  },
+  psaveedit: async id => {
+    const p = findPost(id); if (!p) return; const v = $('#et').value.trim();
+    if (!v && !p.media.length) return toast('A post needs text or photos');
+    busy('#etbtn', true, '...');
+    const { error } = await sb.from('posts').update({ content: v, edited_at: new Date().toISOString() }).eq('id', p.id).eq('user_id', S.user.id);
+    if (error) { busy('#etbtn', false, 'Save'); return toast('Could not save'); }
+    p.text = v; p.ed = true; closeSheet(); repaint(); saveMentions(v, p.id); toast('Post updated');
+  },
+
+  attach: () => sheet(`<h2>Send</h2>
+    <button class="optrow" data-a="pick" data-k="cph">📷 Photo or video</button>
+    <button class="optrow" data-a="pick" data-k="ccam">📸 Camera</button>
+    <button class="optrow" data-a="pick" data-k="cfile">📎 File or music</button>`),
+  pick: (id, el) => { closeSheet(); const f = $('#' + el.dataset.k); if (f) f.click(); },
+  mic: () => startRec(),
+  recsend: () => stopRec(false),
+  reccancel: () => stopRec(true),
+  cbarx: () => { if (S.editM) { const i = $('#mi'); if (i) i.value = ''; } S.reply = null; S.editM = null; paintCbar(); },
+  emo: (id, el) => { const panel = $(el.dataset.p); if (!panel) return; panel.hidden = !panel.hidden; if (!panel.hidden) panel.innerHTML = emojiPanel(el.dataset.t, el.dataset.p); },
+  etab: (id, el) => { const panel = $(el.dataset.p); if (panel) panel.innerHTML = emojiPanel(el.dataset.t, el.dataset.p, el.dataset.k); },
+  epick: (id, el) => {
+    const i = $(el.dataset.t); if (!i) return;
+    const s = i.selectionStart == null ? i.value.length : i.selectionStart, e2 = i.selectionEnd == null ? s : i.selectionEnd, em = el.dataset.e;
+    i.value = i.value.slice(0, s) + em + i.value.slice(e2);
+    try { i.selectionStart = i.selectionEnd = s + em.length; } catch (x) {}
+    i.dispatchEvent(new Event('input', { bubbles: true }));
+  },
+  mview: (id, el) => { const s = S.sig[el.dataset.p]; if (s) openViewer([{ type: 'image', url: s.url }], 0, true); },
+  mfile: async (id, el) => {
+    const { data, error } = await sb.storage.from('chat-media').createSignedUrl(el.dataset.p, 120, { download: el.dataset.n });
+    if (error || !data) return toast('Could not open this file');
+    location.assign(data.signedUrl);
+  },
+  mmenu: id => {
+    const m = msgById(id); if (!m || m.del) return;
+    const textual = m.t && !SHARE_RE.test(m.t);
+    sheet(`<h2>Message</h2>
+      <button class="optrow" data-a="mreply" data-id="${m.id}">Reply</button>
+      ${textual ? `<button class="optrow" data-a="mcopy" data-id="${m.id}">Copy text</button>` : ''}
+      <button class="optrow" data-a="mfwd" data-id="${m.id}">Forward</button>
+      ${m.me && !m.media && textual ? `<button class="optrow" data-a="medit" data-id="${m.id}">Edit</button>` : ''}
+      ${m.me ? `<button class="optrow red" data-a="mdel" data-id="${m.id}">Delete</button>` : ''}`);
+  },
+  mreply: id => { const m = msgById(id); closeSheet(); if (!m) return; S.reply = { id: m.id, me: m.me }; S.editM = null; paintCbar(); const i = $('#mi'); if (i) i.focus(); },
+  mcopy: id => { const m = msgById(id); closeSheet(); if (m && m.t) { try { navigator.clipboard.writeText(m.t); } catch (e) {} toast('Copied'); } },
+  mfwd: id => { const m = msgById(id); if (!m) return; closeSheet(); openShare('msg', m.id); },
+  medit: id => { const m = msgById(id); closeSheet(); if (!m) return; S.editM = { id: m.id }; S.reply = null; const i = $('#mi'); if (i) { i.value = m.t; i.focus(); } paintCbar(); },
+  mdel: async id => {
+    const m = msgById(id); closeSheet(); if (!m) return;
+    if (!confirm('Delete this message for everyone?')) return;
+    const { error } = await sb.rpc('delete_message', { mid: m.id });
+    if (error) return toast('Could not delete');
+    m.del = true; m.t = ''; m.media = null; paintMsgs(curThread()); toast('Message deleted');
   },
   share: id => openShare('post', id),
   thread: id => openThread(id),
-  back: () => { clearInterval(S.poll); S.openThread = null; S.prof = null; $('#over').innerHTML = ''; render(true); if (S.tab === 'chat') refresh(); },
+  back: () => { stopRecCancel(); S.reply = null; S.editM = null; clearInterval(S.poll); S.openThread = null; S.prof = null; $('#over').innerHTML = ''; render(true); if (S.tab === 'chat') refresh(); },
   send: id => sendMsg(id),
   cat: id => { S.cat = id; $('#cats').innerHTML = catChips(); $('#grid').innerHTML = gridHTML(); },
   opt: id => { S.opt = id; $('#opts').innerHTML = optChips(); $('#grid').innerHTML = gridHTML(); },
@@ -1249,7 +1488,7 @@ const ACT = {
   newpost: () => {
     S.postVis = 'public'; S.allowDl = false; S.drafts = [];
     sheet(`<h2>New post</h2>
-      <div class="fld"><textarea id="pt" data-mention maxlength="3000" placeholder="What's on your mind? Type @ to mention someone"></textarea></div>
+      <div class="fld"><textarea id="pt" data-mention maxlength="3000" placeholder="What's on your mind? Type @ to mention someone"></textarea><button class="chip" type="button" style="margin-top:8px" data-a="emo" data-t="#pt" data-p="#emop2">😊 Emoji</button><div id="emop2" class="emop" hidden></div></div>
       <div class="fld"><label class="up"><input type="file" id="files" accept="image/*,video/mp4,video/webm,video/quicktime" multiple hidden><span id="prev">${I.plus}</span><span id="addtxt">Add photos or videos</span></label><div class="thumbs" id="thumbs"></div></div>
       <div class="fld"><label>Who can see this post?</label><div class="seg c3" id="pvs">${[['public', 'Public'], ['friends', 'Friends'], ['private', 'Only me']].map(([k, l]) => `<button data-a="pvsel" data-id="${k}" class="${k === 'public' ? 'on' : ''}">${l}</button>`).join('')}</div></div>
       <div class="srow" style="padding:6px 0 14px;border:0"><div><div class="lbl">Allow saving</div><div class="ls">Let people save your photos and videos to their phone</div></div><button class="switch" id="dlsw" role="switch" aria-checked="false" data-a="tgldl"><i></i></button></div>
@@ -1297,11 +1536,13 @@ const ACT = {
     closeSheet(); render(true); toast('Saved');
   }
 };
+
 document.addEventListener('click', e => {
   const rb = $('#rxbar'); if (rb && !e.target.closest('#rxbar')) rb.remove();
   const a = e.target.closest('[data-a]'); if (!a) return;
   if (a.classList.contains('bd') && e.target !== a) return;
   if (a.dataset.a === 'like' && S.lpFired) { S.lpFired = false; return; }
+  if (a.dataset.a === 'mmenu' && e.target.closest('audio,video')) return;
   const f = ACT[a.dataset.a]; if (f) f(a.dataset.id, a);
 });
 document.addEventListener('submit', e => { if (e.target.id === 'af') { e.preventDefault(); doAuth(); } });
@@ -1329,3 +1570,6 @@ async function boot() {
   if (data && data.session) enter(data.session.user); else showAuth();
 }
 boot();
+
+
+/* end of app.js */
