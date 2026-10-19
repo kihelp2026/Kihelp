@@ -48,7 +48,7 @@ const S = {
   tab: 'home', cat: 'All', opt: 'all', q: '', open: new Set(),
   mode: 'system', accent: 'auto', saver: false, lang: 'en', loaded: new Set(),
   user: null, profile: null, pf: {}, posts: [], products: [], saved: new Set(), threads: [], notes: [],
-  me: { posts: 0, following: 0, followers: 0, videos: 0 }, videos: [], myVideos: [], muted: true, viewed: new Set(), focusVideo: null, savedPosts: new Set(), prof: null, profPosts: [], savedList: [], myPosts: [], reqs: [], postVis: 'public', allowDl: false, drafts: [], viewer: null, onePost: [], focusPost: null, share: null, following: new Set(), fl: null, reply: null, editM: null, editC: null, replyC: null, rec: null, sig: {}, pc: { phone: null, allow_phone_search: false, allow_email_search: false }, ready: {}, authMode: 'login', openThread: null, sellOpt: 'fixed'
+  me: { posts: 0, following: 0, followers: 0, videos: 0 }, videos: [], myVideos: [], muted: true, viewed: new Set(), focusVideo: null, savedPosts: new Set(), prof: null, profPosts: [], savedList: [], myPosts: [], reqs: [], postVis: 'public', allowDl: false, drafts: [], viewer: null, onePost: [], focusPost: null, share: null, following: new Set(), fl: null, reply: null, editM: null, editC: null, replyC: null, rec: null, sig: {}, stories: { mine: null, others: [] }, sv: null, sc: null, pc: { phone: null, allow_phone_search: false, allow_email_search: false }, ready: {}, authMode: 'login', openThread: null, sellOpt: 'fixed'
 };
 const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
 try { Object.assign(S, JSON.parse(store.get('kihelp.settings') || '{}')); } catch (e) {}
@@ -232,7 +232,7 @@ async function loadVideos() {
 async function refresh() {
   const t = S.tab;
   try {
-    if (t === 'home') await loadFeed();
+    if (t === 'home') { await loadFeed(); loadStories().then(afterBg).catch(() => {}); if (!S.ready.video) loadVideos().then(afterBg).catch(() => {}); }
     else if (t === 'market') await loadProducts();
     else if (t === 'chat') await loadThreads();
     else if (t === 'alerts') await loadAlerts();
@@ -302,7 +302,7 @@ async function enter(user) {
 }
 function resetSession() {
   clearInterval(S.poll); S.openThread = null;
-  Object.assign(S, { user: null, profile: null, pf: {}, posts: [], products: [], saved: new Set(), threads: [], notes: [], videos: [], myVideos: [], savedPosts: new Set(), prof: null, profPosts: [], savedList: [], myPosts: [], reqs: [], following: new Set(), fl: null, ready: {}, authMode: 'login', pc: { phone: null, allow_phone_search: false, allow_email_search: false } });
+  Object.assign(S, { user: null, profile: null, pf: {}, posts: [], products: [], saved: new Set(), threads: [], notes: [], videos: [], myVideos: [], savedPosts: new Set(), prof: null, profPosts: [], savedList: [], myPosts: [], reqs: [], following: new Set(), fl: null, stories: { mine: null, others: [] }, ready: {}, authMode: 'login', pc: { phone: null, allow_phone_search: false, allow_email_search: false } });
   $('#over').innerHTML = ''; closeSheet(); showAuth();
 }
 
@@ -374,8 +374,10 @@ function postCard(p) {
 }
 function viewHome() {
   if (gate()) return gate();
-  if (!S.posts.length) return `<div class="empty" style="padding:60px 24px">No posts yet.<br>Be the first. Tap <b>${tr('post')}</b> at the top.</div>`;
-  return S.posts.map(postCard).join('');
+  const row = storiesRow();
+  if (!S.posts.length) return row + `<div class="empty" style="padding:60px 24px">No posts yet.<br>Be the first. Tap <b>${tr('post')}</b> at the top.</div>` + videoStrip();
+  const at = Math.min(2, S.posts.length - 1);
+  return row + S.posts.map((p, i) => postCard(p) + (i === at ? videoStrip() : '')).join('');
 }
 const vgridHTML = list => list.length ? `<div class="vgrid">${list.map(v => `<button data-a="watch" data-id="${v.id}" aria-label="Watch video">${S.saver ? `<div class="ph" style="--h:${hue(v.id)};width:100%;height:100%"></div>` : `<video src="${esc(v.video_url)}#t=0.1" muted playsinline preload="metadata"></video>`}<span>${Number(v.views) || 0} views</span></button>`).join('')}</div>` : '';
 function viewVideo() {
@@ -494,7 +496,7 @@ async function paintVComments(id) {
 /* ---------- sheets, chat, toast ---------- */
 function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 2400); }
 function sheet(html) { $('#sheet').innerHTML = `<div class="bd" data-a="close"></div><div class="panel" role="dialog">${html}</div>`; $('#sheet').classList.add('open'); }
-function closeSheet() { if (S.draft && S.draft.prev) URL.revokeObjectURL(S.draft.prev); S.draft = null; (S.drafts || []).forEach(d => URL.revokeObjectURL(d.prev)); S.drafts = []; $('#sheet').classList.remove('open'); $('#sheet').innerHTML = ''; }
+function closeSheet() { if (S.draft && S.draft.prev) URL.revokeObjectURL(S.draft.prev); S.draft = null; (S.drafts || []).forEach(d => URL.revokeObjectURL(d.prev)); S.drafts = []; $('#sheet').classList.remove('open'); $('#sheet').innerHTML = ''; if (S.sv && S.sv.paused && !S.sv.held) pauseStory(false); }
 
 /* ---------- uploads ---------- */
 const MAXV = 50 * 1024 * 1024;
@@ -522,10 +524,12 @@ async function uploadMedia(file) {
 }
 const upErr = e => /mime|type/i.test(e.message || '') ? 'This file type is not supported. Use JPG, PNG or MP4.' : (e.message || 'Upload failed');
 const uploadField = (accept, label) => `<label class="up"><input type="file" id="file" accept="${accept}" hidden><span id="prev">${I.plus}</span>${label}</label>`;
-function bindUpload() {
+function bindUpload(o) {
+  o = o || {};
   const f = $('#file'); if (!f) return;
-  f.onchange = () => {
-    const file = f.files[0]; if (!file) return;
+  f.onchange = async () => {
+    let file = f.files[0]; if (!file) return;
+    if (o.edit && file.type.startsWith('image/') && file.type !== 'image/gif') file = (await editImage(file, o.ratio ? { ratio: o.ratio } : {})) || file;
     if (S.draft && S.draft.prev) URL.revokeObjectURL(S.draft.prev);
     const type = file.type.startsWith('video') ? 'video' : 'image', prev = URL.createObjectURL(file);
     S.draft = { file, type, prev };
@@ -983,7 +987,7 @@ document.addEventListener('input', e => {
 });
 function renderThumbs() {
   const box = $('#thumbs'); if (!box) return;
-  box.innerHTML = S.drafts.map((d, i) => `<div class="th">${d.type === 'video' ? `<video src="${d.prev}" muted playsinline preload="metadata"></video>` : `<img src="${d.prev}" alt="">`}<button data-a="rmth" data-id="${i}" aria-label="Remove">${I.x}</button></div>`).join('');
+  box.innerHTML = S.drafts.map((d, i) => `<div class="th">${d.type === 'video' ? `<video src="${d.prev}" muted playsinline preload="metadata"></video>` : `<img src="${d.prev}" alt="">`}${d.type === 'image' ? `<button class="thed" data-a="edth" data-id="${i}" aria-label="Edit photo">✎</button>` : ''}<button data-a="rmth" data-id="${i}" aria-label="Remove">${I.x}</button></div>`).join('');
   const t = $('#addtxt'); if (t) t.textContent = S.drafts.length ? 'Add more (' + S.drafts.length + '/10)' : 'Add photos or videos';
 }
 function bindMulti() {
@@ -1053,6 +1057,225 @@ function paintFollowList() {
     : `<div class="empty" style="padding:50px 24px">${L.kind === 'followers' ? 'No followers yet.' : 'Not following anyone yet.'}</div>`;
 }
 
+/* ---------- stories, short-video strip, image editor ---------- */
+const afterBg = () => { if (S.tab === 'home' && !$('#over').innerHTML) render(true); };
+async function loadStories() {
+  const { data, error } = await sb.from('stories').select('id,user_id,kind,media_url,text,bg,caption,poll_q,poll_a,poll_b,question,visibility,created_at,expires_at').gt('expires_at', new Date().toISOString()).order('created_at', { ascending: true }).limit(300);
+  if (error) throw error;
+  const items = (data || []).filter(s => s.kind === 'text' || safeUrl(s.media_url));
+  const ids = items.map(s => s.id); let seen = new Set();
+  if (ids.length) { const v = await sb.from('story_views').select('story_id').eq('user_id', S.user.id).in('story_id', ids); seen = new Set((v.data || []).map(x => x.story_id)); }
+  await loadProfiles(items.map(s => s.user_id));
+  const map = new Map();
+  items.forEach(s => { if (!map.has(s.user_id)) map.set(s.user_id, { uid: s.user_id, items: [] }); map.get(s.user_id).items.push(Object.assign({}, s, { seen: seen.has(s.id) || s.user_id === S.user.id })); });
+  const groups = [...map.values()].map(g => Object.assign(g, { unseen: g.items.some(i => !i.seen) }));
+  const last = g => new Date(g.items[g.items.length - 1].created_at).getTime();
+  S.stories = { mine: groups.find(g => g.uid === S.user.id) || null, others: groups.filter(g => g.uid !== S.user.id).sort((a, b) => (Number(b.unseen) - Number(a.unseen)) || (last(b) - last(a))) };
+}
+function storiesRow() {
+  const st = S.stories, me = S.user.id;
+  const add = `<button class="story" data-a="snew"><span class="ring add">${avOf(me, 56)}<i class="plusb">+</i></span>Add story</button>`;
+  const mine = st.mine ? `<button class="story" data-a="sopen" data-id="${me}"><span class="ring">${avOf(me, 56)}</span>Your story</button>` : '';
+  const others = st.others.map(g => `<button class="story" data-a="sopen" data-id="${g.uid}"><span class="ring ${g.unseen ? '' : 'seen'}">${avOf(g.uid, 56)}</span>${esc(nameOf(g.uid).split(' ')[0])}</button>`).join('');
+  return `<div class="stories">${add}${mine}${others}</div>`;
+}
+function videoStrip() {
+  if (!S.videos.length) return '';
+  const cards = S.videos.slice(0, 10).map(v => `<button class="vcard" data-a="watch" data-id="${v.id}" aria-label="Watch video">${S.saver ? `<div class="ph" style="--h:${hue(v.id)};position:absolute;inset:0"></div>` : `<video src="${esc(v.url)}#t=0.1" muted playsinline preload="metadata"></video>`}<span class="vcn">${esc(nameOf(v.uid))}</span><span class="vcv">${v.views} views</span></button>`).join('');
+  return `<div class="vstrip"><h3 class="sub">Short videos</h3><div class="vrail">${cards}</div></div>`;
+}
+const storyGroups = () => [S.stories.mine, ...S.stories.others].filter(Boolean);
+function openStory(uid, from) {
+  const seq = storyGroups(), gi = seq.findIndex(g => g.uid === uid); if (gi < 0) return;
+  const first = seq[gi].items.findIndex(i => !i.seen);
+  S.sv = { seq, gi, ii: from != null ? from : Math.max(0, first), elapsed: 0, dur: 5000, paused: false, held: false };
+  $('#story').classList.add('open'); showStoryItem();
+}
+function pauseStory(on) { const v = S.sv; if (!v) return; v.paused = on; const m = $('#svv'); if (m) { if (on) m.pause(); else m.play().catch(() => {}); } }
+function showStoryItem() {
+  const v = S.sv; if (!v) return;
+  const g = v.seq[v.gi], it = g && g.items[v.ii]; if (!it) return closeStory();
+  clearInterval(v.timer); v.it = it; v.elapsed = 0; v.dur = 5000; v.paused = false;
+  const mine = g.uid === S.user.id, name = nameOf(g.uid);
+  if (!mine && !it.seen) { it.seen = true; sb.from('story_views').insert({ story_id: it.id, user_id: S.user.id }).then(() => {}); g.unseen = g.items.some(i => !i.seen); }
+  const bars = g.items.map((_, i) => `<span class="spb"><i data-pb="${i}" style="width:${i < v.ii ? 100 : 0}%"></i></span>`).join('');
+  const body = it.kind === 'text' ? `<div class="sv-text bg-${esc(it.bg || 'teal')}">${esc(it.text)}</div>` : it.kind === 'video' ? `<video id="svv" src="${esc(it.media_url)}" playsinline autoplay></video>` : `<img id="svi" src="${esc(it.media_url)}" alt="">`;
+  $('#story').innerHTML = `<div class="sv-wrap">
+    <div class="sv-bars">${bars}</div>
+    <div class="sv-head"><button class="svu" data-a="suser" data-id="${g.uid}">${avOf(g.uid, 36)}<b>${esc(name)}</b><small>${ago(it.created_at)}</small></button><span style="flex:1"></span>${mine ? `<button class="ibtn svb" data-a="smenu" aria-label="More">${I.more}</button>` : ''}<button class="ibtn svb" data-a="sclose" aria-label="Close">${I.x}</button></div>
+    <div class="sv-body">${body}</div>
+    <div class="sv-zone l" data-a="sprev"></div><div class="sv-zone r" data-a="snext"></div>
+    ${it.caption ? `<div class="sv-cap">${esc(it.caption)}</div>` : ''}
+    ${it.question ? `<div class="sv-q"><b>${esc(it.question)}</b>${mine ? '<small>Answers arrive in your messages</small>' : '<div class="sv-qa"><input id="sqa" maxlength="300" placeholder="Type your answer"><button class="btn sm2" data-a="sqsend">Send</button></div>'}</div>` : ''}
+    ${it.poll_q ? '<div class="sv-poll" id="svpoll"></div>' : ''}
+    <div class="sv-foot">${mine ? `<button class="sv-views" data-a="sviews">👁 <span id="svc">...</span> views</button>` : `<div class="sv-rx">${['❤️', '😂', '😮', '😢', '👏', '🔥'].map(e => `<button data-a="sreact" data-e="${e}">${e}</button>`).join('')}</div><div class="sv-reply"><input id="sri" maxlength="500" placeholder="Reply to ${esc(name)}..."><button class="send" data-a="srsend" aria-label="Send reply">${I.send}</button></div>`}</div></div>`;
+  const vid = $('#svv'), img = $('#svi');
+  if (vid) { vid.onloadedmetadata = () => { v.dur = Math.min(60000, Math.max(1500, vid.duration * 1000)); }; vid.onended = () => storyNext(); }
+  if (img) img.onload = () => { v.elapsed = 0; };
+  v.timer = setInterval(() => {
+    if (S.sv !== v || v.paused) return;
+    if (vid && vid.currentTime) v.elapsed = vid.currentTime * 1000; else v.elapsed += 50;
+    const bar = document.querySelector(`[data-pb="${v.ii}"]`); if (bar) bar.style.width = Math.min(100, v.elapsed / v.dur * 100) + '%';
+    if (v.elapsed >= v.dur) storyNext();
+  }, 50);
+  storyExtras(it);
+}
+function storyNext() {
+  const v = S.sv; if (!v) return; const g = v.seq[v.gi];
+  if (v.ii < g.items.length - 1) { v.ii++; showStoryItem(); }
+  else if (v.gi < v.seq.length - 1) { v.gi++; v.ii = Math.max(0, v.seq[v.gi].items.findIndex(i => !i.seen)); showStoryItem(); }
+  else closeStory();
+}
+function storyPrev() {
+  const v = S.sv; if (!v) return;
+  if (v.ii > 0) { v.ii--; showStoryItem(); } else if (v.gi > 0) { v.gi--; v.ii = v.seq[v.gi].items.length - 1; showStoryItem(); } else showStoryItem();
+}
+function closeStory() {
+  const v = S.sv; if (v) clearInterval(v.timer); S.sv = null;
+  const s = $('#story'); s.querySelectorAll('video').forEach(x => x.pause()); s.classList.remove('open'); s.innerHTML = ''; afterBg();
+}
+async function storyExtras(it) {
+  try {
+    if (it.poll_q) { const { data } = await sb.from('story_votes').select('choice,user_id').eq('story_id', it.id); it.votes = data || []; paintPoll(it); }
+    if (it.user_id === S.user.id) { const { data } = await sb.from('story_views').select('user_id,created_at').eq('story_id', it.id).order('created_at', { ascending: false }); it.viewers = data || []; const c = $('#svc'); if (c && S.sv && S.sv.it === it) c.textContent = it.viewers.length; }
+  } catch (e) {}
+}
+function paintPoll(it) {
+  const box = $('#svpoll'); if (!box || !S.sv || S.sv.it !== it) return;
+  const votes = it.votes || [], mv = votes.find(x => x.user_id === S.user.id), n1 = votes.filter(x => x.choice === 1).length, n2 = votes.filter(x => x.choice === 2).length, tot = n1 + n2;
+  const show = mv || it.user_id === S.user.id, pc = n => tot ? Math.round(n / tot * 100) : 0;
+  const opt = (c, label, n) => show ? `<div class="po r ${mv && mv.choice === c ? 'mine' : ''}"><i style="width:${pc(n)}%"></i><span>${esc(label)}</span><b>${pc(n)}%</b></div>` : `<button class="po" data-a="svote" data-c="${c}">${esc(label)}</button>`;
+  box.innerHTML = `<div class="pq">${esc(it.poll_q)}</div>${opt(1, it.poll_a, n1)}${opt(2, it.poll_b, n2)}<small>${tot} vote${tot === 1 ? '' : 's'}</small>`;
+}
+async function storyDM(it, body) { const { error } = await sb.from('messages').insert({ sender_id: S.user.id, receiver_id: it.user_id, body }); return !error; }
+document.addEventListener('pointerdown', e => {
+  const z = e.target.closest('.sv-zone'); if (!z || !S.sv) return;
+  S.sv.held = false; clearTimeout(S.sv.holdT);
+  S.sv.holdT = setTimeout(() => { if (S.sv) { S.sv.held = true; pauseStory(true); } }, 220);
+});
+['pointerup', 'pointercancel'].forEach(ev => document.addEventListener(ev, () => { const v = S.sv; if (!v) return; clearTimeout(v.holdT); if (v.held) pauseStory(false); }));
+document.addEventListener('focusin', e => { if (S.sv && (e.target.id === 'sri' || e.target.id === 'sqa')) pauseStory(true); });
+document.addEventListener('focusout', e => { if (S.sv && (e.target.id === 'sri' || e.target.id === 'sqa')) pauseStory(false); });
+
+/* story composer */
+const BGS = ['teal', 'sunset', 'violet', 'night', 'forest', 'rose'];
+function openStoryComposer() {
+  S.sc = { kind: null, file: null, prev: null, text: '', bg: 'teal', caption: '', poll: null, qOn: false, question: '', vis: 'public' };
+  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="scback" aria-label="Back">${I.back}</button><b class="ttl">New story</b></header><div class="setbody" id="scbody"></div>
+    <input type="file" id="scf" accept="image/*,video/mp4,video/webm,video/quicktime" hidden><input type="file" id="scc" accept="image/*" capture="environment" hidden></div>`;
+  ['scf', 'scc'].forEach(k => { $('#' + k).onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) storyPicked(f); }; });
+  paintStoryComposer();
+}
+async function storyPicked(file) {
+  const c = S.sc; if (!c) return;
+  if (file.type.startsWith('video')) {
+    if (file.size > MAXV) return toast('This video is over 50 MB');
+    const prev = URL.createObjectURL(file), dur = await videoDuration(prev);
+    if (isFinite(dur) && dur > 61) { URL.revokeObjectURL(prev); return toast('Story videos can be up to 60 seconds'); }
+    if (c.prev) URL.revokeObjectURL(c.prev); Object.assign(c, { kind: 'video', file, prev });
+  } else if (file.type.startsWith('image/')) {
+    let f = file; if (file.type !== 'image/gif') f = (await editImage(file)) || file;
+    if (c.prev) URL.revokeObjectURL(c.prev); Object.assign(c, { kind: 'photo', file: f, prev: URL.createObjectURL(f) });
+  } else return toast('Choose a photo or video');
+  paintStoryComposer();
+}
+function paintStoryComposer() {
+  const c = S.sc, b = $('#scbody'); if (!c || !b) return;
+  if (!c.kind) { b.innerHTML = `<div style="padding:16px;display:grid;gap:12px"><button class="btn" data-a="scpick" data-k="scf">📷 Photo or video</button><button class="btn alt" data-a="scpick" data-k="scc">📸 Take a photo</button><button class="btn alt" data-a="sctype">Aa Text story</button><div class="ls" style="text-align:center">Stories disappear after 24 hours.</div></div>`; return; }
+  const prev = c.kind === 'text' ? `<div class="scprev sv-text bg-${c.bg}"><textarea id="sctext" maxlength="300" placeholder="Type your story">${esc(c.text)}</textarea></div>`
+    : `<div class="scprev">${c.kind === 'video' ? `<video src="${c.prev}" controls playsinline muted></video>` : `<img src="${c.prev}" alt="">`}</div>`;
+  b.innerHTML = `${prev}<div style="padding:0 16px 24px">
+    ${c.kind === 'text' ? `<div class="dots" style="margin:8px 0 12px">${BGS.map(k => `<button class="dotb bg-${k} ${c.bg === k ? 'on' : ''}" data-a="scbg" data-id="${k}" aria-label="${k}"></button>`).join('')}</div>` : ''}
+    ${c.kind === 'photo' ? `<button class="btn alt" style="margin:8px 0" data-a="sedit">Edit photo</button>` : ''}
+    <div class="fld"><label for="sccap">Caption (optional)</label><input id="sccap" maxlength="200" value="${esc(c.caption)}"></div>
+    <div class="fld"><label>Add to your story</label><div class="dots"><button class="chip ${c.poll ? 'on' : ''}" data-a="scpoll">Poll</button><button class="chip ${c.qOn ? 'on' : ''}" data-a="scq">Question</button></div></div>
+    ${c.poll ? `<div class="fld"><input id="spq" maxlength="100" placeholder="Poll question" value="${esc(c.poll.q)}"><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px"><input id="spa" maxlength="40" placeholder="Option 1" value="${esc(c.poll.a)}"><input id="spb" maxlength="40" placeholder="Option 2" value="${esc(c.poll.b)}"></div></div>` : ''}
+    ${c.qOn ? `<div class="fld"><input id="sqq" maxlength="100" placeholder="Ask your friends a question" value="${esc(c.question)}"></div>` : ''}
+    <div class="fld"><label>Who can see it?</label><div class="seg">${[['public', 'Public'], ['friends', 'Friends']].map(([k, l]) => `<button class="${c.vis === k ? 'on' : ''}" data-a="scvis" data-id="${k}">${l}</button>`).join('')}</div></div>
+    <button class="btn" id="scgo" data-a="sgo">Share story</button></div>`;
+}
+document.addEventListener('input', e => {
+  const c = S.sc; if (!c) return; const id = e.target.id, v = e.target.value;
+  if (id === 'sctext') c.text = v; else if (id === 'sccap') c.caption = v; else if (id === 'sqq') c.question = v;
+  else if (c.poll && id === 'spq') c.poll.q = v; else if (c.poll && id === 'spa') c.poll.a = v; else if (c.poll && id === 'spb') c.poll.b = v;
+});
+async function publishStory() {
+  const c = S.sc; if (!c || !c.kind) return;
+  if (c.kind === 'text' && !c.text.trim()) return toast('Write something first');
+  const poll = c.poll && c.poll.q.trim() && c.poll.a.trim() && c.poll.b.trim() ? c.poll : null;
+  if (c.poll && !poll) return toast('Fill in the poll question and both options, or remove the poll');
+  busy('#scgo', true, c.kind === 'text' ? '...' : 'Uploading...');
+  let url = null;
+  if (c.kind !== 'text') { try { url = (await uploadMedia(c.file)).url; } catch (e) { busy('#scgo', false, 'Share story'); return toast(upErr(e)); } }
+  const row = { user_id: S.user.id, kind: c.kind, media_url: url, text: c.kind === 'text' ? c.text.trim() : null, bg: c.kind === 'text' ? c.bg : null, caption: c.caption.trim() || null, visibility: c.vis };
+  if (poll) Object.assign(row, { poll_q: poll.q.trim(), poll_a: poll.a.trim(), poll_b: poll.b.trim() });
+  if (c.qOn && c.question.trim()) row.question = c.question.trim();
+  const { error } = await sb.from('stories').insert(row);
+  if (error) { busy('#scgo', false, 'Share story'); return toast('Could not share your story'); }
+  if (c.prev) URL.revokeObjectURL(c.prev); S.sc = null; $('#over').innerHTML = '';
+  try { await loadStories(); } catch (e) {} render(true); toast('Story shared');
+}
+
+/* image editor: crop, rotate, filters, brightness and contrast */
+function pix(d, p) {
+  const b = p.b || 1, c = p.c || 1, s = p.s == null ? 1 : p.s, g = p.gray || 0, se = p.sepia || 0, t = p.tint || [1, 1, 1];
+  for (let i = 0; i < d.length; i += 4) {
+    let r = d[i], gg = d[i + 1], bl = d[i + 2];
+    if (se) { const tr2 = .393 * r + .769 * gg + .189 * bl, tg = .349 * r + .686 * gg + .168 * bl, tb = .272 * r + .534 * gg + .131 * bl; r += (tr2 - r) * se; gg += (tg - gg) * se; bl += (tb - bl) * se; }
+    if (g) { const l = .299 * r + .587 * gg + .114 * bl; r += (l - r) * g; gg += (l - gg) * g; bl += (l - bl) * g; }
+    if (s !== 1) { const l2 = .299 * r + .587 * gg + .114 * bl; r = l2 + (r - l2) * s; gg = l2 + (gg - l2) * s; bl = l2 + (bl - l2) * s; }
+    r *= t[0] * b; gg *= t[1] * b; bl *= t[2] * b;
+    d[i] = (r - 128) * c + 128; d[i + 1] = (gg - 128) * c + 128; d[i + 2] = (bl - 128) * c + 128;
+  }
+}
+function editImage(file, opts) {
+  opts = opts || {};
+  return new Promise(async resolve => {
+    let bmp; try { bmp = await createImageBitmap(file); } catch (e) { return resolve(null); }
+    const st = { rot: 0, flip: false, ratio: opts.ratio || 'orig', filter: 'none', bri: 100, con: 100, zoom: 100 };
+    const FL = { none: ['Normal', {}], mono: ['B&W', { gray: 1 }], warm: ['Warm', { sepia: .25, s: 1.2, tint: [1.04, 1, .94] }], cool: ['Cool', { s: 1.1, tint: [.95, 1, 1.06] }], vivid: ['Vivid', { s: 1.5, c: 1.1 }], fade: ['Fade', { c: .85, b: 1.08, s: .8 }] };
+    const ratios = opts.ratio ? [[opts.ratio, 'Crop ' + opts.ratio]] : [['orig', 'Original'], ['1:1', 'Square'], ['4:5', '4:5'], ['9:16', 'Story'], ['16:9', 'Wide']];
+    const ov = document.createElement('div'); ov.className = 'imged';
+    ov.innerHTML = `<div class="ie-top"><button class="ie-b" data-ie="cancel">Skip</button><b>Edit photo</b><button class="ie-b pri" data-ie="done">Done</button></div>
+      <div class="ie-stage"><canvas id="iec"></canvas></div>
+      <div class="ie-tools">
+        <div class="ie-row">${ratios.map(([k, l]) => `<button class="ie-c ${st.ratio === k ? 'on' : ''}" data-ie="ratio" data-v="${k}">${l}</button>`).join('')}<button class="ie-c" data-ie="rot">Rotate</button><button class="ie-c" data-ie="flip">Flip</button></div>
+        <div class="ie-row">${Object.entries(FL).map(([k, a]) => `<button class="ie-c ${st.filter === k ? 'on' : ''}" data-ie="filter" data-v="${k}">${a[0]}</button>`).join('')}</div>
+        <label class="ie-l">Zoom <input type="range" min="100" max="250" value="100" data-ie="zoom"></label>
+        <label class="ie-l">Brightness <input type="range" min="50" max="150" value="100" data-ie="bri"></label>
+        <label class="ie-l">Contrast <input type="range" min="50" max="150" value="100" data-ie="con"></label>
+      </div>`;
+    $('#app').appendChild(ov);
+    const renderTo = (cv, maxSide) => {
+      const odd = st.rot % 2 === 1, sw = odd ? bmp.height : bmp.width, sh = odd ? bmp.width : bmp.height;
+      let rw = sw, rh = sh;
+      if (st.ratio !== 'orig') { const [a, b] = st.ratio.split(':').map(Number), r = a / b; if (sw / sh > r) { rh = sh; rw = sh * r; } else { rw = sw; rh = sw / r; } }
+      const z = st.zoom / 100, cw = rw / z, ch = rh / z, sc = Math.min(1, maxSide / Math.max(cw, ch));
+      cv.width = Math.max(1, Math.round(cw * sc)); cv.height = Math.max(1, Math.round(ch * sc));
+      const ctx = cv.getContext('2d');
+      ctx.save(); ctx.translate(cv.width / 2, cv.height / 2); ctx.rotate(st.rot * Math.PI / 2); if (st.flip) ctx.scale(-1, 1);
+      ctx.drawImage(bmp, -bmp.width * sc / 2, -bmp.height * sc / 2, bmp.width * sc, bmp.height * sc); ctx.restore();
+      if (st.filter !== 'none' || st.bri !== 100 || st.con !== 100) {
+        const p = Object.assign({}, FL[st.filter][1]); p.b = (p.b || 1) * st.bri / 100; p.c = (p.c || 1) * st.con / 100;
+        const d = ctx.getImageData(0, 0, cv.width, cv.height); pix(d.data, p); ctx.putImageData(d, 0, 0);
+      }
+    };
+    const redraw = () => renderTo($('#iec'), 900);
+    ov.addEventListener('click', e => {
+      const t = e.target.closest('[data-ie]'); if (!t || t.tagName === 'INPUT') return;
+      const k = t.dataset.ie;
+      if (k === 'cancel') { ov.remove(); resolve(null); return; }
+      if (k === 'done') { const cv = document.createElement('canvas'); renderTo(cv, 1600); cv.toBlob(b => { ov.remove(); resolve(b ? new File([b], 'edited.jpg', { type: 'image/jpeg' }) : null); }, 'image/jpeg', 0.9); return; }
+      if (k === 'rot') st.rot = (st.rot + 1) % 4; else if (k === 'flip') st.flip = !st.flip;
+      else if (k === 'ratio') { st.ratio = t.dataset.v; ov.querySelectorAll('[data-ie=ratio]').forEach(x => x.classList.toggle('on', x === t)); }
+      else if (k === 'filter') { st.filter = t.dataset.v; ov.querySelectorAll('[data-ie=filter]').forEach(x => x.classList.toggle('on', x === t)); }
+      redraw();
+    });
+    ov.addEventListener('input', e => { const t = e.target; if (!t.dataset || !t.dataset.ie) return; st[t.dataset.ie] = +t.value; redraw(); });
+    redraw();
+  });
+}
+
 /* ---------- settings + theme ---------- */
 function applyTheme() {
   const dark = S.mode === 'dark' || (S.mode === 'system' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
@@ -1098,7 +1321,7 @@ function openSettings() {
     <h3 class="sub">${tr('account')}</h3>
     <div class="srow"><div class="ls">${esc(S.user ? S.user.email : '')}</div></div>
     <div class="srow"><button class="lbl" data-a="logout" style="color:var(--coral)">${tr('logout')}</button></div>
-    <div class="ls" style="padding:16px">KiHelp 0.10</div>
+    <div class="ls" style="padding:16px">KiHelp 0.11</div>
   </div></div>`;
   document.querySelector('.setbody').scrollTop = scroll;
   showUsage();
@@ -1158,6 +1381,50 @@ const ACT = {
     p.adl = v; p.dl = true; closeSheet(); toast(v ? 'People can now save this' : 'Saving turned off');
   },
   search: () => openSearch(),
+  snew: () => openStoryComposer(),
+  sopen: id => openStory(id),
+  sclose: () => closeStory(),
+  sprev: () => storyPrev(),
+  snext: () => storyNext(),
+  suser: id => { closeStory(); openUser(id); },
+  smenu: () => { if (!S.sv) return; pauseStory(true); sheet(`<h2>Your story</h2><button class="optrow" data-a="sviews">Who viewed it</button><button class="optrow red" data-a="sdel">Delete story</button>`); },
+  sviews: async () => {
+    const v = S.sv; if (!v) return; const list = v.it.viewers || []; closeSheet(); pauseStory(true);
+    await loadProfiles(list.map(x => x.user_id));
+    sheet(`<h2>Viewed by ${list.length}</h2>${list.length ? list.map(x => `<div class="reqrow" style="padding-inline:0">${avOf(x.user_id, 40)}<div class="tx"><b>${esc(nameOf(x.user_id))}</b><div class="ls">${ago(x.created_at)}</div></div></div>`).join('') : '<div class="ls">No views yet.</div>'}`);
+  },
+  sdel: async () => {
+    const v = S.sv; if (!v) return; const it = v.it; closeSheet();
+    if (!confirm('Delete this story?')) return;
+    const { error } = await sb.from('stories').delete().eq('id', it.id).eq('user_id', S.user.id);
+    if (error) return toast('Could not delete');
+    const g = v.seq[v.gi]; g.items = g.items.filter(x => x.id !== it.id);
+    if (!g.items.length) { S.stories.mine = null; closeStory(); toast('Story deleted'); return; }
+    v.ii = Math.min(v.ii, g.items.length - 1); showStoryItem(); toast('Story deleted');
+  },
+  svote: async (id, el) => {
+    const v = S.sv; if (!v || !v.it) return; const it = v.it, c = +el.dataset.c;
+    const { error } = await sb.from('story_votes').insert({ story_id: it.id, user_id: S.user.id, choice: c });
+    if (error) return toast('Could not vote');
+    it.votes = (it.votes || []).concat([{ choice: c, user_id: S.user.id }]); paintPoll(it);
+  },
+  sreact: async (id, el) => { const it = S.sv && S.sv.it; if (!it) return; const ok = await storyDM(it, `${el.dataset.e} Reacted to your story`); toast(ok ? 'Reaction sent' : 'Could not send'); },
+  srsend: async () => { const it = S.sv && S.sv.it, i = $('#sri'), t = i && i.value.trim(); if (!it || !t) return; const ok = await storyDM(it, `↩️ Replied to your story: ${t}`); if (ok) { i.value = ''; i.blur(); toast('Reply sent'); } else toast('Could not send'); },
+  sqsend: async () => { const it = S.sv && S.sv.it, i = $('#sqa'), t = i && i.value.trim(); if (!it || !t) return; const ok = await storyDM(it, `💬 ${it.question}\n${t}`); if (ok) { i.value = ''; i.blur(); toast('Answer sent'); } else toast('Could not send'); },
+  scback: () => { const c = S.sc; if (c && c.prev) URL.revokeObjectURL(c.prev); S.sc = null; $('#over').innerHTML = ''; },
+  scpick: (id, el) => { const f = $('#' + el.dataset.k); if (f) f.click(); },
+  sctype: () => { if (S.sc) { S.sc.kind = 'text'; paintStoryComposer(); } },
+  scbg: id => { if (S.sc) { S.sc.bg = id; paintStoryComposer(); } },
+  scpoll: () => { const c = S.sc; if (c) { c.poll = c.poll ? null : { q: '', a: '', b: '' }; paintStoryComposer(); } },
+  scq: () => { const c = S.sc; if (c) { c.qOn = !c.qOn; paintStoryComposer(); } },
+  scvis: id => { if (S.sc) { S.sc.vis = id; paintStoryComposer(); } },
+  sedit: async () => { const c = S.sc; if (!c || !c.file) return; const f = await editImage(c.file); if (f) { URL.revokeObjectURL(c.prev); c.file = f; c.prev = URL.createObjectURL(f); paintStoryComposer(); } },
+  sgo: () => publishStory(),
+  edth: async id => {
+    const d = S.drafts[+id]; if (!d || d.type !== 'image') return;
+    const f = await editImage(d.file); if (!f) return;
+    URL.revokeObjectURL(d.prev); d.file = f; d.prev = URL.createObjectURL(f); renderThumbs();
+  },
   opensaved: () => openSaved(),
   blocked: () => openBlocked(),
   unblock2: async id => { const { error } = await sb.from('blocks').delete().eq('blocker_id', S.user.id).eq('blocked_id', id); if (error) return toast('Could not unblock'); toast('Unblocked'); openBlocked(); },
@@ -1468,7 +1735,7 @@ const ACT = {
       <div class="fld"><label for="sc">Category</label><select id="sc">${CATS.slice(1).map(c => `<option>${c}</option>`).join('')}</select></div>
       <div class="fld"><label for="sd">Description</label><textarea id="sd" maxlength="1000" placeholder="Condition, size, pickup or delivery"></textarea></div>
       <button class="btn" id="pubbtn" data-a="publish">Publish item</button>`);
-    bindUpload();
+    bindUpload({ edit: true });
   },
   sopt: id => { S.sellOpt = id; document.querySelectorAll('#so button').forEach(b => b.classList.toggle('on', b.dataset.id === id)); },
   publish: async () => {
@@ -1522,7 +1789,7 @@ const ACT = {
       <div class="fld"><label for="pc">Country</label><input id="pc" maxlength="50" value="${esc(p.country || '')}"></div>
       <div class="fld"><label for="pb">About you</label><textarea id="pb" maxlength="300">${esc(p.bio || '')}</textarea></div>
       <button class="btn" id="profbtn" data-a="saveprofile">Save</button>`);
-    bindUpload();
+    bindUpload({ edit: true, ratio: '1:1' });
   },
   saveprofile: async () => {
     const uname = $('#pu').value.trim().toLowerCase().replace(/^@/, '');
@@ -1543,6 +1810,7 @@ document.addEventListener('click', e => {
   if (a.classList.contains('bd') && e.target !== a) return;
   if (a.dataset.a === 'like' && S.lpFired) { S.lpFired = false; return; }
   if (a.dataset.a === 'mmenu' && e.target.closest('audio,video')) return;
+  if ((a.dataset.a === 'sprev' || a.dataset.a === 'snext') && S.sv && S.sv.held) { S.sv.held = false; return; }
   const f = ACT[a.dataset.a]; if (f) f(a.dataset.id, a);
 });
 document.addEventListener('submit', e => { if (e.target.id === 'af') { e.preventDefault(); doAuth(); } });
@@ -1555,6 +1823,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.id === 'mi') { const b = document.querySelector('[data-a="send"]'); if (b) b.click(); }
   if (e.key === 'Enter' && e.target.matches && e.target.matches('.lm')) e.target.click();
   if (e.key === 'Escape') { if (S.viewer) closeViewer(); else closeSheet(); }
+  if (S.sv && !/INPUT|TEXTAREA/.test(e.target.tagName || '')) { if (e.key === 'ArrowRight') storyNext(); else if (e.key === 'ArrowLeft') storyPrev(); else if (e.key === 'Escape') closeStory(); }
   if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && S.tab === 'video' && $('#vf') && !$('#over').innerHTML && !$('#sheet').classList.contains('open') && !/INPUT|TEXTAREA|SELECT/.test((e.target.tagName || ''))) {
     e.preventDefault(); $('#vf').scrollBy({ top: (e.key === 'ArrowDown' ? 1 : -1) * $('#vf').clientHeight, behavior: 'smooth' });
   }
