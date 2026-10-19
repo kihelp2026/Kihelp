@@ -48,7 +48,7 @@ const S = {
   tab: 'home', cat: 'All', opt: 'all', q: '', open: new Set(),
   mode: 'system', accent: 'auto', saver: false, lang: 'en', loaded: new Set(),
   user: null, profile: null, pf: {}, posts: [], products: [], saved: new Set(), threads: [], notes: [],
-  me: { posts: 0, following: 0, followers: 0, videos: 0 }, videos: [], myVideos: [], muted: true, viewed: new Set(), focusVideo: null, savedPosts: new Set(), prof: null, profPosts: [], savedList: [], myPosts: [], reqs: [], postVis: 'public', allowDl: false, drafts: [], viewer: null, onePost: [], focusPost: null, share: null, following: new Set(), fl: null, reply: null, editM: null, editC: null, replyC: null, rec: null, sig: {}, stories: { mine: null, others: [] }, sv: null, sc: null, pc: { phone: null, allow_phone_search: false, allow_email_search: false }, ready: {}, authMode: 'login', openThread: null, sellOpt: 'fixed'
+  me: { posts: 0, following: 0, followers: 0, videos: 0 }, videos: [], myVideos: [], muted: true, viewed: new Set(), focusVideo: null, savedPosts: new Set(), prof: null, profPosts: [], savedList: [], myPosts: [], reqs: [], postVis: 'public', allowDl: false, drafts: [], viewer: null, onePost: [], focusPost: null, share: null, following: new Set(), fl: null, reply: null, editM: null, editC: null, replyC: null, rec: null, sig: {}, stories: { mine: null, others: [] }, sv: null, sc: null, g: null, myGroups: null, gpoll: null, gtab: 'mine', gq: '', greqs: [], evs: [], evf: 'all', evEdit: null, gdraftPriv: 'public', pc: { phone: null, allow_phone_search: false, allow_email_search: false }, ready: {}, authMode: 'login', openThread: null, sellOpt: 'fixed'
 };
 const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
 try { Object.assign(S, JSON.parse(store.get('kihelp.settings') || '{}')); } catch (e) {}
@@ -142,7 +142,7 @@ async function loadProducts() {
 }
 const MSGCOLS = 'id,sender_id,receiver_id,body,created_at,reply_to,forwarded,edited_at,deleted_at,media_path,media_type,media_name,media_size';
 const mapMsg = (m, me) => ({ id: m.id, me: m.sender_id === me, t: m.deleted_at ? '' : m.body, at: m.created_at, reply: m.reply_to, fwd: !!m.forwarded, ed: !!m.edited_at, del: !!m.deleted_at, media: m.media_path ? { path: m.media_path, type: m.media_type, name: m.media_name, size: m.media_size } : null });
-const msgPreview = x => x.del ? 'Message deleted' : x.media ? ({ image: '📷 Photo', audio: '🎤 Voice message', video: '🎥 Video', file: '📎 ' + (x.media.name || 'File') }[x.media.type] || '📎 File') : SHARE_RE.test(x.t || '') ? 'Shared a post' : (x.t || '');
+const msgPreview = x => x.del ? 'Message deleted' : x.media ? ({ image: '📷 Photo', audio: '🎤 Voice message', video: '🎥 Video', file: '📎 ' + (x.media.name || 'File') }[x.media.type] || '📎 File') : SHARE_RE.test(x.t || '') ? shareLabel(SHARE_RE.exec(x.t)[1]) : (x.t || '');
 const hm = at => { try { return new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } };
 const fsize = n => n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
 const curThread = () => S.threads.find(x => x.id === S.openThread);
@@ -163,6 +163,16 @@ async function loadThreads() {
 }
 async function loadAlerts() {
   const me = S.user.id;
+  try {
+    const ag = await sb.from('group_members').select('group_id').eq('user_id', me).eq('status', 'active').in('role', ['owner', 'admin']);
+    const gids = (ag.data || []).map(x => x.group_id); S.greqs = [];
+    if (gids.length) {
+      const pr = await sb.from('group_members').select('group_id,user_id').in('group_id', gids).eq('status', 'pending').limit(50);
+      const gr = await sb.from('groups').select('id,name').in('id', gids), gm = Object.fromEntries((gr.data || []).map(g => [g.id, g.name]));
+      S.greqs = (pr.data || []).map(x => ({ gid: x.group_id, uid: x.user_id, gname: gm[x.group_id] || 'a group' }));
+      await loadProfiles(S.greqs.map(x => x.uid));
+    }
+  } catch (e) { S.greqs = []; }
   const rq = await sb.from('friendships').select('requester_id').eq('addressee_id', me).eq('status', 'pending').order('created_at', { ascending: false }).limit(30);
   S.reqs = (rq.data || []).map(x => x.requester_id); await loadProfiles(S.reqs);
   const { data: mine } = await sb.from('posts').select('id').eq('user_id', me).limit(100);
@@ -299,6 +309,7 @@ async function enter(user) {
   if (!store.get('kihelp.tipReact')) { store.set('kihelp.tipReact', '1'); setTimeout(() => toast('Tip: press and hold the heart to pick a reaction'), 3000); }
   hideAuth(); S.tab = S.focusVideo ? 'video' : 'home'; render(); refresh();
   if (S.focusPost) { const pid = S.focusPost; S.focusPost = null; openPost(pid); }
+  if (S.focusGroup) { const gid = S.focusGroup; S.focusGroup = null; openGroup(gid); }
 }
 function resetSession() {
   clearInterval(S.poll); S.openThread = null;
@@ -327,7 +338,8 @@ const postLists = () => $('#onep') ? [S.onePost] : $('#pposts') ? [S.profPosts] 
 const findPost = id => postLists()[0].find(x => x.id == id) || [...S.posts, ...S.myPosts, ...S.profPosts, ...S.savedList].find(x => x.id == id);
 function repaint() { if ($('#onep')) paintOne(); else if ($('#pposts')) paintProfile(); else if ($('#spl')) paintSaved(); else render(true); }
 const visIcon = v => v === 'friends' ? `<span class="vis" title="Friends">${I.users}</span>` : v === 'private' ? `<span class="vis" title="Only me">${I.lock}</span>` : `<span class="vis" title="Public">${I.globe}</span>`;
-const SHARE_RE = /^kihelp:\/\/(post|video)\/([0-9a-f-]+)(?:\n([\s\S]*))?$/i;
+const SHARE_RE = /^kihelp:\/\/(post|video|group)\/([0-9a-f-]+)(?:\n([\s\S]*))?$/i;
+const shareLabel = k => ({ video: 'Shared a video', group: 'Group invite' }[String(k).toLowerCase()] || 'Shared a post');
 const fmtText = t => esc(t).replace(/(^|\s)@([a-z0-9_]{3,20})(?![a-z0-9_])/gi, (m, sp, u) => `${sp}<button class="mention" data-a="umention" data-id="${u.toLowerCase()}">@${u}</button>`);
 function mediaBlock(p) {
   const m = p.media; if (!m || !m.length) return '';
@@ -374,7 +386,7 @@ function postCard(p) {
 }
 function viewHome() {
   if (gate()) return gate();
-  const row = storiesRow();
+  const row = quickRow() + storiesRow();
   if (!S.posts.length) return row + `<div class="empty" style="padding:60px 24px">No posts yet.<br>Be the first. Tap <b>${tr('post')}</b> at the top.</div>` + videoStrip();
   const at = Math.min(2, S.posts.length - 1);
   return row + S.posts.map((p, i) => postCard(p) + (i === at ? videoStrip() : '')).join('');
@@ -435,9 +447,10 @@ function viewMarket() {
 function viewAlerts() {
   if (gate()) return gate();
   const reqs = S.reqs.map(id => `<div class="reqrow"><button data-a="user" data-id="${id}" aria-label="View profile">${avOf(id, 46)}</button><div class="tx"><b>${esc(nameOf(id))}</b><div class="ls">wants to be your friend</div></div><button class="btn sm2" data-a="fyes" data-id="${id}">Accept</button><button class="btn alt sm2" data-a="fno" data-id="${id}">Decline</button></div>`).join('');
+  const greqs = S.greqs.map(x => `<div class="reqrow"><button data-a="user" data-id="${x.uid}" aria-label="View profile">${avOf(x.uid, 46)}</button><div class="tx"><b>${esc(nameOf(x.uid))}</b><div class="ls">wants to join ${esc(x.gname)}</div></div><button class="btn sm2" data-a="garq" data-id="${x.uid}" data-g="${x.gid}">Approve</button><button class="btn alt sm2" data-a="garn" data-id="${x.uid}" data-g="${x.gid}">Decline</button></div>`).join('');
   const notes = S.notes.map(n => n.pid ? `<button class="item" data-a="openpost" data-id="${n.pid}" style="width:100%">${avOf(n.uid)}<p>${esc(n.text)}<small>${ago(n.at)}</small></p></button>` : `<div class="item">${avOf(n.uid)}<p>${esc(n.text)}<small>${ago(n.at)}</small></p></div>`).join('');
-  if (!reqs && !notes) return `<div class="empty" style="padding:60px 24px">Nothing yet.<br>Friend requests, likes and comments will show up here.</div>`;
-  return (reqs ? `<h3 class="sub">Friend requests</h3>${reqs}` : '') + (notes ? `<h3 class="sub">Activity</h3>${notes}` : '');
+  if (!reqs && !greqs && !notes) return `<div class="empty" style="padding:60px 24px">Nothing yet.<br>Friend requests, group requests, likes and comments will show up here.</div>`;
+  return (reqs ? `<h3 class="sub">Friend requests</h3>${reqs}` : '') + (greqs ? `<h3 class="sub">Group requests</h3>${greqs}` : '') + (notes ? `<h3 class="sub">Activity</h3>${notes}` : '');
 }
 function viewMe() {
   if (gate()) return gate();
@@ -855,7 +868,7 @@ function bubble(x, t) {
   if (x.reply) { const r = t && t.msgs.find(y => y.id === x.reply); inner += `<div class="quote">${r ? esc(msgPreview(r).slice(0, 120)) : 'Original message'}</div>`; }
   if (x.fwd) inner += '<div class="fwd">Forwarded</div>';
   if (x.media) inner += mediaBubble(x.media);
-  if (sm) inner += `<button class="sharecardb" data-a="openshared" data-k="${sm[1].toLowerCase()}" data-id="${sm[2]}"><span><b>${sm[1].toLowerCase() === 'video' ? 'Shared a video' : 'Shared a post'}</b><br><small>Tap to open</small></span></button>`;
+  if (sm) inner += `<button class="sharecardb" data-a="openshared" data-k="${sm[1].toLowerCase()}" data-id="${sm[2]}"><span><b>${shareLabel(sm[1])}</b><br><small>Tap to open</small></span></button>`;
   else if (x.t) inner += `<div class="bt">${fmtText(x.t)}</div>`;
   return `<div class="${cls}"${x.id ? ` data-a="mmenu" data-id="${x.id}"` : ''}>${inner}<small class="meta">${x.ed ? 'edited · ' : ''}${hm(x.at)}</small></div>`;
 }
@@ -926,13 +939,13 @@ function paintOne() { const b = $('#onep'); if (b) b.innerHTML = S.onePost.map(p
 
 async function openShare(kind, id) {
   S.share = { kind, id };
-  const fw = kind === 'msg';
-  sheet(`<h2>${fw ? 'Forward to' : 'Share'}</h2>
-    ${fw ? '' : `<button class="optrow" data-a="shext">Share outside KiHelp ${I.share}</button>
+  const fw = kind === 'msg', gi = kind === 'group', gs = kind === 'post' || kind === 'video';
+  sheet(`<h2>${fw ? 'Forward to' : gi ? 'Invite to group' : 'Share'}</h2>
+    ${fw ? '' : `<button class="optrow" data-a="shext">${gi ? 'Share link outside KiHelp' : 'Share outside KiHelp'} ${I.share}</button>
     <div class="lbl" style="padding:14px 4px 6px">Send to someone on KiHelp</div>`}
     <input id="shq" placeholder="Search name or @username" maxlength="60" autocomplete="off">
     <div id="shl"><div class="ls" style="padding:12px 4px">Loading...</div></div>
-    ${fw ? '' : '<div class="ls" style="padding:10px 4px">Sending to groups will come with groups.</div>'}`);
+    ${gs ? '<div class="lbl" style="padding:14px 4px 6px">Send to a group</div><div id="shg"><div class="ls" style="padding:8px 4px">Loading...</div></div>' : ''}`);
   try {
     const me = S.user.id;
     if (!S.ready.chat) await loadThreads().catch(() => {});
@@ -940,6 +953,12 @@ async function openShare(kind, id) {
     const ids = [...new Set([...S.threads.map(t => t.id), ...(f.data || []).map(x => x.following_id)])].filter(x => x !== me).slice(0, 40);
     await loadProfiles(ids); paintShareList(ids);
   } catch (e) { paintShareList([]); }
+  if (gs) { try { if (!S.myGroups) await loadMyGroups(); paintShareGroups(); } catch (e) { const b = $('#shg'); if (b) b.innerHTML = '<div class="ls">Could not load your groups.</div>'; } }
+}
+function paintShareGroups() {
+  const b = $('#shg'); if (!b) return;
+  const list = (S.myGroups || []).filter(m => m.status === 'active');
+  b.innerHTML = list.length ? list.map(m => `<div class="reqrow" style="padding-inline:0">${gav(m.g, 42)}<div class="tx"><b>${esc(m.g.name)}</b></div><button class="btn sm2" data-a="shgsend" data-id="${m.group_id}">Send</button></div>`).join('') : '<div class="ls" style="padding:8px 4px">You are not in any group yet.</div>';
 }
 function paintShareList(ids) {
   const b = $('#shl'); if (!b) return;
@@ -1276,6 +1295,241 @@ function editImage(file, opts) {
   });
 }
 
+/* ---------- groups and events ---------- */
+const quickRow = () => `<div class="quick"><button class="chip" data-a="groups">👥 Groups</button><button class="chip" data-a="events">📅 Events</button></div>`;
+const gav = (g, size) => av(g.name, g.id, size, safeUrl(g.avatar_url));
+const privIcon = p => `<span class="vis" title="${p === 'private' ? 'Private' : 'Public'}">${p === 'private' ? I.lock : I.globe}</span>`;
+const GCOLS = 'id,name,description,avatar_url,privacy,owner_id,created_at';
+const roleLabel = r => r === 'owner' ? 'Owner' : r === 'admin' ? 'Admin' : '';
+const EVS = { going: 'Going', maybe: 'Maybe', no: "Can't go" };
+const fmtWhen = (s, e) => {
+  const a = new Date(s), o = { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }; let t = a.toLocaleString([], o);
+  if (e) { const b = new Date(e); t += a.toDateString() === b.toDateString() ? ' - ' + b.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ' - ' + b.toLocaleString([], o); }
+  return t;
+};
+const eventRow = ev => `<button class="evrow" data-a="eopen" data-id="${ev.id}"><span class="evd"><b>${new Date(ev.starts_at).getDate()}</b><small>${esc(new Date(ev.starts_at).toLocaleString([], { month: 'short' }))}</small></span><span class="tx"><b>${esc(ev.title)}</b><span class="l">${esc(fmtWhen(ev.starts_at, ev.ends_at))}${ev.location ? ' · ' + esc(ev.location) : ''}</span>${ev.gname ? `<span class="l">${esc(ev.gname)}</span>` : ''}</span>${ev.mine ? `<span class="pbadge">${EVS[ev.mine] || ''}</span>` : ''}</button>`;
+const groupRow = (g, m) => `<button class="thread" data-a="gopen" data-id="${g.id}">${gav(g, 52)}<span class="tx"><b>${esc(g.name)} ${privIcon(g.privacy)}</b><span class="l">${m ? (m.status === 'pending' ? 'Request sent' : roleLabel(m.role) || 'Member') : esc(g.description || (g.privacy === 'private' ? 'Private group' : 'Public group'))}</span></span></button>`;
+
+async function loadMyGroups() {
+  const { data, error } = await sb.from('group_members').select('group_id,role,status').eq('user_id', S.user.id);
+  if (error) throw error;
+  const ids = (data || []).map(x => x.group_id); let groups = [];
+  if (ids.length) { const r = await sb.from('groups').select(GCOLS).in('id', ids); groups = r.data || []; }
+  S.myGroups = (data || []).map(m => Object.assign({}, m, { g: groups.find(x => x.id === m.group_id) })).filter(x => x.g);
+}
+async function openGroups(tab) {
+  if (tab) S.gtab = tab;
+  clearInterval(S.gpoll); S.g = null; S.prof = null; clearInterval(S.poll); S.openThread = null;
+  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button><b class="ttl">Groups</b><span style="flex:1"></span><button class="hbtn" data-a="gnew">${I.plus}New</button></header>
+    <div style="padding:10px 16px 0"><div class="seg">${[['mine', 'My groups'], ['find', 'Discover']].map(([k, l]) => `<button class="${S.gtab === k ? 'on' : ''}" data-a="gtab0" data-id="${k}">${l}</button>`).join('')}</div></div>
+    <div style="padding:10px 16px 0" ${S.gtab === 'find' ? '' : 'hidden'}><input id="gq" type="search" placeholder="Search groups" maxlength="40" value="${esc(S.gq)}"></div>
+    <div class="setbody" id="glist"><div class="empty" style="padding:40px">Loading...</div></div></div>`;
+  await paintGroupsList();
+}
+async function paintGroupsList() {
+  const box = $('#glist'); if (!box) return;
+  try {
+    if (S.gtab === 'mine') {
+      await loadMyGroups();
+      const rows = S.myGroups.slice().sort((a, b) => a.g.name.localeCompare(b.g.name));
+      box.innerHTML = rows.length ? rows.map(m => groupRow(m.g, m)).join('') : '<div class="empty" style="padding:50px 24px">You are not in any group yet.<br>Tap <b>New</b> to create one, or open <b>Discover</b>.</div>';
+    } else {
+      const q = (S.gq || '').replace(/[%_\\,()*]/g, '').trim();
+      let req = sb.from('groups').select(GCOLS).order('created_at', { ascending: false }).limit(40);
+      if (q) req = req.ilike('name', '%' + q + '%');
+      const { data, error } = await req; if (error) throw error;
+      await loadMyGroups(); const mine = new Set(S.myGroups.map(m => m.group_id));
+      const rows = (data || []).filter(g => !mine.has(g.id));
+      box.innerHTML = rows.length ? rows.map(g => groupRow(g, null)).join('') : '<div class="empty" style="padding:50px 24px">No groups found.</div>';
+    }
+  } catch (e) { box.innerHTML = '<div class="empty" style="padding:40px">Could not load groups.</div>'; }
+}
+let gaT;
+document.addEventListener('input', e => {
+  if (e.target.id !== 'gaq') return;
+  clearTimeout(gaT); const q = e.target.value.trim();
+  gaT = setTimeout(async () => {
+    const box = $('#gal'); if (!box) return;
+    if (q.length < 2) { box.innerHTML = '<div class="ls" style="padding:12px 4px">Type at least 2 characters.</div>'; return; }
+    const { data } = await sb.rpc('search_people', { q });
+    if (!$('#gaq') || $('#gaq').value.trim() !== q) return;
+    const have = new Set((S.g ? S.g.members : []).map(m => m.user_id)), list = (data || []).filter(p => p.id !== S.user.id && !have.has(p.id));
+    list.forEach(p => { S.pf[p.id] = Object.assign({}, S.pf[p.id], p); });
+    box.innerHTML = list.length ? list.map(p => `<div class="reqrow" style="padding-inline:0">${avOf(p.id, 42)}<div class="tx"><b>${esc(p.display_name || 'Member')}</b>${p.username ? `<div class="ls">@${esc(p.username)}</div>` : ''}</div><button class="btn sm2" data-a="gaddp" data-id="${p.id}">Add</button></div>`).join('') : '<div class="ls" style="padding:12px 4px">No one found.</div>';
+  }, 350);
+});
+let gqT;
+document.addEventListener('input', e => { if (e.target.id === 'gq') { S.gq = e.target.value; clearTimeout(gqT); gqT = setTimeout(paintGroupsList, 300); } });
+
+async function openGroup(gid, from) {
+  closeSheet(); clearInterval(S.poll); S.openThread = null; S.prof = null; clearInterval(S.gpoll);
+  S.g = { id: gid, from: from || null, tab: 'chat', row: null, me: null, members: [], pend: [], events: [], msgs: [], loading: true };
+  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="gback" aria-label="Back">${I.back}</button><b class="ttl">Group</b><span style="flex:1"></span><button class="ibtn" data-a="gmenu" aria-label="More options">${I.more}</button></header><div class="gbody" id="gbody"></div></div>`;
+  paintGroup(); await loadGroup(gid);
+}
+async function loadGroup(gid) {
+  const G = S.g; if (!G || G.id !== gid) return; const me = S.user.id;
+  try {
+    const { data: g, error } = await sb.from('groups').select(GCOLS).eq('id', gid).maybeSingle();
+    if (error || !g) { const b = $('#gbody'); if (b) b.innerHTML = '<div class="empty" style="padding:60px 24px">This group is not available.</div>'; return; }
+    const [mr, mem, ev] = await Promise.all([
+      sb.from('group_members').select('role,status').eq('group_id', gid).eq('user_id', me).maybeSingle(),
+      sb.from('group_members').select('user_id,role,status,joined_at').eq('group_id', gid).order('joined_at', { ascending: true }).limit(500),
+      sb.from('events').select('id,title,location,starts_at,ends_at,canceled_at,creator_id,group_id').eq('group_id', gid).is('canceled_at', null).order('starts_at', { ascending: true }).limit(50)
+    ]);
+    if (S.g !== G) return;
+    const rows = mem.data || [];
+    Object.assign(G, { row: g, me: mr.data || null, members: rows.filter(x => x.status === 'active'), pend: rows.filter(x => x.status === 'pending'), events: ev.data || [], loading: false });
+    await loadProfiles([g.owner_id, ...rows.map(x => x.user_id)]);
+    const active = G.me && G.me.status === 'active';
+    if (!active && G.tab === 'chat') G.tab = 'about';
+  } catch (e) { toast('Could not load this group'); G.loading = false; }
+  paintGroup();
+}
+function paintGroup() {
+  const G = S.g, b = $('#gbody'); if (!G || !b) return;
+  if (G.loading || !G.row) { b.innerHTML = '<div class="empty" style="padding:50px">Loading...</div>'; return; }
+  const g = G.row, me = G.me, active = !!(me && me.status === 'active'), pend = !!(me && me.status === 'pending'), admin = active && (me.role === 'owner' || me.role === 'admin');
+  const seeMore = active || g.privacy === 'public';
+  const action = active ? '<button class="btn alt sm2" data-a="gmenu">Joined</button>' : pend ? '<button class="btn alt sm2" data-a="gcancel">Request sent</button>' : `<button class="btn sm2" data-a="gjoin">${g.privacy === 'public' ? 'Join' : 'Request to join'}</button>`;
+  const tabs = [['chat', 'Chat', active], ['members', 'Members', seeMore], ['events', 'Events', seeMore], ['about', 'About', true]].filter(t => t[2]);
+  if (!tabs.some(t => t[0] === G.tab)) G.tab = tabs[0][0];
+  b.innerHTML = `<div class="ghead"><div class="grow">${gav(g, 52)}<div class="tx"><b>${esc(g.name)}</b><div class="ls">${privIcon(g.privacy)} ${g.privacy === 'private' ? 'Private' : 'Public'} group${seeMore ? ' · ' + G.members.length + ' member' + (G.members.length === 1 ? '' : 's') : ''}</div></div>${action}</div>
+    <div class="gtabs">${tabs.map(([k, l]) => `<button class="${G.tab === k ? 'on' : ''}" data-a="gtab" data-id="${k}">${l}${k === 'members' && admin && G.pend.length ? `<i class="gbadge">${G.pend.length}</i>` : ''}</button>`).join('')}</div></div>
+    <div class="gtab" id="gtab"></div>`;
+  paintGroupTab();
+}
+function paintGroupTab() {
+  const G = S.g, t = $('#gtab'); if (!G || !t) return;
+  const g = G.row, me = G.me, active = !!(me && me.status === 'active'), owner = active && me.role === 'owner', admin = active && (owner || me.role === 'admin');
+  if (G.tab !== 'chat') clearInterval(S.gpoll);
+  if (G.tab === 'chat') {
+    t.innerHTML = `<div class="msgs" id="gmsgs"></div><div id="gemop" class="emop" hidden></div><div class="compose"><input id="gi" placeholder="Message the group" maxlength="1000" autocomplete="off"><button class="ibtn" data-a="emo" data-t="#gi" data-p="#gemop" aria-label="Emoji">😊</button><button class="send" data-a="gsend" aria-label="Send">${I.send}</button></div>`;
+    paintGroupMsgs(); loadGroupMsgs();
+    clearInterval(S.gpoll); S.gpoll = setInterval(() => { if (!$('#gmsgs')) { clearInterval(S.gpoll); return; } if (S.g && S.g.tab === 'chat') loadGroupMsgs(); }, 4000);
+  } else if (G.tab === 'members') {
+    const sp = id => S.pf[id] && S.pf[id].username ? '@' + esc(S.pf[id].username) : '';
+    const reqs = admin && G.pend.length ? `<h3 class="sub">Join requests</h3>${G.pend.map(m => `<div class="reqrow"><button data-a="user" data-id="${m.user_id}" aria-label="View profile">${avOf(m.user_id, 46)}</button><div class="tx"><b>${esc(nameOf(m.user_id))}</b><div class="ls">wants to join</div></div><button class="btn sm2" data-a="gappr" data-id="${m.user_id}">Approve</button><button class="btn alt sm2" data-a="gdecl" data-id="${m.user_id}">Decline</button></div>`).join('')}` : '';
+    const list = G.members.slice().sort((a, b) => ({ owner: 0, admin: 1, member: 2 }[a.role] - { owner: 0, admin: 1, member: 2 }[b.role]));
+    t.innerHTML = `<div style="padding:10px 16px;display:grid;grid-template-columns:${admin ? '1fr 1fr' : '1fr'};gap:10px">${admin ? '<button class="btn alt" data-a="gadd">Add people</button>' : ''}<button class="btn alt" data-a="ginvite">Invite friends</button></div>${reqs}<h3 class="sub">Members</h3>${list.map(m => `<button class="thread" data-a="gmem" data-id="${m.user_id}">${avOf(m.user_id, 46)}<span class="tx"><b>${esc(nameOf(m.user_id))}</b><span class="l">${sp(m.user_id)}${sp(m.user_id) && roleLabel(m.role) ? ' · ' : ''}${roleLabel(m.role)}</span></span></button>`).join('')}`;
+  } else if (G.tab === 'events') {
+    const evs = G.events.map(e => eventRow(e)).join('');
+    t.innerHTML = `${active ? '<div style="padding:10px 16px"><button class="btn alt" data-a="genew">New event</button></div>' : ''}${evs || '<div class="empty" style="padding:40px 24px">No upcoming events.</div>'}`;
+  } else {
+    t.innerHTML = `<div class="about"><h3 class="sub" style="padding:0 0 6px">About</h3><p style="white-space:pre-wrap">${esc(g.description || 'No description yet.')}</p>
+      <p class="ls" style="margin-top:12px">${g.privacy === 'private' ? 'Private group. People need approval to join, and only members can read the chat.' : 'Public group. Anyone can join. Only members can read the chat.'}</p>
+      <p class="ls" style="margin-top:8px">Created ${esc(new Date(g.created_at).toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' }))} · Owner: ${esc(nameOf(g.owner_id))}</p></div>`;
+  }
+}
+async function loadGroupMsgs() {
+  const G = S.g; if (!G) return;
+  const { data, error } = await sb.from('group_messages').select('id,sender_id,body,created_at,edited_at,deleted_at').eq('group_id', G.id).order('created_at', { ascending: true }).limit(200);
+  if (error || !S.g || S.g.id !== G.id) return;
+  await loadProfiles(data.map(m => m.sender_id));
+  const msgs = data.map(m => ({ id: m.id, uid: m.sender_id, t: m.deleted_at ? '' : m.body, at: m.created_at, ed: !!m.edited_at, del: !!m.deleted_at }));
+  const sig = a => a.map(m => m.id + (m.ed ? 'e' : '') + (m.del ? 'd' : '')).join(',');
+  if (sig(msgs) !== sig(G.msgs.filter(m => m.id))) { G.msgs = msgs; paintGroupMsgs(); }
+}
+function gbubble(m) {
+  const mine = m.uid === S.user.id, cls = 'bub' + (mine ? ' me' : '');
+  if (m.del) return `<div class="${cls} del">Message deleted</div>`;
+  const sm = SHARE_RE.exec(m.t || '');
+  const body = sm ? `<button class="sharecardb" data-a="openshared" data-k="${sm[1].toLowerCase()}" data-id="${sm[2]}"><span><b>${shareLabel(sm[1])}</b><br><small>Tap to open</small></span></button>` : `<div class="bt">${fmtText(m.t)}</div>`;
+  return `<div class="${cls}"${m.id ? ` data-a="gmmenu" data-id="${m.id}"` : ''}>${mine ? '' : `<div class="gn">${esc(nameOf(m.uid))}</div>`}${body}<small class="meta">${m.ed ? 'edited · ' : ''}${hm(m.at)}</small></div>`;
+}
+function paintGroupMsgs() {
+  const el = $('#gmsgs'), G = S.g; if (!el || !G) return;
+  const stick = !el.dataset.init || el.scrollHeight - el.scrollTop - el.clientHeight < 140;
+  el.innerHTML = G.msgs.length ? G.msgs.map(gbubble).join('') : '<div class="empty">No messages yet. Say hello.</div>';
+  if (stick) el.scrollTop = el.scrollHeight; el.dataset.init = '1';
+}
+const refreshGroupViews = () => { if (S.g && $('#gtab')) loadGroup(S.g.id); };
+
+/* events */
+async function loadEventsHub() {
+  const since = new Date(Date.now() - 86400000).toISOString();
+  const { data, error } = await sb.from('events').select('id,title,location,starts_at,ends_at,group_id,creator_id,canceled_at').is('canceled_at', null).gte('starts_at', since).order('starts_at', { ascending: true }).limit(60);
+  if (error) throw error;
+  const rows = data || [], ids = rows.map(e => e.id), gids = [...new Set(rows.map(e => e.group_id).filter(Boolean))];
+  const rs = ids.length ? await sb.from('event_rsvps').select('event_id,user_id,status').in('event_id', ids) : { data: [] };
+  const gs = gids.length ? await sb.from('groups').select('id,name').in('id', gids) : { data: [] };
+  const gm = Object.fromEntries((gs.data || []).map(g => [g.id, g.name]));
+  return rows.map(e => { const r = (rs.data || []).filter(x => x.event_id === e.id), mine = r.find(x => x.user_id === S.user.id); return Object.assign({}, e, { gname: gm[e.group_id] || null, going: r.filter(x => x.status === 'going').length, mine: mine ? mine.status : null }); });
+}
+async function openEvents() {
+  clearInterval(S.gpoll); S.g = null; S.prof = null; clearInterval(S.poll); S.openThread = null;
+  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button><b class="ttl">Events</b><span style="flex:1"></span><button class="hbtn" data-a="enew">${I.plus}New</button></header>
+    <div class="chips" id="evchips"></div><div class="setbody" id="evlist"><div class="empty" style="padding:40px">Loading...</div></div></div>`;
+  if (!S.myGroups) await loadMyGroups().catch(() => {});
+  try { S.evs = await loadEventsHub(); } catch (e) { S.evs = []; toast('Could not load events'); }
+  paintEventsList();
+}
+function paintEventsList() {
+  const box = $('#evlist'); if (!box) return;
+  $('#evchips').innerHTML = [['all', 'Upcoming'], ['going', 'Going'], ['groups', 'My groups']].map(([k, l]) => `<button class="chip ${S.evf === k ? 'on' : ''}" data-a="evf" data-id="${k}">${l}</button>`).join('');
+  const myg = new Set((S.myGroups || []).filter(m => m.status === 'active').map(m => m.group_id));
+  const list = S.evs.filter(e => S.evf === 'going' ? e.mine === 'going' : S.evf === 'groups' ? (e.group_id && myg.has(e.group_id)) : true);
+  box.innerHTML = list.length ? list.map(eventRow).join('') : '<div class="empty" style="padding:50px 24px">No events here yet.<br>Tap <b>New</b> to create one.</div>';
+}
+const refreshEventViews = async () => {
+  if ($('#evlist')) { try { S.evs = await loadEventsHub(); } catch (e) {} paintEventsList(); }
+  if (S.g && $('#gtab')) loadGroup(S.g.id);
+};
+async function openEvent(id) {
+  const { data: e } = await sb.from('events').select('id,title,description,location,starts_at,ends_at,group_id,creator_id,canceled_at').eq('id', id).maybeSingle();
+  if (!e) return toast('This event is not available');
+  if (!S.myGroups) await loadMyGroups().catch(() => {});
+  const [rs, g] = await Promise.all([sb.from('event_rsvps').select('user_id,status').eq('event_id', id), e.group_id ? sb.from('groups').select('id,name').eq('id', e.group_id).maybeSingle() : Promise.resolve({ data: null })]);
+  const r = rs.data || [], going = r.filter(x => x.status === 'going'), maybe = r.filter(x => x.status === 'maybe'), mine = (r.find(x => x.user_id === S.user.id) || {}).status || null;
+  await loadProfiles([e.creator_id, ...going.slice(0, 20).map(x => x.user_id)]);
+  const mr = (S.myGroups || []).find(m => m.group_id === e.group_id && m.status === 'active');
+  const canEdit = e.creator_id === S.user.id || !!(mr && (mr.role === 'owner' || mr.role === 'admin'));
+  sheet(`<h2>${esc(e.title)}</h2>
+    ${e.canceled_at ? '<div class="note">This event was canceled.</div>' : ''}
+    <div class="ls" style="font-size:15px">📅 ${esc(fmtWhen(e.starts_at, e.ends_at))}</div>
+    ${e.location ? `<div class="ls" style="font-size:15px">📍 ${esc(e.location)}</div>` : ''}
+    <div class="ls" style="margin-top:4px">Hosted by ${esc(nameOf(e.creator_id))} · ${g.data ? esc(g.data.name) : 'Public event'}</div>
+    ${e.description ? `<p style="white-space:pre-wrap;margin:12px 0">${esc(e.description)}</p>` : ''}
+    <div class="seg c3" style="margin-top:12px">${Object.entries(EVS).map(([k, l]) => `<button class="${mine === k ? 'on' : ''}" data-a="rsvp" data-id="${e.id}" data-s="${k}">${l}</button>`).join('')}</div>
+    <div class="ls" style="margin:8px 0">${going.length} going · ${maybe.length} maybe</div>
+    ${going.length ? `<div class="ls">${going.slice(0, 20).map(x => esc(nameOf(x.user_id))).join(', ')}${going.length > 20 ? '...' : ''}</div>` : ''}
+    ${canEdit ? `<div class="row2" style="grid-template-columns:1fr 1fr"><button class="btn alt" data-a="eedit" data-id="${e.id}">Edit</button><button class="btn alt" data-a="ecancel" data-id="${e.id}" data-c="${e.canceled_at ? '' : '1'}">${e.canceled_at ? 'Restore' : 'Cancel event'}</button></div><button class="optrow red" data-a="edel" data-id="${e.id}">Delete event</button>` : ''}`);
+  S.ev = e;
+}
+async function eventForm(gid, ev) {
+  if (!S.myGroups) await loadMyGroups().catch(() => {});
+  const groups = (S.myGroups || []).filter(m => m.status === 'active');
+  S.evEdit = ev ? ev.id : null;
+  const def = new Date(Date.now() + 86400000); def.setMinutes(0, 0, 0);
+  const li = d => { const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
+  sheet(`<h2>${ev ? 'Edit event' : 'New event'}</h2>
+    <div class="fld"><label for="evt">Title</label><input id="evt" maxlength="100" value="${esc(ev ? ev.title : '')}" placeholder="e.g. Market day meetup"></div>
+    <div class="fld"><label for="evs">Starts</label><input id="evs" type="datetime-local" value="${li(ev ? new Date(ev.starts_at) : def)}"></div>
+    <div class="fld"><label for="eve">Ends (optional)</label><input id="eve" type="datetime-local" value="${ev && ev.ends_at ? li(new Date(ev.ends_at)) : ''}"></div>
+    <div class="fld"><label for="evl">Place</label><input id="evl" maxlength="120" value="${esc(ev ? ev.location || '' : '')}" placeholder="Address or online link"></div>
+    <div class="fld"><label for="evd">Details</label><textarea id="evd" maxlength="1000">${esc(ev ? ev.description || '' : '')}</textarea></div>
+    ${ev ? '' : `<div class="fld"><label for="evg">Who can see it?</label><select id="evg"><option value="">Public event (everyone)</option>${groups.map(m => `<option value="${m.group_id}" ${gid === m.group_id ? 'selected' : ''}>${esc(m.g.name)}</option>`).join('')}</select></div>`}
+    <button class="btn" id="evbtn" data-a="esave">${ev ? 'Save changes' : 'Create event'}</button>`);
+}
+async function groupDecide(gid, uid, ok) {
+  const { error } = ok ? await sb.rpc('approve_member', { gid, target: uid }) : await sb.rpc('remove_member', { gid, target: uid });
+  if (error) return toast('Could not update');
+  S.greqs = S.greqs.filter(x => !(x.gid === gid && x.uid === uid));
+  if (S.g && S.g.id === gid) loadGroup(gid); else if (S.tab === 'alerts' && !$('#over').innerHTML) render(true);
+  toast(ok ? 'Approved' : 'Declined');
+}
+function groupForm(g) {
+  S.gdraftPriv = g ? g.privacy : 'public';
+  sheet(`<h2>${g ? 'Edit group' : 'New group'}</h2>
+    <div class="fld">${uploadField('image/*', g ? 'Change group photo' : 'Add a group photo (optional)')}</div>
+    <div class="fld"><label for="gnn">Group name</label><input id="gnn" maxlength="60" value="${esc(g ? g.name : '')}" placeholder="e.g. Addis Sellers"></div>
+    <div class="fld"><label for="gnd">Description</label><textarea id="gnd" maxlength="300" placeholder="What is this group about?">${esc(g ? g.description || '' : '')}</textarea></div>
+    <div class="fld"><label>Privacy</label><div class="seg" id="gps"><button data-a="gpriv" data-id="public" class="${S.gdraftPriv === 'public' ? 'on' : ''}">Public</button><button data-a="gpriv" data-id="private" class="${S.gdraftPriv === 'private' ? 'on' : ''}">Private</button></div>
+    <div class="ls" id="gpd" style="margin-top:6px">${S.gdraftPriv === 'private' ? 'People must ask to join and an admin approves them.' : 'Anyone can find and join this group.'}</div></div>
+    <button class="btn" id="gnbtn" data-a="${g ? 'gsave' : 'gcreate'}">${g ? 'Save changes' : 'Create group'}</button>`);
+  bindUpload({ edit: true, ratio: '1:1' });
+}
+
 /* ---------- settings + theme ---------- */
 function applyTheme() {
   const dark = S.mode === 'dark' || (S.mode === 'system' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
@@ -1321,7 +1575,7 @@ function openSettings() {
     <h3 class="sub">${tr('account')}</h3>
     <div class="srow"><div class="ls">${esc(S.user ? S.user.email : '')}</div></div>
     <div class="srow"><button class="lbl" data-a="logout" style="color:var(--coral)">${tr('logout')}</button></div>
-    <div class="ls" style="padding:16px">KiHelp 0.11</div>
+    <div class="ls" style="padding:16px">KiHelp 0.12</div>
   </div></div>`;
   document.querySelector('.setbody').scrollTop = scroll;
   showUsage();
@@ -1367,11 +1621,11 @@ const ACT = {
   },
   shext: () => {
     const sh = S.share; if (!sh) return;
-    const url = location.origin + location.pathname + (sh.kind === 'video' ? '#v=' : '#p=') + sh.id;
+    const url = location.origin + location.pathname + ({ video: '#v=', group: '#g=' }[sh.kind] || '#p=') + sh.id;
     if (navigator.share) navigator.share({ title: 'KiHelp', text: 'Take a look on KiHelp', url }).catch(() => {});
     else { try { navigator.clipboard.writeText(url); } catch (e) {} toast('Link copied'); }
   },
-  openshared: (id, el) => { if (el.dataset.k === 'video') ACT.watch(id); else openPost(id); },
+  openshared: (id, el) => { const k = el.dataset.k; if (k === 'video') ACT.watch(id); else if (k === 'group') openGroup(id); else openPost(id); },
   openpost: id => openPost(id),
   pdl: async id => {
     const p = findPost(id); if (!p) return;
@@ -1381,6 +1635,173 @@ const ACT = {
     p.adl = v; p.dl = true; closeSheet(); toast(v ? 'People can now save this' : 'Saving turned off');
   },
   search: () => openSearch(),
+  groups: () => openGroups(),
+  events: () => openEvents(),
+  gtab0: id => { S.gtab = id; openGroups(); },
+  gopen: id => openGroup(id, 'groups'),
+  gnew: () => groupForm(null),
+  gpriv: id => { S.gdraftPriv = id; document.querySelectorAll('#gps button').forEach(b => b.classList.toggle('on', b.dataset.id === id)); const d = $('#gpd'); if (d) d.textContent = id === 'private' ? 'People must ask to join and an admin approves them.' : 'Anyone can find and join this group.'; },
+  gcreate: async () => {
+    const name = $('#gnn').value.trim(); if (name.length < 1) return toast('Give your group a name');
+    busy('#gnbtn', true, '...'); let avatar = null;
+    try { if (S.draft) avatar = (await uploadMedia(S.draft.file)).url; } catch (e) { busy('#gnbtn', false, 'Create group'); return toast(upErr(e)); }
+    const { data, error } = await sb.rpc('create_group', { p_name: name, p_desc: $('#gnd').value.trim(), p_privacy: S.gdraftPriv, p_avatar: avatar });
+    if (error || !data) { busy('#gnbtn', false, 'Create group'); return toast('Could not create the group'); }
+    closeSheet(); S.myGroups = null; toast('Group created'); openGroup(data, 'groups');
+  },
+  gsave: async () => {
+    const G = S.g; if (!G) return; const name = $('#gnn').value.trim(); if (!name) return toast('Give your group a name');
+    busy('#gnbtn', true, '...'); const row = { name, description: $('#gnd').value.trim() || null, privacy: S.gdraftPriv };
+    try { if (S.draft) row.avatar_url = (await uploadMedia(S.draft.file)).url; } catch (e) { busy('#gnbtn', false, 'Save changes'); return toast(upErr(e)); }
+    const { error } = await sb.from('groups').update(row).eq('id', G.id);
+    if (error) { busy('#gnbtn', false, 'Save changes'); return toast('Could not save the group'); }
+    closeSheet(); S.myGroups = null; toast('Group updated'); loadGroup(G.id);
+  },
+  gback: () => { clearInterval(S.gpoll); const from = S.g && S.g.from; S.g = null; if (from === 'groups') openGroups(); else { $('#over').innerHTML = ''; render(true); } },
+  gtab: id => { if (S.g) { S.g.tab = id; paintGroup(); } },
+  gjoin: async () => {
+    const G = S.g; if (!G || !G.row) return;
+    const { error } = await sb.from('group_members').insert({ group_id: G.id, user_id: S.user.id, role: 'member', status: G.row.privacy === 'public' ? 'active' : 'pending' });
+    if (error) return toast('Could not join this group');
+    S.myGroups = null; toast(G.row.privacy === 'public' ? 'You joined the group' : 'Request sent'); G.tab = 'chat'; loadGroup(G.id);
+  },
+  gcancel: async () => {
+    const G = S.g; if (!G) return; if (!confirm('Cancel your request to join?')) return;
+    const { error } = await sb.from('group_members').delete().eq('group_id', G.id).eq('user_id', S.user.id);
+    if (error) return toast('Could not cancel'); S.myGroups = null; loadGroup(G.id);
+  },
+  gleave: async () => {
+    const G = S.g; if (!G) return; closeSheet(); if (!confirm('Leave this group?')) return;
+    const { error } = await sb.from('group_members').delete().eq('group_id', G.id).eq('user_id', S.user.id);
+    if (error) return toast('Could not leave the group'); S.myGroups = null; toast('You left the group'); ACT.gback();
+  },
+  gdel: async () => {
+    const G = S.g; if (!G) return; closeSheet();
+    if (!confirm('Delete this group for everyone? Its chat and events will be removed. This cannot be undone.')) return;
+    const { error } = await sb.from('groups').delete().eq('id', G.id);
+    if (error) return toast('Could not delete the group'); S.myGroups = null; toast('Group deleted'); ACT.gback();
+  },
+  gmenu: () => {
+    const G = S.g; if (!G || !G.row) return; const me = G.me, active = !!(me && me.status === 'active'), owner = active && me.role === 'owner', admin = active && (owner || me.role === 'admin');
+    sheet(`<h2>${esc(G.row.name)}</h2>
+      ${admin ? '<button class="optrow" data-a="gedit">Edit group</button><button class="optrow" data-a="gadd">Add people</button>' : ''}
+      <button class="optrow" data-a="ginvite">Invite friends</button>
+      ${active && !owner ? '<button class="optrow red" data-a="gleave">Leave group</button>' : ''}
+      ${owner ? '<button class="optrow red" data-a="gdel">Delete group</button>' : ''}`);
+  },
+  gedit: () => { const G = S.g; if (G && G.row) { closeSheet(); groupForm(G.row); } },
+  ginvite: () => { const G = S.g; if (G) openShare('group', G.id); },
+  gadd: () => {
+    closeSheet();
+    sheet(`<h2>Add people</h2><input id="gaq" placeholder="Search name or @username" maxlength="60" autocomplete="off"><div id="gal"><div class="ls" style="padding:12px 4px">Type a name to search.</div></div>`);
+  },
+  gaddp: async (id, el) => {
+    const G = S.g; if (!G) return; el.disabled = true;
+    const { error } = await sb.rpc('add_member', { gid: G.id, target: id });
+    if (error) { el.disabled = false; return toast('Could not add this person'); }
+    el.textContent = 'Added'; el.classList.add('alt'); loadGroup(G.id);
+  },
+  gmem: id => {
+    const G = S.g; if (!G) return; const m = G.members.find(x => x.user_id === id); if (!m) return;
+    const me = G.me, owner = !!(me && me.role === 'owner' && me.status === 'active'), admin = !!(me && me.status === 'active' && (me.role === 'owner' || me.role === 'admin'));
+    sheet(`<h2>${esc(nameOf(id))}</h2>
+      <button class="optrow" data-a="user" data-id="${id}">View profile</button>
+      ${id !== S.user.id && owner && m.role !== 'owner' ? `<button class="optrow" data-a="grole" data-id="${id}" data-r="${m.role === 'admin' ? 'member' : 'admin'}">${m.role === 'admin' ? 'Remove admin role' : 'Make admin'}</button><button class="optrow" data-a="gxfer" data-id="${id}">Transfer ownership</button>` : ''}
+      ${id !== S.user.id && admin && m.role !== 'owner' && !(m.role === 'admin' && !owner) ? `<button class="optrow red" data-a="grem" data-id="${id}">Remove from group</button>` : ''}`);
+  },
+  grole: async (id, el) => {
+    const G = S.g; if (!G) return; closeSheet();
+    const { error } = await sb.rpc('set_member_role', { gid: G.id, target: id, new_role: el.dataset.r });
+    if (error) return toast('Could not change the role'); toast('Role updated'); loadGroup(G.id);
+  },
+  gxfer: async id => {
+    const G = S.g; if (!G) return; closeSheet();
+    if (!confirm('Make ' + nameOf(id) + ' the owner? You will become an admin.')) return;
+    const { error } = await sb.rpc('transfer_group', { gid: G.id, target: id });
+    if (error) return toast('Could not transfer ownership'); toast('Ownership transferred'); loadGroup(G.id);
+  },
+  grem: async id => {
+    const G = S.g; if (!G) return; closeSheet();
+    if (!confirm('Remove ' + nameOf(id) + ' from the group?')) return;
+    const { error } = await sb.rpc('remove_member', { gid: G.id, target: id });
+    if (error) return toast('Could not remove this person'); toast('Removed'); loadGroup(G.id);
+  },
+  gappr: id => { const G = S.g; if (G) groupDecide(G.id, id, true); },
+  gdecl: id => { const G = S.g; if (G) groupDecide(G.id, id, false); },
+  garq: (id, el) => groupDecide(el.dataset.g, id, true),
+  garn: (id, el) => groupDecide(el.dataset.g, id, false),
+  gsend: async () => {
+    const i = $('#gi'), v = i && i.value.trim(), G = S.g; if (!v || !G) return;
+    i.value = ''; const tmp = { uid: S.user.id, t: v, at: new Date().toISOString() }; G.msgs.push(tmp); paintGroupMsgs();
+    const { data, error } = await sb.from('group_messages').insert({ group_id: G.id, sender_id: S.user.id, body: v }).select('id,created_at').single();
+    if (error) { G.msgs.splice(G.msgs.indexOf(tmp), 1); paintGroupMsgs(); i.value = v; return toast('Message not sent'); }
+    tmp.id = data.id; tmp.at = data.created_at; paintGroupMsgs();
+  },
+  gmmenu: id => {
+    const G = S.g; if (!G) return; const m = G.msgs.find(x => String(x.id) === String(id)); if (!m || m.del) return;
+    const mine = m.uid === S.user.id, admin = !!(G.me && G.me.status === 'active' && (G.me.role === 'owner' || G.me.role === 'admin')), textual = m.t && !SHARE_RE.test(m.t);
+    sheet(`<h2>Message</h2>${textual ? `<button class="optrow" data-a="gmcopy" data-id="${m.id}">Copy text</button>` : ''}
+      ${mine && textual ? `<button class="optrow" data-a="gmedit" data-id="${m.id}">Edit</button>` : ''}
+      ${mine || admin ? `<button class="optrow red" data-a="gmdel" data-id="${m.id}">Delete</button>` : ''}`);
+  },
+  gmcopy: id => { const m = S.g && S.g.msgs.find(x => String(x.id) === String(id)); closeSheet(); if (m) { try { navigator.clipboard.writeText(m.t); } catch (e) {} toast('Copied'); } },
+  gmedit: id => {
+    const m = S.g && S.g.msgs.find(x => String(x.id) === String(id)); if (!m) return; closeSheet();
+    sheet(`<h2>Edit message</h2><div class="fld"><textarea id="gme" maxlength="1000">${esc(m.t)}</textarea></div><button class="btn" id="gmebtn" data-a="gmsave" data-id="${m.id}">Save</button>`);
+  },
+  gmsave: async id => {
+    const m = S.g && S.g.msgs.find(x => String(x.id) === String(id)), v = ($('#gme') || {}).value; if (!m || !v || !v.trim()) return;
+    const { error } = await sb.rpc('edit_group_message', { mid: m.id, new_body: v.trim() });
+    if (error) return toast('Could not edit this message');
+    m.t = v.trim(); m.ed = true; closeSheet(); paintGroupMsgs();
+  },
+  gmdel: async id => {
+    const m = S.g && S.g.msgs.find(x => String(x.id) === String(id)); closeSheet(); if (!m) return;
+    if (!confirm('Delete this message?')) return;
+    const { error } = await sb.rpc('delete_group_message', { mid: m.id });
+    if (error) return toast('Could not delete'); m.del = true; m.t = ''; paintGroupMsgs();
+  },
+  shgsend: async (id, el) => {
+    const sh = S.share; if (!sh) return; el.disabled = true;
+    const { error } = await sb.from('group_messages').insert({ group_id: id, sender_id: S.user.id, body: `kihelp://${sh.kind}/${sh.id}` });
+    if (error) { el.disabled = false; return toast('Could not send'); }
+    el.textContent = 'Sent'; el.classList.add('alt');
+  },
+  evf: id => { S.evf = id; paintEventsList(); },
+  enew: () => eventForm(null, null),
+  genew: () => { const G = S.g; if (G) eventForm(G.id, null); },
+  eopen: id => openEvent(id),
+  eedit: () => { const e = S.ev; if (e) { closeSheet(); eventForm(e.group_id, e); } },
+  esave: async () => {
+    const title = $('#evt').value.trim(), s = $('#evs').value, e = $('#eve').value;
+    if (!title) return toast('Add a title'); if (!s) return toast('Choose a start time');
+    const starts = new Date(s), ends = e ? new Date(e) : null; if (ends && ends < starts) return toast('The end must be after the start');
+    busy('#evbtn', true, '...');
+    const fields = { title, description: $('#evd').value.trim() || null, location: $('#evl').value.trim() || null, starts_at: starts.toISOString(), ends_at: ends ? ends.toISOString() : null };
+    let error;
+    if (S.evEdit) ({ error } = await sb.from('events').update(fields).eq('id', S.evEdit));
+    else { const g = $('#evg') ? $('#evg').value : ''; ({ error } = await sb.from('events').insert(Object.assign({ creator_id: S.user.id, group_id: g || null }, fields))); }
+    if (error) { busy('#evbtn', false, S.evEdit ? 'Save changes' : 'Create event'); return toast('Could not save the event'); }
+    closeSheet(); toast(S.evEdit ? 'Event updated' : 'Event created'); refreshEventViews();
+  },
+  ecancel: async (id, el) => {
+    const { error } = await sb.from('events').update({ canceled_at: el.dataset.c ? new Date().toISOString() : null }).eq('id', id);
+    if (error) return toast('Could not update the event'); closeSheet(); toast(el.dataset.c ? 'Event canceled' : 'Event restored'); refreshEventViews();
+  },
+  edel: async id => {
+    if (!confirm('Delete this event?')) return;
+    const { error } = await sb.from('events').delete().eq('id', id);
+    if (error) return toast('Could not delete the event'); closeSheet(); toast('Event deleted'); refreshEventViews();
+  },
+  rsvp: async (id, el) => {
+    const s = el.dataset.s, { data: cur } = await sb.from('event_rsvps').select('status').eq('event_id', id).eq('user_id', S.user.id).maybeSingle();
+    let error;
+    if (cur && cur.status === s) ({ error } = await sb.from('event_rsvps').delete().eq('event_id', id).eq('user_id', S.user.id));
+    else if (cur) ({ error } = await sb.from('event_rsvps').update({ status: s }).eq('event_id', id).eq('user_id', S.user.id));
+    else ({ error } = await sb.from('event_rsvps').insert({ event_id: id, user_id: S.user.id, status: s }));
+    if (error) return toast('Could not save your reply');
+    openEvent(id); refreshEventViews();
+  },
   snew: () => openStoryComposer(),
   sopen: id => openStory(id),
   sclose: () => closeStory(),
@@ -1685,7 +2106,7 @@ const ACT = {
   },
   share: id => openShare('post', id),
   thread: id => openThread(id),
-  back: () => { stopRecCancel(); S.reply = null; S.editM = null; clearInterval(S.poll); S.openThread = null; S.prof = null; $('#over').innerHTML = ''; render(true); if (S.tab === 'chat') refresh(); },
+  back: () => { clearInterval(S.gpoll); S.g = null; stopRecCancel(); S.reply = null; S.editM = null; clearInterval(S.poll); S.openThread = null; S.prof = null; $('#over').innerHTML = ''; render(true); if (S.tab === 'chat') refresh(); },
   send: id => sendMsg(id),
   cat: id => { S.cat = id; $('#cats').innerHTML = catChips(); $('#grid').innerHTML = gridHTML(); },
   opt: id => { S.opt = id; $('#opts').innerHTML = optChips(); $('#grid').innerHTML = gridHTML(); },
@@ -1821,6 +2242,7 @@ document.addEventListener('change', e => { if (e.target.id === 'lang') { S.lang 
 if (window.matchMedia) { const mq = matchMedia('(prefers-color-scheme: dark)'); if (mq.addEventListener) mq.addEventListener('change', () => { if (S.mode === 'system') applyTheme(); }); }
 document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.id === 'mi') { const b = document.querySelector('[data-a="send"]'); if (b) b.click(); }
+  if (e.key === 'Enter' && e.target.id === 'gi') ACT.gsend();
   if (e.key === 'Enter' && e.target.matches && e.target.matches('.lm')) e.target.click();
   if (e.key === 'Escape') { if (S.viewer) closeViewer(); else closeSheet(); }
   if (S.sv && !/INPUT|TEXTAREA/.test(e.target.tagName || '')) { if (e.key === 'ArrowRight') storyNext(); else if (e.key === 'ArrowLeft') storyPrev(); else if (e.key === 'Escape') closeStory(); }
@@ -1832,6 +2254,7 @@ document.addEventListener('keydown', e => {
 async function boot() {
   const hm = location.hash.match(/^#v=([0-9a-f-]{36})$/i); if (hm) S.focusVideo = hm[1];
   const hp = location.hash.match(/^#p=([0-9]{1,15})$/); if (hp) S.focusPost = hp[1];
+  const hg = location.hash.match(/^#g=([0-9a-f-]{36})$/i); if (hg) S.focusGroup = hg[1];
   applyTheme(); render();
   if (!sb) return showAuth('Could not load the sign-in service. Check your internet and refresh.');
   sb.auth.onAuthStateChange(ev => { if (ev === 'SIGNED_OUT' && S.user) resetSession(); });
