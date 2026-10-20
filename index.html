@@ -3,16 +3,25 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0e6b6b">
+<meta name="application-name" content="KiHelp">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="KiHelp">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>KiHelp</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" sizes="32x32" href="icon-32.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=12">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Figtree:wght@400;500;600&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="style.css?v=14">
 <script>
 window.addEventListener('error', function (e) {
   var a = document.getElementById('app');
   if (a && !a.getAttribute('data-err')) {
     a.setAttribute('data-err', '1');
-    a.insertAdjacentHTML('afterbegin', '<div style="padding:24px;font:16px/1.5 system-ui,sans-serif;color:#b00020;background:#fff">KiHelp could not start.<br><br>' + String(e.message || 'Unknown error') + '<br><br>Check that index.html, style.css and app.js are all uploaded, then refresh.</div>');
+    a.insertAdjacentHTML('afterbegin', '<div style="padding:24px;font:16px/1.5 system-ui,sans-serif;color:#b00020;background:#fff">KiHelp could not start.<br><br>' + String(e.message || 'Unknown error') + '<br><br>Please refresh the page. If this keeps happening, update your browser (Chrome or Safari) and try again.</div>');
   }
 });
 </script>
@@ -31,6 +40,26 @@ window.addEventListener('error', function (e) {
 </div>
 <noscript><p style="padding:24px;font-family:system-ui">KiHelp needs JavaScript. Please turn it on in your browser.</p></noscript>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="app.js?v=12"></script>
+<script>
+(function () {
+  function start() { var s = document.createElement('script'); s.src = 'app.js?v=14'; document.body.appendChild(s); }
+  if (window.supabase) return start();
+  var u = document.createElement('script');
+  u.src = 'https://unpkg.com/@supabase/supabase-js@2';
+  u.onload = start; u.onerror = start;
+  document.head.appendChild(u);
+})();
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    var had = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register('sw.js').catch(function () {});
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      if (!had) { had = true; return; }
+      window.__kihelpUpdate = true;
+      document.dispatchEvent(new Event('kihelp-update'));
+    });
+  });
+}
+</script>
 </body>
 </html>
