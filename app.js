@@ -1,3 +1,5 @@
+/* Compatibility for older phones */
+if (!Object.fromEntries) Object.fromEntries = function (it) { var o = {}; (it || []).forEach(function (kv) { o[kv[0]] = kv[1]; }); return o; };
 const SUPA_URL = 'https://kpaysjsncmpxskahqbab.supabase.co';
 const SUPA_KEY = 'sb_publishable_8pyFTVaVuxsmKMaFJeiW7A_66r2XW6O';
 const sb = window.supabase ? window.supabase.createClient(SUPA_URL, SUPA_KEY) : null;
@@ -38,7 +40,7 @@ const OPT = { fixed: 'Fixed price', negotiable: 'Negotiable', auction: 'Auction'
 const CATS = ['All', 'Fashion', 'Phones', 'Home', 'Food', 'Electronics', 'Other'];
 const CURS = ['ETB', 'USD', 'EUR', 'GBP', 'KES', 'NGN', 'ZAR', 'AED', 'INR', 'CNY'];
 const fmt = (n, c) => Number(n).toLocaleString('en-US') + ' ' + ((c || 'ETB') === 'ETB' ? 'Birr' : c);
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const hue = s => { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
 const ago = iso => { const m = Math.floor((Date.now() - new Date(iso)) / 60000); if (m < 1) return 'now'; if (m < 60) return m + 'm'; const h = Math.floor(m / 60); if (h < 24) return h + 'h'; return Math.floor(h / 24) + 'd'; };
 
@@ -68,7 +70,7 @@ const tr = k => (LANGS[S.lang] && LANGS[S.lang][k]) || LANGS.en[k] || k;
 const nameOf = id => (S.pf[id] && (S.pf[id].display_name || S.pf[id].username)) || 'Member';
 const av = (name, seed, size, url) => url
   ? `<img class="av" src="${esc(url)}" alt="" style="${size ? `width:${size}px;height:${size}px` : ''}">`
-  : `<span class="av" style="--h:${hue(seed ?? name)};${size ? `width:${size}px;height:${size}px` : ''}">${esc((name || '?').trim().charAt(0).toUpperCase())}</span>`;
+  : `<span class="av" style="--h:${hue(seed == null ? name : seed)};${size ? `width:${size}px;height:${size}px` : ''}">${esc((name || '?').trim().charAt(0).toUpperCase())}</span>`;
 const avOf = (id, size) => av(nameOf(id), id, size, safeUrl(S.pf[id] && S.pf[id].avatar_url));
 const media = (m, cls) => m ? (m.type === 'video' ? `<video class="m ${cls}" src="${esc(m.url)}" controls playsinline preload="${S.saver ? 'none' : 'metadata'}"></video>` : `<img class="m ${cls}" src="${esc(m.url)}" alt="">`) : '';
 const smedia = (m, cls, key) => (S.saver && !S.loaded.has(key))
@@ -386,7 +388,7 @@ function postCard(p) {
 }
 function viewHome() {
   if (gate()) return gate();
-  const row = quickRow() + storiesRow();
+  const row = installBar() + quickRow() + storiesRow();
   if (!S.posts.length) return row + `<div class="empty" style="padding:60px 24px">No posts yet.<br>Be the first. Tap <b>${tr('post')}</b> at the top.</div>` + videoStrip();
   const at = Math.min(2, S.posts.length - 1);
   return row + S.posts.map((p, i) => postCard(p) + (i === at ? videoStrip() : '')).join('');
@@ -1569,13 +1571,15 @@ function openSettings() {
     <div class="srow"><div><div class="lbl">Find me by email</div><div class="ls">Only people who type your exact email can find you</div></div>${sw(S.pc.allow_email_search, 'tglemail')}</div>
     <div class="srow col"><div class="lbl">Phone number</div><input id="phone" type="tel" inputmode="tel" placeholder="+251912345678" value="${esc(S.pc.phone || '')}" maxlength="20" autocomplete="tel"><div class="ls">Include your country code. Only you can see it.</div><button class="btn alt" data-a="savephone">Save phone</button></div>
     <div class="srow"><div><div class="lbl">Find me by phone</div><div class="ls">Only people who type your exact number can find you</div></div>${sw(S.pc.allow_phone_search, 'tglphone')}</div>
+    ${isStandalone() ? '' : `<h3 class="sub">App</h3>
+    <div class="srow"><button class="lbl" data-a="install" style="flex:1">Install KiHelp on this device</button></div>`}
     <h3 class="sub">People</h3>
     <div class="srow"><button class="lbl" data-a="invite" style="flex:1">Invite friends</button></div>
     <div class="srow"><button class="lbl" data-a="blocked" style="flex:1">Blocked users</button></div>
     <h3 class="sub">${tr('account')}</h3>
     <div class="srow"><div class="ls">${esc(S.user ? S.user.email : '')}</div></div>
     <div class="srow"><button class="lbl" data-a="logout" style="color:var(--coral)">${tr('logout')}</button></div>
-    <div class="ls" style="padding:16px">KiHelp 0.12</div>
+    <div class="ls" style="padding:16px">KiHelp 0.13</div>
   </div></div>`;
   document.querySelector('.setbody').scrollTop = scroll;
   showUsage();
@@ -1635,6 +1639,13 @@ const ACT = {
     p.adl = v; p.dl = true; closeSheet(); toast(v ? 'People can now save this' : 'Saving turned off');
   },
   search: () => openSearch(),
+  install: async () => {
+    if (isStandalone()) return toast('KiHelp is already installed');
+    if (deferredInstall) { deferredInstall.prompt(); try { await deferredInstall.userChoice; } catch (e) {} deferredInstall = null; render(true); return; }
+    sheet(`<h2>Install KiHelp</h2>${isIOS ? '<p>1. Tap the <b>Share</b> button in Safari.<br>2. Scroll down and tap <b>Add to Home Screen</b>.<br>3. Tap <b>Add</b>.</p><p class="ls" style="margin-top:10px">On iPhone, this only works in Safari.</p>' : '<p>1. Open your browser menu (the three dots).<br>2. Tap <b>Install app</b> or <b>Add to Home screen</b>.<br>3. Tap <b>Install</b>.</p>'}<button class="btn" data-a="close" style="margin-top:14px">Got it</button>`);
+  },
+  instx: () => { store.set('kihelp.installDismissed', '1'); render(true); },
+  reload: () => location.reload(),
   groups: () => openGroups(),
   events: () => openEvents(),
   gtab0: id => { S.gtab = id; openGroups(); },
@@ -2250,6 +2261,28 @@ document.addEventListener('keydown', e => {
     e.preventDefault(); $('#vf').scrollBy({ top: (e.key === 'ArrowDown' ? 1 : -1) * $('#vf').clientHeight, behavior: 'smooth' });
   }
 });
+
+/* ---------- install as an app, updates, offline notice ---------- */
+let deferredInstall = null;
+const isStandalone = () => (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+function installBar() {
+  if (isStandalone() || store.get('kihelp.installDismissed')) return '';
+  if (!deferredInstall && !isIOS) return '';
+  return `<div class="instbar"><span>Install KiHelp on your phone</span><button class="btn sm2" data-a="install">Install</button><button class="ibtn" data-a="instx" aria-label="Dismiss">${I.x}</button></div>`;
+}
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredInstall = e; if (S.user && S.tab === 'home' && !$('#over').innerHTML) render(true); });
+window.addEventListener('appinstalled', () => { deferredInstall = null; toast('KiHelp is installed'); if (S.user && S.tab === 'home' && !$('#over').innerHTML) render(true); });
+function showUpdateBar() {
+  if ($('#upd')) return;
+  const d = document.createElement('div'); d.id = 'upd'; d.className = 'upd';
+  d.innerHTML = 'A new version is ready <button data-a="reload">Refresh</button>';
+  document.body.appendChild(d);
+}
+document.addEventListener('kihelp-update', showUpdateBar);
+if (window.__kihelpUpdate) showUpdateBar();
+window.addEventListener('offline', () => toast('You are offline'));
+window.addEventListener('online', () => toast('Back online'));
 
 async function boot() {
   const hm = location.hash.match(/^#v=([0-9a-f-]{36})$/i); if (hm) S.focusVideo = hm[1];
