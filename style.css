@@ -409,3 +409,15 @@ input[type=range]{padding:0;border:0;background:none;accent-color:var(--acc);wid
 .instbar span{flex:1;min-width:0}
 .upd{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom) + 84px);z-index:75;background:var(--ink);color:var(--paper);padding:10px 14px;border-radius:999px;display:flex;gap:12px;align-items:center;font-weight:600;box-shadow:0 8px 24px rgba(0,0,0,.3);white-space:nowrap}
 .upd button{background:var(--acc);color:var(--acc-ink);padding:6px 12px;border-radius:999px;font-weight:700}
+
+/* v0.14: legal pages, report sheet */
+#legal{position:absolute;top:0;right:0;bottom:0;left:0;z-index:66;background:var(--paper);display:none;overflow-y:auto}
+#legal.open{display:block}
+.legal-wrap{max-width:720px;margin:0 auto}
+.legal-wrap header{display:flex;align-items:center;gap:10px;padding:calc(env(safe-area-inset-top) + 10px) 10px 10px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--paper);z-index:1}
+.legal-body{padding:8px 18px 48px}
+.legal-body h3{font:800 18px var(--disp);margin:22px 0 6px}
+.legal-body p{margin:6px 0;line-height:1.55}
+.lk2{text-decoration:underline;font-weight:600;display:inline;padding:0;color:inherit}
+.optrow.sel{background:var(--soft)}
+.optrow.sel::after{content:"\2713";font-weight:800}
