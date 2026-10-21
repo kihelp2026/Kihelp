@@ -263,14 +263,16 @@ function showAuth(msg, ok) {
     <form id="af" novalidate>
       ${up ? `<div class="fld"><label for="an">Your name</label><input id="an" autocomplete="name" maxlength="50" placeholder="e.g. Abeneazer"></div>
       <div class="fld"><label for="ac">Country (optional)</label><input id="ac" maxlength="50" placeholder="e.g. Ethiopia"></div>` : ''}
-      <div class="fld"><label for="ae">Email</label><input id="ae" type="email" autocomplete="email" inputmode="email" placeholder="you@example.com"></div>
+      <div class="fld"><label for="ae">Email</label><input id="ae" type="email" autocomplete="email" inputmode="email" placeholder="you@example.com" value="${esc(S.addHint || '')}"></div>
       <div class="fld"><label for="ap">Password</label><input id="ap" type="password" autocomplete="${up ? 'new-password' : 'current-password'}" placeholder="At least 8 characters"></div>
       <div class="err ${ok ? 'okmsg' : ''}" id="aerr" role="alert">${esc(msg || '')}</div>
       <button class="btn" id="abtn" type="submit">${up ? 'Create account' : 'Log in'}</button>
-    </form>`;
+    </form>
+    ${S.user ? '<button class="btn alt" style="margin-top:12px" data-a="authcancel">Cancel</button>' : ''}
+    <p class="ls" style="margin-top:16px;text-align:center">${up ? 'By creating an account you agree to our ' : 'Read our '}<button class="lk2" data-a="legal" data-id="terms">Terms</button>, <button class="lk2" data-a="legal" data-id="privacy">Privacy Policy</button> and <button class="lk2" data-a="legal" data-id="rules">Community rules</button>.</p>`;
   $('#auth').style.display = 'flex';
 }
-const hideAuth = () => { $('#auth').style.display = 'none'; $('#auth').innerHTML = ''; };
+const hideAuth = () => { S.addHint = ''; $('#auth').style.display = 'none'; $('#auth').innerHTML = ''; };
 async function doAuth() {
   if (!sb) return showAuth('Could not load the sign-in service. Check your internet.');
   const email = $('#ae').value.trim(), password = $('#ap').value, up = S.authMode === 'signup';
@@ -306,6 +308,7 @@ async function enter(user) {
   S.user = user; S.ready = {};
   try { await ensureProfile(user); } catch (e) { S.profile = { id: user.id, display_name: (user.email || 'Member').split('@')[0] }; S.pf[user.id] = S.profile; }
   loadPrivate().catch(() => {});
+  sb.auth.getSession().then(r => { if (r.data && r.data.session) saveAccount(r.data.session); }).catch(() => {});
   loadSavedIds().catch(() => {});
   loadFollowing().catch(() => {});
   if (!store.get('kihelp.tipReact')) { store.set('kihelp.tipReact', '1'); setTimeout(() => toast('Tip: press and hold the heart to pick a reaction'), 3000); }
@@ -313,10 +316,12 @@ async function enter(user) {
   if (S.focusPost) { const pid = S.focusPost; S.focusPost = null; openPost(pid); }
   if (S.focusGroup) { const gid = S.focusGroup; S.focusGroup = null; openGroup(gid); }
 }
+function clearUserState() {
+  clearInterval(S.poll); clearInterval(S.gpoll); S.openThread = null;
+  Object.assign(S, { myGroups: null, g: null, evs: [], greqs: [], user: null, profile: null, pf: {}, posts: [], products: [], saved: new Set(), threads: [], notes: [], videos: [], myVideos: [], savedPosts: new Set(), prof: null, profPosts: [], savedList: [], myPosts: [], reqs: [], following: new Set(), fl: null, stories: { mine: null, others: [] }, ready: {}, authMode: 'login', pc: { phone: null, allow_phone_search: false, allow_email_search: false } });
+}
 function resetSession() {
-  clearInterval(S.poll); S.openThread = null;
-  Object.assign(S, { user: null, profile: null, pf: {}, posts: [], products: [], saved: new Set(), threads: [], notes: [], videos: [], myVideos: [], savedPosts: new Set(), prof: null, profPosts: [], savedList: [], myPosts: [], reqs: [], following: new Set(), fl: null, stories: { mine: null, others: [] }, ready: {}, authMode: 'login', pc: { phone: null, allow_phone_search: false, allow_email_search: false } });
-  $('#over').innerHTML = ''; closeSheet(); showAuth();
+  clearUserState(); $('#over').innerHTML = ''; closeSheet(); showAuth();
 }
 
 /* ---------- views ---------- */
@@ -360,7 +365,7 @@ function commentsHTML(p) {
   const row = (c, sub) => (S.editC && S.editC.id === c.id)
     ? `<div class="cmt${sub ? ' sub' : ''}"><input id="ec${c.id}" value="${esc(c.t)}" maxlength="1000"><div class="crow"><button class="btn sm2" data-a="csave" data-id="${c.id}" data-p="${p.id}">Save</button><button class="btn alt sm2" data-a="ccancel">Cancel</button></div></div>`
     : `<div class="cmt${sub ? ' sub' : ''}"><b>${esc(c.w)}</b>${fmtText(c.t)}${c.ed ? ' <small class="ls">(edited)</small>' : ''}
-      <div class="cact"><span class="ls">${ago(c.at)}</span><button data-a="creply" data-id="${c.id}" data-p="${p.id}">Reply</button>${c.uid === S.user.id ? `<button data-a="cedit" data-id="${c.id}">Edit</button><button data-a="cdel" data-id="${c.id}" data-p="${p.id}">Delete</button>` : ''}</div></div>`;
+      <div class="cact"><span class="ls">${ago(c.at)}</span><button data-a="creply" data-id="${c.id}" data-p="${p.id}">Reply</button>${c.uid === S.user.id ? `<button data-a="cedit" data-id="${c.id}">Edit</button><button data-a="cdel" data-id="${c.id}" data-p="${p.id}">Delete</button>` : `<button data-a="rep" data-t="comment" data-id="${c.id}" data-o="${c.uid}">Report</button>`}</div></div>`;
   return top.map(c => row(c, false) + kids(c).map(k => row(k, true)).join('')).join('');
 }
 const replyChip = p => S.replyC && S.replyC.p === p.id ? `<div class="rchip">Replying to <b>${esc(S.replyC.name)}</b><button data-a="creplyx" aria-label="Cancel reply">${I.x}</button></div>` : '';
@@ -411,6 +416,7 @@ function viewVideo() {
         <button class="va ${v.liked ? 'on' : ''}" data-lk="${v.id}" data-a="vlike" data-id="${v.id}" aria-label="Like"><span class="c">${I.heart}</span><span class="n">${v.likes}</span></button>
         <button class="va" data-a="vcmt" data-id="${v.id}" aria-label="Comments"><span class="c">${I.cmt}</span><span data-cc="${v.id}">${v.cc}</span></button>
         <button class="va" data-a="vshare" data-id="${v.id}" aria-label="Share"><span class="c">${I.share}</span>Share</button>
+        ${v.uid !== S.user.id ? `<button class="va" data-a="vmore" data-id="${v.id}" aria-label="More options"><span class="c">${I.more}</span></button>` : ''}
         ${v.dl ? `<button class="va" data-a="vdl2" data-id="${v.id}" aria-label="Save video"><span class="c">${I.download}</span>Save</button>` : ''}
       </div></section>`;
   }).join('')}</div>`;
@@ -461,7 +467,7 @@ function viewMe() {
     ${p.bio ? `<p style="padding:0 16px 10px">${esc(p.bio)}</p>` : ''}
     <div class="stats"><div><b>${S.me.videos}</b><span>Videos</span></div><button data-a="flist" data-id="${S.user.id}" data-k="followers"><b>${S.me.followers}</b><span>Followers</span></button><button data-a="flist" data-id="${S.user.id}" data-k="following"><b>${S.me.following}</b><span>Following</span></button><div><b>${S.me.posts}</b><span>Posts</span></div></div>
     <div style="padding:0 16px 8px;display:grid;grid-template-columns:1fr 1fr;gap:10px"><button class="btn alt" data-a="editprofile">Edit profile</button><button class="btn alt" data-a="opensaved">Saved posts</button></div>
-    <div style="padding:0 16px 8px"><button class="btn alt" data-a="invite">Invite friends</button></div>
+    <div style="padding:0 16px 8px;display:grid;grid-template-columns:1fr 1fr;gap:10px"><button class="btn alt" data-a="invite">Invite friends</button><button class="btn alt" data-a="accounts">Switch account</button></div>
     <h3 class="sub">${tr('videos')}</h3>
     ${S.myVideos.length ? vgridHTML(S.myVideos) : `<div class="empty" style="padding:20px 16px">No videos yet. Open Videos and tap Video.</div>`}
     <h3 class="sub">Posts</h3>
@@ -1123,7 +1129,7 @@ function showStoryItem() {
   const body = it.kind === 'text' ? `<div class="sv-text bg-${esc(it.bg || 'teal')}">${esc(it.text)}</div>` : it.kind === 'video' ? `<video id="svv" src="${esc(it.media_url)}" playsinline autoplay></video>` : `<img id="svi" src="${esc(it.media_url)}" alt="">`;
   $('#story').innerHTML = `<div class="sv-wrap">
     <div class="sv-bars">${bars}</div>
-    <div class="sv-head"><button class="svu" data-a="suser" data-id="${g.uid}">${avOf(g.uid, 36)}<b>${esc(name)}</b><small>${ago(it.created_at)}</small></button><span style="flex:1"></span>${mine ? `<button class="ibtn svb" data-a="smenu" aria-label="More">${I.more}</button>` : ''}<button class="ibtn svb" data-a="sclose" aria-label="Close">${I.x}</button></div>
+    <div class="sv-head"><button class="svu" data-a="suser" data-id="${g.uid}">${avOf(g.uid, 36)}<b>${esc(name)}</b><small>${ago(it.created_at)}</small></button><span style="flex:1"></span><button class="ibtn svb" data-a="smenu" aria-label="More">${I.more}</button><button class="ibtn svb" data-a="sclose" aria-label="Close">${I.x}</button></div>
     <div class="sv-body">${body}</div>
     <div class="sv-zone l" data-a="sprev"></div><div class="sv-zone r" data-a="snext"></div>
     ${it.caption ? `<div class="sv-cap">${esc(it.caption)}</div>` : ''}
@@ -1578,8 +1584,15 @@ function openSettings() {
     <div class="srow"><button class="lbl" data-a="blocked" style="flex:1">Blocked users</button></div>
     <h3 class="sub">${tr('account')}</h3>
     <div class="srow"><div class="ls">${esc(S.user ? S.user.email : '')}</div></div>
+    <div class="srow"><button class="lbl" data-a="accounts" style="flex:1">Switch or add account</button></div>
     <div class="srow"><button class="lbl" data-a="logout" style="color:var(--coral)">${tr('logout')}</button></div>
-    <div class="ls" style="padding:16px">KiHelp 0.13</div>
+    <div class="srow"><button class="lbl" data-a="delacct" style="color:var(--coral)">Delete my account</button></div>
+    <h3 class="sub">About</h3>
+    <div class="srow"><button class="lbl" data-a="legal" data-id="terms" style="flex:1">Terms of Use</button></div>
+    <div class="srow"><button class="lbl" data-a="legal" data-id="privacy" style="flex:1">Privacy Policy</button></div>
+    <div class="srow"><button class="lbl" data-a="legal" data-id="rules" style="flex:1">Community rules</button></div>
+    ${CONTACT_EMAIL ? `<div class="srow"><a class="lbl" href="mailto:${esc(CONTACT_EMAIL)}">Contact us</a></div>` : ''}
+    <div class="ls" style="padding:16px">KiHelp 0.14</div>
   </div></div>`;
   document.querySelector('.setbody').scrollTop = scroll;
   showUsage();
@@ -1596,7 +1609,14 @@ const ACT = {
   accent: id => { S.accent = id; saveSettings(); applyTheme(); openSettings(); },
   togglesaver: () => { S.saver = !S.saver; S.loaded.clear(); saveSettings(); applyTheme(); openSettings(); },
   clearcache: () => clearCache(),
-  logout: async () => { await sb.auth.signOut(); resetSession(); },
+  logout: async () => {
+    if (!confirm('Log out of this account?')) return;
+    const id = S.user.id; S.switching = true;
+    try { await sb.auth.signOut({ scope: 'local' }); } catch (e) {}
+    S.switching = false; putAccounts(getAccounts().filter(x => x.id !== id));
+    const next = getAccounts()[0];
+    if (next) { clearUserState(); closeSheet(); $('#over').innerHTML = ''; switchAccount(next.id); } else resetSession();
+  },
   load: id => { S.loaded.add(id); repaint(); },
   vclose: () => closeViewer(),
   vdl: () => { const v = S.viewer; if (v && v.dl) downloadMedia(v.items[v.idx]); },
@@ -1639,6 +1659,44 @@ const ACT = {
     p.adl = v; p.dl = true; closeSheet(); toast(v ? 'People can now save this' : 'Saving turned off');
   },
   search: () => openSearch(),
+  accounts: () => openAccounts(),
+  accswitch: id => switchAccount(id),
+  accrm: id => { if (!confirm('Remove this account from this device? You can log in again later.')) return; putAccounts(getAccounts().filter(x => x.id !== id)); openAccounts(); },
+  accadd: () => { if (getAccounts().length >= 5) return toast('You can add up to 5 accounts'); closeSheet(); S.addHint = ''; startAddAccount(); },
+  authcancel: () => { hideAuth(); },
+  logoutall: async () => {
+    if (!confirm('Log out of all accounts on this device?')) return;
+    S.switching = true;
+    for (const a of getAccounts()) { try { const r = await sb.auth.refreshSession({ refresh_token: a.rt }); if (r.data && r.data.session) await sb.auth.signOut({ scope: 'local' }); } catch (e) {} }
+    S.switching = false; putAccounts([]); closeSheet(); resetSession();
+  },
+  delacct: () => sheet(`<h2>Delete your account</h2><p>This permanently deletes your profile, posts, comments, messages, stories, videos and settings. It cannot be undone.</p>
+    <p class="ls" style="margin:8px 0">If you own a group, transfer ownership first. Groups you own are deleted with your account. Photos and videos you uploaded may stay in storage for a short time before they are cleaned up.</p>
+    <div class="fld"><label for="dtx">Type DELETE to confirm</label><input id="dtx" autocomplete="off" autocapitalize="characters"></div>
+    <button class="btn" style="background:var(--coral);color:#fff" id="dbtn" data-a="delgo">Delete my account</button>`),
+  delgo: async () => {
+    if ((($('#dtx') || {}).value || '').trim() !== 'DELETE') return toast('Type DELETE to confirm');
+    busy('#dbtn', true, '...'); const id = S.user.id;
+    const { error } = await sb.rpc('delete_my_account');
+    if (error) { busy('#dbtn', false, 'Delete my account'); return toast('Could not delete the account. If you own a group, transfer it first.'); }
+    S.switching = true; try { await sb.auth.signOut({ scope: 'local' }); } catch (e) {} S.switching = false;
+    putAccounts(getAccounts().filter(x => x.id !== id)); closeSheet(); $('#over').innerHTML = '';
+    const next = getAccounts()[0];
+    if (next) { clearUserState(); switchAccount(next.id); } else resetSession();
+    toast('Your account was deleted');
+  },
+  legal: id => openLegal(id),
+  legalx: () => { const l = $('#legal'); l.classList.remove('open'); l.innerHTML = ''; },
+  rep: (id, el) => { closeSheet(); openReport(el.dataset.t, id, el.dataset.o); },
+  rreason: id => { if (!S.report) return; S.report.reason = id; document.querySelectorAll('#rr .optrow').forEach(b => b.classList.toggle('sel', b.dataset.id === id)); },
+  rsubmit: async () => {
+    const r = S.report; if (!r) return; if (!r.reason) return toast('Choose a reason');
+    busy('#rsend', true, '...');
+    const { error } = await sb.from('reports').insert({ reporter_id: S.user.id, target_type: r.type, target_id: r.id, target_user_id: r.owner || null, reason: r.reason, details: ($('#rd').value || '').trim() || null });
+    if (error) { busy('#rsend', false, 'Send report'); return toast(error.code === '23505' ? 'You already reported this' : 'Could not send the report'); }
+    closeSheet(); S.report = null; toast('Thank you. We will review your report.');
+  },
+  vmore: id => { const v = S.videos.find(x => x.id === id); if (!v) return; sheet(`<h2>Video</h2><button class="optrow red" data-a="rep" data-t="video" data-id="${v.id}" data-o="${v.uid}">Report video</button><button class="optrow red" data-a="block" data-id="${v.uid}">Block ${esc(nameOf(v.uid))}</button>`); },
   install: async () => {
     if (isStandalone()) return toast('KiHelp is already installed');
     if (deferredInstall) { deferredInstall.prompt(); try { await deferredInstall.userChoice; } catch (e) {} deferredInstall = null; render(true); return; }
@@ -1697,6 +1755,7 @@ const ACT = {
     sheet(`<h2>${esc(G.row.name)}</h2>
       ${admin ? '<button class="optrow" data-a="gedit">Edit group</button><button class="optrow" data-a="gadd">Add people</button>' : ''}
       <button class="optrow" data-a="ginvite">Invite friends</button>
+      ${!owner ? `<button class="optrow red" data-a="rep" data-t="group" data-id="${G.id}" data-o="${G.row.owner_id}">Report group</button>` : ''}
       ${active && !owner ? '<button class="optrow red" data-a="gleave">Leave group</button>' : ''}
       ${owner ? '<button class="optrow red" data-a="gdel">Delete group</button>' : ''}`);
   },
@@ -1819,7 +1878,11 @@ const ACT = {
   sprev: () => storyPrev(),
   snext: () => storyNext(),
   suser: id => { closeStory(); openUser(id); },
-  smenu: () => { if (!S.sv) return; pauseStory(true); sheet(`<h2>Your story</h2><button class="optrow" data-a="sviews">Who viewed it</button><button class="optrow red" data-a="sdel">Delete story</button>`); },
+  smenu: () => {
+    const v = S.sv; if (!v) return; pauseStory(true); const it = v.it, mine = v.seq[v.gi].uid === S.user.id;
+    sheet(mine ? `<h2>Your story</h2><button class="optrow" data-a="sviews">Who viewed it</button><button class="optrow red" data-a="sdel">Delete story</button>`
+      : `<h2>Story</h2><button class="optrow red" data-a="rep" data-t="story" data-id="${it.id}" data-o="${it.user_id}">Report story</button><button class="optrow red" data-a="block" data-id="${it.user_id}">Block ${esc(nameOf(it.user_id))}</button>`);
+  },
   sviews: async () => {
     const v = S.sv; if (!v) return; const list = v.it.viewers || []; closeSheet(); pauseStory(true);
     await loadProfiles(list.map(x => x.user_id));
@@ -1888,7 +1951,8 @@ const ACT = {
   },
   pfmenu: id => sheet(`<h2>${esc(nameOf(id))}</h2>
     <button class="optrow" data-a="invite">Invite friends to KiHelp</button>
-    ${S.prof && S.prof.blocked ? `<button class="optrow" data-a="unblock" data-id="${id}" onclick="">Unblock</button>` : `<button class="optrow red" data-a="block" data-id="${id}">Block ${esc(nameOf(id))}</button>`}`),
+    <button class="optrow red" data-a="rep" data-t="user" data-id="${id}" data-o="${id}">Report ${esc(nameOf(id))}</button>
+    ${S.prof && S.prof.blocked ? `<button class="optrow" data-a="unblock" data-id="${id}">Unblock</button>` : `<button class="optrow red" data-a="block" data-id="${id}">Block ${esc(nameOf(id))}</button>`}`),
   psave: async id => {
     id = +id; const was = S.savedPosts.has(id);
     was ? S.savedPosts.delete(id) : S.savedPosts.add(id);
@@ -1913,6 +1977,7 @@ const ACT = {
       sheet(`<h2>Post options</h2>
         <button class="optrow" data-a="psave" data-id="${p.id}">${S.savedPosts.has(p.id) ? 'Remove from saved' : 'Save post'}</button>
         <button class="optrow" data-a="user" data-id="${p.uid}">View profile</button>
+        <button class="optrow red" data-a="rep" data-t="post" data-id="${p.id}" data-o="${p.uid}">Report post</button>
         <button class="optrow red" data-a="pblock" data-id="${p.uid}">Block ${esc(nameOf(p.uid))}</button>`);
     }
   },
@@ -2262,6 +2327,99 @@ document.addEventListener('keydown', e => {
   }
 });
 
+/* ---------- multiple accounts ---------- */
+const ACC_KEY = 'kihelp.accounts';
+const getAccounts = () => { try { return JSON.parse(store.get(ACC_KEY) || '[]') || []; } catch (e) { return []; } };
+const putAccounts = a => store.set(ACC_KEY, JSON.stringify(a));
+function saveAccount(session) {
+  if (!session || !session.user || !session.refresh_token) return;
+  const list = getAccounts(), u = session.user, p = (S.user && S.user.id === u.id && S.profile) ? S.profile : {}, cur = list.find(x => x.id === u.id);
+  const rec = { id: u.id, email: u.email || '', name: p.display_name || (cur && cur.name) || (u.email || 'Member').split('@')[0], avatar: safeUrl(p.avatar_url) || (cur && cur.avatar) || null, rt: session.refresh_token };
+  if (cur) Object.assign(cur, rec); else list.push(rec);
+  putAccounts(list);
+}
+function openAccounts() {
+  const list = getAccounts(), me = S.user && S.user.id;
+  sheet(`<h2>Accounts</h2>${list.length ? list.map(a => `<div class="reqrow" style="padding-inline:0"><button data-a="accswitch" data-id="${a.id}" style="display:flex;gap:10px;align-items:center;flex:1;min-width:0">${av(a.name, a.id, 44, a.avatar)}<span class="tx"><b>${esc(a.name)}</b><span class="ls" style="display:block">${esc(a.email)}</span></span></button>${a.id === me ? '<span class="pbadge">Active</span>' : `<button class="ibtn" data-a="accrm" data-id="${a.id}" aria-label="Remove account">${I.x}</button>`}</div>`).join('') : '<div class="ls">No saved accounts yet.</div>'}
+    <button class="btn alt" style="margin-top:12px" data-a="accadd">Add another account</button>
+    <button class="optrow red" style="margin-top:8px" data-a="logoutall">Log out of all accounts</button>`);
+}
+function startAddAccount() { S.addingAccount = true; S.authMode = 'login'; showAuth(); }
+async function switchAccount(id) {
+  if (S.user && S.user.id === id) return closeSheet();
+  const acc = getAccounts().find(x => x.id === id); if (!acc) return;
+  S.switching = true; toast('Switching account...');
+  try {
+    const { data, error } = await sb.auth.refreshSession({ refresh_token: acc.rt });
+    if (error || !data || !data.session) throw error || new Error('expired');
+    closeSheet(); closeViewer(); closeStory(); $('#over').innerHTML = '';
+    clearUserState(); await enter(data.session.user); toast('Switched to ' + acc.name);
+  } catch (e) {
+    putAccounts(getAccounts().filter(x => x.id !== id)); closeSheet();
+    toast('Please log in to this account again'); S.addHint = acc.email; startAddAccount();
+  } finally { S.switching = false; }
+}
+
+/* ---------- reports ---------- */
+const REPORT_REASONS = [['spam', 'Spam or scam'], ['harassment', 'Harassment or bullying'], ['hate', 'Hate speech'], ['nudity', 'Nudity or sexual content'], ['violence', 'Violence or dangerous content'], ['fake', 'Fake account or impersonation'], ['illegal', 'Illegal items or activity'], ['other', 'Something else']];
+function openReport(type, id, owner) {
+  S.report = { type, id: String(id), owner: owner || null, reason: null };
+  sheet(`<h2>Report</h2><p class="ls" style="margin:-4px 0 10px">Why are you reporting this? Your report is private.</p>
+    <div id="rr">${REPORT_REASONS.map(([k, l]) => `<button class="optrow" data-a="rreason" data-id="${k}"><span>${l}</span></button>`).join('')}</div>
+    <div class="fld" style="margin-top:10px"><textarea id="rd" maxlength="500" placeholder="Add details (optional)"></textarea></div>
+    <button class="btn" id="rsend" data-a="rsubmit">Send report</button>`);
+}
+
+/* ---------- terms, privacy and community rules ---------- */
+const CONTACT_EMAIL = ''; /* put your support email here, for example 'support@yourname.com' */
+const LEGAL_DATE = 'October 2026';
+const LEGAL = {
+  terms: { title: 'Terms of Use', sections: [
+    ['Agreeing to these terms', [`By creating an account or using KiHelp you agree to these Terms, the Privacy Policy and the Community rules. If you do not agree, please do not use KiHelp.`]],
+    ['Who can use KiHelp', [`KiHelp is for people aged 13 and over, or the minimum age in your country if it is higher. You must give true information when you sign up.`]],
+    ['Your account', [`You are responsible for everything that happens under your account. Keep your password private and tell us if you think someone else has used your account. You may keep more than one account, but you must not use accounts to avoid a ban or to mislead people.`]],
+    ['Your content', [`You own what you post. When you post, you give KiHelp permission to store it and show it inside the service to the people you chose, so that the service can work. You promise that you have the right to post it and that it follows the Community rules.`, `This permission ends when you delete the content or your account, except for copies in backups, and for content that other people have already shared or saved.`]],
+    ['What you must not do', [`Do not break the law, harass or threaten people, post harmful or sexual content, impersonate others, spread spam or scams, copy other people's work without permission, or try to hack, overload, scrape or misuse KiHelp. The Community rules explain this in more detail.`]],
+    ['Marketplace', [`KiHelp lets people list items and talk to each other. KiHelp is not part of any sale, does not check items or sellers, and does not handle payment or delivery unless the app clearly says so. Check items before you pay, meet in safe places, and follow your local laws. Listings for prohibited items will be removed.`]],
+    ['Reports and enforcement', [`You can report content in the app. We may remove content, limit features, suspend or close accounts that break these terms or the Community rules, or when this is needed to protect people or to follow the law.`]],
+    ['Changes to the service', [`KiHelp is still growing. We may change, pause or stop features, and the service may sometimes have errors or be unavailable.`]],
+    ['No promises about the service', [`KiHelp is provided as it is and as available. We do not promise that it will always work without errors or interruptions.`]],
+    ['Limits on responsibility', [`As far as the law allows, KiHelp and its team are not responsible for losses that come from your use of the service, from content posted by other people, or from dealings between users. Nothing in these terms limits rights that you have under the law and that cannot be limited.`]],
+    ['Ending your use', [`You can stop using KiHelp at any time. You can delete your account in Settings.`]],
+    ['Changes to these terms', [`We may update these terms. If you keep using KiHelp after an update, you accept the new terms. The date at the top shows the latest version.`]]
+  ] },
+  privacy: { title: 'Privacy Policy', sections: [
+    ['About this policy', [`KiHelp is a social network, short-video, groups and marketplace service that runs in your browser. This policy explains what information we collect, why we collect it, and the choices you have.`]],
+    ['What we collect', [`Account details: your email address, your password (kept only in scrambled form by our sign-in service), your name, and optionally your username, country, bio and profile photo.`, `Things you post or send: posts, comments, photos, videos, stories, short videos, group chats, direct messages, files and voice messages, marketplace listings, events, likes, follows, friend requests, blocks, saved items and reports.`, `Optional contact details: if you add a phone number, only you can see it. It is used only so that people who already know your exact number can find you, and only if you turn that option on. The same applies to finding you by email.`, `Technical data: our hosting and service providers may record technical information such as IP address, browser type and visit times to keep the service running and secure.`, `On your device: we store your sign-in session, the accounts you added for quick switching, and your settings (such as dark mode and language) in your browser's local storage.`]],
+    ['How we use it', [`We use your information to run and improve KiHelp, to show your content to the people you choose, to keep the service safe (for example, handling reports and stopping spam), and to contact you about your account. We do not sell your personal data.`]],
+    ['Who can see what', [`Public posts, public profiles, public groups and public stories can be seen by anyone who uses KiHelp. Friends-only content is seen only by your accepted friends. Posts set to Only me are seen only by you.`, `Direct messages are seen by the people in the conversation. Files sent in direct chats are stored privately. Group chats are seen by group members.`, `Photos and videos you upload to posts, profiles, stories and listings are stored at web addresses that are hard to guess but are not password-protected. Anyone who has an address can open the file, even if the post was later hidden or deleted. Do not upload anything you need to keep secret.`]],
+    ['Service providers', [`We use Supabase for the database, sign-in and file storage (our database is hosted in the European Union, in Ireland), GitHub Pages to host the website, and content delivery services (jsDelivr or unpkg) and Google Fonts to load code and fonts. These providers process data for us under their own terms. We may also share information when the law requires it or to protect people's safety.`]],
+    ['How long we keep it', [`We keep your information while your account exists. You can delete posts, comments and messages you sent at any time. You can delete your account in Settings, which removes your profile and the content linked to it. Uploaded files may stay in storage for a short time before they are cleaned up, and copies may remain briefly in backups.`]],
+    ['Your choices', [`You can edit your profile, choose who sees each post, turn email and phone search on or off, block people, report content, and delete your account. If you have questions about your information, contact us.`]],
+    ['Children', [`KiHelp is for people aged 13 and over, or the minimum age in your country if it is higher. If you believe a younger child has an account, please report it or contact us and we will remove it.`]],
+    ['Security', [`We use reasonable technical measures such as encrypted connections and access rules in our database. No service is completely secure, so please use a strong password and keep it private.`]],
+    ['Changes to this policy', [`We may update this policy. If we make important changes we will tell you in the app. The date at the top shows the latest version.`]]
+  ] },
+  rules: { title: 'Community rules', sections: [
+    ['Be kind', [`Treat people with respect. No bullying, harassment or threats. No hate against people because of who they are, such as their race, ethnicity, nationality, religion, gender, sexual orientation or disability.`]],
+    ['Keep people safe', [`No violence, graphic gore, or content that encourages self-harm, dangerous acts or crime. No nudity or sexually explicit content.`, `Sexual content involving children is never allowed. We remove it, close the account, and may report it to the authorities.`]],
+    ['Be real', [`No fake accounts, impersonation, scams, spam, fake reviews or misleading offers. Never ask people for their passwords or trick them into sending money.`]],
+    ['Respect privacy', [`Do not share other people's private information, such as phone numbers, addresses, private photos or private messages, without their permission.`]],
+    ['Respect creators', [`Only post photos, videos, music and writing that you made or have permission to share.`]],
+    ['Marketplace rules', [`Do not sell weapons, illegal drugs, stolen or counterfeit goods, dangerous materials, or anything that is illegal where you live. Describe items honestly, use real photos and state clear prices.`]],
+    ['Groups and events', [`Group admins are responsible for keeping their groups within these rules and for removing members who break them. Events must not be used to plan harm.`]],
+    ['Reporting and what happens next', [`Use Report on posts, comments, videos, stories, groups and profiles. Reports are private. You can also Block anyone to stop them contacting you.`, `If something breaks these rules we may remove it, warn you, limit features, suspend or close accounts. If you think we made a mistake, please contact us.`]]
+  ] }
+};
+function openLegal(k) {
+  const d = LEGAL[k]; if (!d) return;
+  $('#legal').innerHTML = `<div class="legal-wrap"><header><button class="ibtn flip" data-a="legalx" aria-label="Close">${I.back}</button><b class="ttl">${esc(d.title)}</b></header>
+    <div class="legal-body"><p class="ls">Last updated: ${LEGAL_DATE}</p>${d.sections.map(([h, ps]) => `<h3>${esc(h)}</h3>${ps.map(p => `<p>${esc(p)}</p>`).join('')}`).join('')}
+    ${CONTACT_EMAIL ? `<h3>Contact</h3><p>${esc(CONTACT_EMAIL)}</p>` : ''}
+    <p class="ls" style="margin-top:20px"><button class="lk2" data-a="legal" data-id="terms">Terms</button> · <button class="lk2" data-a="legal" data-id="privacy">Privacy</button> · <button class="lk2" data-a="legal" data-id="rules">Rules</button></p></div></div>`;
+  $('#legal').classList.add('open'); $('#legal').scrollTop = 0;
+}
+
 /* ---------- install as an app, updates, offline notice ---------- */
 let deferredInstall = null;
 const isStandalone = () => (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
@@ -2288,9 +2446,14 @@ async function boot() {
   const hm = location.hash.match(/^#v=([0-9a-f-]{36})$/i); if (hm) S.focusVideo = hm[1];
   const hp = location.hash.match(/^#p=([0-9]{1,15})$/); if (hp) S.focusPost = hp[1];
   const hg = location.hash.match(/^#g=([0-9a-f-]{36})$/i); if (hg) S.focusGroup = hg[1];
+  const lg = location.hash.match(/^#(privacy|terms|rules)$/i); if (lg) S.focusLegal = lg[1].toLowerCase();
   applyTheme(); render();
+  if (S.focusLegal) { openLegal(S.focusLegal); S.focusLegal = null; }
   if (!sb) return showAuth('Could not load the sign-in service. Check your internet and refresh.');
-  sb.auth.onAuthStateChange(ev => { if (ev === 'SIGNED_OUT' && S.user) resetSession(); });
+  sb.auth.onAuthStateChange((ev, session) => {
+    if (session && session.user && (ev === 'SIGNED_IN' || ev === 'TOKEN_REFRESHED' || ev === 'INITIAL_SESSION')) saveAccount(session);
+    if (ev === 'SIGNED_OUT' && S.user && !S.switching) resetSession();
+  });
   const { data } = await sb.auth.getSession();
   if (data && data.session) enter(data.session.user); else showAuth();
 }
