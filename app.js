@@ -257,7 +257,7 @@ async function refresh() {
 /* ---------- auth ---------- */
 function showAuth(msg, ok) {
   const m = S.authMode, up = m === 'signup';
-  $('#auth').innerHTML = `<div class="authbrand"><img class="logo" src="logo-320.png" width="120" height="120" alt="kihelp logo"><div class="mark">kihelp</div></div>
+  $('#auth').innerHTML = `<div class="authbrand"><img class="logo" src="logo-320.png" width="120" height="120" alt="kihelp logo" onerror="this.style.display='none'"><div class="mark">kihelp</div></div>
     <p class="ls" style="margin:6px 0 20px">Connect, share and trade. All in one app.</p>
     <div class="seg" style="margin-bottom:14px"><button class="${!up ? 'on' : ''}" data-a="amode" data-id="login">Log in</button><button class="${up ? 'on' : ''}" data-a="amode" data-id="signup">Sign up</button></div>
     <form id="af" novalidate>
@@ -336,10 +336,10 @@ const gate = () => {
 function head() {
   const t = S.tab;
   const title = tr({ home: 'social', video: 'videos', chat: 'chats', market: 'marketplace', alerts: 'alerts', me: 'profile' }[t]);
-  const act = t === 'home' ? `<button class="hbtn" data-a="newpost">${I.plus}${tr('post')}</button>`
-    : t === 'video' ? `<button class="hbtn" data-a="vupload">${I.plus}${tr('video')}</button>`
-    : t === 'market' ? `<button class="hbtn" data-a="sell">${I.plus}${tr('sell')}</button>` : '';
-  return `<div class="brand"><img class="logo" src="logo-120.png" width="36" height="36" alt=""><div><div class="mark">kihelp</div><div class="sect">${title}</div></div></div><div class="hr">${act}<button class="ibtn" data-a="alerts" aria-label="${tr('alerts')}">${I.bell}</button><button class="ibtn" data-a="search" aria-label="Search people">${I.search}</button><button class="ibtn" data-a="settings" aria-label="${tr('settings')}">${I.sliders}</button></div>`;
+  const act = t === 'home' ? `<button class="hbtn" data-a="newpost">${I.plus}<span class="hl">${tr('post')}</span></button>`
+    : t === 'video' ? `<button class="hbtn" data-a="vupload">${I.plus}<span class="hl">${tr('video')}</span></button>`
+    : t === 'market' ? `<button class="hbtn" data-a="sell">${I.plus}<span class="hl">${tr('sell')}</span></button>` : '';
+  return `<div class="brand"><div class="mark">kihelp</div><div class="sect">${title}</div></div><div class="hr">${act}<button class="ibtn" data-a="alerts" aria-label="${tr('alerts')}">${I.bell}</button><button class="ibtn" data-a="search" aria-label="Search people">${I.search}</button><button class="ibtn" data-a="settings" aria-label="${tr('settings')}">${I.sliders}</button></div>`;
 }
 const postLists = () => $('#onep') ? [S.onePost] : $('#pposts') ? [S.profPosts] : $('#spl') ? [S.savedList] : S.tab === 'me' ? [S.myPosts] : [S.posts];
 const findPost = id => postLists()[0].find(x => x.id == id) || [...S.posts, ...S.myPosts, ...S.profPosts, ...S.savedList].find(x => x.id == id);
