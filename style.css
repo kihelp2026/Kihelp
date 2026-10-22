@@ -421,3 +421,13 @@ input[type=range]{padding:0;border:0;background:none;accent-color:var(--acc);wid
 .lk2{text-decoration:underline;font-weight:600;display:inline;padding:0;color:inherit}
 .optrow.sel{background:var(--soft)}
 .optrow.sel::after{content:"\2713";font-weight:800}
+
+/* v0.15: brand */
+.brand{display:flex;align-items:center;gap:8px;min-width:0}
+.logo{border-radius:50%;flex:none;display:block}
+.mark{font:400 36px/0.95 "Italianno","Snell Roundhand","Apple Chancery","Brush Script MT",cursive;letter-spacing:0;color:#000;padding-bottom:2px}
+body.dark .mark{color:#fff}
+.authbrand{display:flex;flex-direction:column;align-items:center;gap:2px;margin-bottom:12px}
+.authbrand .mark{font-size:72px}
+.authbrand+p{text-align:center}
+@media (max-width:380px){.ibtn{width:36px;height:40px}.hbtn{padding:8px 11px}.mark{font-size:32px}}
