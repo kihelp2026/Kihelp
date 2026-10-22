@@ -257,7 +257,7 @@ async function refresh() {
 /* ---------- auth ---------- */
 function showAuth(msg, ok) {
   const m = S.authMode, up = m === 'signup';
-  $('#auth').innerHTML = `<div class="mark" style="font-size:46px">KiHelp</div>
+  $('#auth').innerHTML = `<div class="authbrand"><img class="logo" src="logo-320.png" width="120" height="120" alt="kihelp logo"><div class="mark">kihelp</div></div>
     <p class="ls" style="margin:6px 0 20px">Connect, share and trade. All in one app.</p>
     <div class="seg" style="margin-bottom:14px"><button class="${!up ? 'on' : ''}" data-a="amode" data-id="login">Log in</button><button class="${up ? 'on' : ''}" data-a="amode" data-id="signup">Sign up</button></div>
     <form id="af" novalidate>
@@ -339,7 +339,7 @@ function head() {
   const act = t === 'home' ? `<button class="hbtn" data-a="newpost">${I.plus}${tr('post')}</button>`
     : t === 'video' ? `<button class="hbtn" data-a="vupload">${I.plus}${tr('video')}</button>`
     : t === 'market' ? `<button class="hbtn" data-a="sell">${I.plus}${tr('sell')}</button>` : '';
-  return `<div><div class="mark">KiHelp</div><div class="sect">${title}</div></div><div class="hr">${act}<button class="ibtn" data-a="alerts" aria-label="${tr('alerts')}">${I.bell}</button><button class="ibtn" data-a="search" aria-label="Search people">${I.search}</button><button class="ibtn" data-a="settings" aria-label="${tr('settings')}">${I.sliders}</button></div>`;
+  return `<div class="brand"><img class="logo" src="logo-120.png" width="36" height="36" alt=""><div><div class="mark">kihelp</div><div class="sect">${title}</div></div></div><div class="hr">${act}<button class="ibtn" data-a="alerts" aria-label="${tr('alerts')}">${I.bell}</button><button class="ibtn" data-a="search" aria-label="Search people">${I.search}</button><button class="ibtn" data-a="settings" aria-label="${tr('settings')}">${I.sliders}</button></div>`;
 }
 const postLists = () => $('#onep') ? [S.onePost] : $('#pposts') ? [S.profPosts] : $('#spl') ? [S.savedList] : S.tab === 'me' ? [S.myPosts] : [S.posts];
 const findPost = id => postLists()[0].find(x => x.id == id) || [...S.posts, ...S.myPosts, ...S.profPosts, ...S.savedList].find(x => x.id == id);
@@ -2371,7 +2371,7 @@ function openReport(type, id, owner) {
 }
 
 /* ---------- terms, privacy and community rules ---------- */
-const CONTACT_EMAIL = ''; /* put your support email here, for example 'support@yourname.com' */
+const CONTACT_EMAIL = 'kihelpcompany@gmail.com'; /* put your support email here, for example 'support@yourname.com' */
 const LEGAL_DATE = 'October 2026';
 const LEGAL = {
   terms: { title: 'Terms of Use', sections: [
