@@ -431,3 +431,10 @@ body.dark .mark{color:#fff}
 .authbrand .mark{font-size:72px}
 .authbrand+p{text-align:center}
 @media (max-width:380px){.ibtn{width:36px;height:40px}.hbtn{padding:8px 11px}.mark{font-size:32px}}
+
+/* v0.16: bigger wordmark, like Facebook and Instagram */
+.brand{display:flex;align-items:baseline;gap:10px;min-width:0}
+.brand .mark{font-size:clamp(40px,11.5vw,54px);line-height:.8;padding-bottom:6px}
+.brand .sect{display:none;margin:0}
+@media (min-width:480px){.brand .sect{display:block}}
+@media (max-width:420px){.hbtn .hl{display:none}.hbtn{padding:9px 11px}}
