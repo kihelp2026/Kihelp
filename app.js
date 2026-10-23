@@ -50,19 +50,19 @@ const S = {
   tab: 'home', cat: 'All', opt: 'all', q: '', open: new Set(),
   mode: 'system', accent: 'auto', saver: false, lang: 'en', loaded: new Set(),
   user: null, profile: null, pf: {}, posts: [], products: [], saved: new Set(), threads: [], notes: [],
-  me: { posts: 0, following: 0, followers: 0, videos: 0 }, videos: [], myVideos: [], muted: true, viewed: new Set(), focusVideo: null, savedPosts: new Set(), prof: null, profPosts: [], savedList: [], myPosts: [], reqs: [], postVis: 'public', allowDl: false, drafts: [], viewer: null, onePost: [], focusPost: null, share: null, following: new Set(), fl: null, reply: null, editM: null, editC: null, replyC: null, rec: null, sig: {}, stories: { mine: null, others: [] }, sv: null, sc: null, g: null, myGroups: null, gpoll: null, gtab: 'mine', gq: '', greqs: [], evs: [], evf: 'all', evEdit: null, gdraftPriv: 'public', pc: { phone: null, allow_phone_search: false, allow_email_search: false }, ready: {}, authMode: 'login', openThread: null, sellOpt: 'fixed'
+  me: { posts: 0, following: 0, followers: 0, videos: 0 }, videos: [], myVideos: [], muted: true, viewed: new Set(), focusVideo: null, savedPosts: new Set(), prof: null, profPosts: [], savedList: [], myPosts: [], reqs: [], postVis: 'public', allowDl: false, drafts: [], viewer: null, onePost: [], focusPost: null, share: null, following: new Set(), fl: null, reply: null, editM: null, editC: null, replyC: null, rec: null, sig: {}, stories: { mine: null, others: [] }, sv: null, sc: null, g: null, myGroups: null, gpoll: null, gtab: 'mine', gq: '', greqs: [], evs: [], evf: 'all', evEdit: null, gdraftPriv: 'public', wallet: null, gifts: null, giftSel: null, giftQty: 1, giftTo: null, rate: 1, pc: { phone: null, allow_phone_search: false, allow_email_search: false }, ready: {}, authMode: 'login', openThread: null, sellOpt: 'fixed'
 };
 const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
 try { Object.assign(S, JSON.parse(store.get('kihelp.settings') || '{}')); } catch (e) {}
 const saveSettings = () => store.set('kihelp.settings', JSON.stringify({ mode: S.mode, accent: S.accent, saver: S.saver, lang: S.lang }));
 
 const LANGS = {
-  en: { name: 'English', home: 'Home', chat: 'Chat', videos: 'Videos', video: 'Video', market: 'Market', alerts: 'Alerts', profile: 'Profile', social: 'Social', chats: 'Chats', marketplace: 'Marketplace', post: 'Post', sell: 'Sell', settings: 'Settings', appearance: 'Appearance', mode: 'Mode', system: 'System', light: 'Light', dark: 'Dark', accent: 'Accent color', auto: 'Auto', data: 'Data and storage', saver: 'Data saver', saverDesc: 'Photos and videos load only when you tap them', storage: 'Storage used', clear: 'Clear cache', cleared: 'Cache cleared', language: 'Language', search: 'Search items', mine: 'Your listings', account: 'Account', logout: 'Log out' },
-  am: { name: 'አማርኛ', home: 'መነሻ', chat: 'ውይይት', videos: 'ቪዲዮዎች', video: 'ቪዲዮ', market: 'ገበያ', alerts: 'ማሳወቂያ', profile: 'መገለጫ', social: 'ማኅበራዊ', chats: 'ውይይቶች', marketplace: 'ገበያ', post: 'ለጥፍ', sell: 'ሽጥ', settings: 'ቅንብሮች', appearance: 'ገጽታ', mode: 'ሁነታ', system: 'የስልክ ቅንብር', light: 'ብሩህ', dark: 'ጨለማ', accent: 'ቀለም', auto: 'ራስ-ሰር', data: 'ዳታ እና ማከማቻ', saver: 'ዳታ ቆጣቢ', saverDesc: 'ፎቶና ቪዲዮ የሚጫነው ሲነኩት ብቻ ነው', storage: 'ጥቅም ላይ የዋለ ማከማቻ', clear: 'ካሽ አጽዳ', cleared: 'ካሽ ጸድቷል', language: 'ቋንቋ', search: 'ዕቃዎችን ፈልግ', mine: 'የእርስዎ ዕቃዎች', account: 'መለያ', logout: 'ውጣ' },
-  ar: { name: 'العربية', home: 'الرئيسية', chat: 'الدردشة', videos: 'الفيديوهات', video: 'فيديو', market: 'السوق', alerts: 'الإشعارات', profile: 'حسابي', social: 'اجتماعي', chats: 'المحادثات', marketplace: 'السوق', post: 'نشر', sell: 'بيع', settings: 'الإعدادات', appearance: 'المظهر', mode: 'الوضع', system: 'النظام', light: 'فاتح', dark: 'داكن', accent: 'لون التمييز', auto: 'تلقائي', data: 'البيانات والتخزين', saver: 'توفير البيانات', saverDesc: 'تُحمَّل الصور والفيديوهات عند الضغط عليها فقط', storage: 'التخزين المستخدم', clear: 'مسح الذاكرة المؤقتة', cleared: 'تم مسح الذاكرة المؤقتة', language: 'اللغة', search: 'ابحث عن منتجات', mine: 'منتجاتك', account: 'الحساب', logout: 'تسجيل الخروج' },
-  fr: { name: 'Français', home: 'Accueil', chat: 'Discussions', videos: 'Vidéos', video: 'Vidéo', market: 'Marché', alerts: 'Alertes', profile: 'Profil', social: 'Social', chats: 'Discussions', marketplace: 'Marché', post: 'Publier', sell: 'Vendre', settings: 'Réglages', appearance: 'Apparence', mode: 'Mode', system: 'Système', light: 'Clair', dark: 'Sombre', accent: "Couleur d'accent", auto: 'Auto', data: 'Données et stockage', saver: 'Économiseur de données', saverDesc: 'Les photos et vidéos ne se chargent que si vous les touchez', storage: 'Stockage utilisé', clear: 'Vider le cache', cleared: 'Cache vidé', language: 'Langue', search: 'Rechercher des articles', mine: 'Vos annonces', account: 'Compte', logout: 'Se déconnecter' },
-  es: { name: 'Español', home: 'Inicio', chat: 'Chat', videos: 'Videos', video: 'Video', market: 'Mercado', alerts: 'Avisos', profile: 'Perfil', social: 'Social', chats: 'Chats', marketplace: 'Mercado', post: 'Publicar', sell: 'Vender', settings: 'Ajustes', appearance: 'Apariencia', mode: 'Modo', system: 'Sistema', light: 'Claro', dark: 'Oscuro', accent: 'Color de acento', auto: 'Auto', data: 'Datos y almacenamiento', saver: 'Ahorro de datos', saverDesc: 'Las fotos y los videos se cargan solo al tocarlos', storage: 'Almacenamiento usado', clear: 'Borrar caché', cleared: 'Caché borrada', language: 'Idioma', search: 'Buscar artículos', mine: 'Tus artículos', account: 'Cuenta', logout: 'Cerrar sesión' },
-  sw: { name: 'Kiswahili', home: 'Mwanzo', chat: 'Gumzo', videos: 'Video', video: 'Video', market: 'Soko', alerts: 'Arifa', profile: 'Wasifu', social: 'Jamii', chats: 'Mazungumzo', marketplace: 'Soko', post: 'Chapisha', sell: 'Uza', settings: 'Mipangilio', appearance: 'Mwonekano', mode: 'Hali', system: 'Mfumo', light: 'Mwanga', dark: 'Giza', accent: 'Rangi kuu', auto: 'Otomatiki', data: 'Data na hifadhi', saver: 'Kiokoa data', saverDesc: 'Picha na video hupakiwa unapozigusa tu', storage: 'Hifadhi inayotumika', clear: 'Futa kache', cleared: 'Kache imefutwa', language: 'Lugha', search: 'Tafuta bidhaa', mine: 'Bidhaa zako', account: 'Akaunti', logout: 'Toka' }
+  en: { name: 'English', home: 'Home', chat: 'Chat', videos: 'Videos', video: 'Video', market: 'Market', alerts: 'Alerts', profile: 'Profile', social: 'Social', chats: 'Chats', marketplace: 'Marketplace', post: 'Post', mind: "What's on your mind?", sell: 'Sell', settings: 'Settings', appearance: 'Appearance', mode: 'Mode', system: 'System', light: 'Light', dark: 'Dark', accent: 'Accent color', auto: 'Auto', data: 'Data and storage', saver: 'Data saver', saverDesc: 'Photos and videos load only when you tap them', storage: 'Storage used', clear: 'Clear cache', cleared: 'Cache cleared', language: 'Language', search: 'Search items', mine: 'Your listings', account: 'Account', logout: 'Log out' },
+  am: { name: 'አማርኛ', home: 'መነሻ', chat: 'ውይይት', videos: 'ቪዲዮዎች', video: 'ቪዲዮ', market: 'ገበያ', alerts: 'ማሳወቂያ', profile: 'መገለጫ', social: 'ማኅበራዊ', chats: 'ውይይቶች', marketplace: 'ገበያ', post: 'ለጥፍ', mind: 'ምን እያሰቡ ነው?', sell: 'ሽጥ', settings: 'ቅንብሮች', appearance: 'ገጽታ', mode: 'ሁነታ', system: 'የስልክ ቅንብር', light: 'ብሩህ', dark: 'ጨለማ', accent: 'ቀለም', auto: 'ራስ-ሰር', data: 'ዳታ እና ማከማቻ', saver: 'ዳታ ቆጣቢ', saverDesc: 'ፎቶና ቪዲዮ የሚጫነው ሲነኩት ብቻ ነው', storage: 'ጥቅም ላይ የዋለ ማከማቻ', clear: 'ካሽ አጽዳ', cleared: 'ካሽ ጸድቷል', language: 'ቋንቋ', search: 'ዕቃዎችን ፈልግ', mine: 'የእርስዎ ዕቃዎች', account: 'መለያ', logout: 'ውጣ' },
+  ar: { name: 'العربية', home: 'الرئيسية', chat: 'الدردشة', videos: 'الفيديوهات', video: 'فيديو', market: 'السوق', alerts: 'الإشعارات', profile: 'حسابي', social: 'اجتماعي', chats: 'المحادثات', marketplace: 'السوق', post: 'نشر', mind: 'ما الذي يدور في بالك؟', sell: 'بيع', settings: 'الإعدادات', appearance: 'المظهر', mode: 'الوضع', system: 'النظام', light: 'فاتح', dark: 'داكن', accent: 'لون التمييز', auto: 'تلقائي', data: 'البيانات والتخزين', saver: 'توفير البيانات', saverDesc: 'تُحمَّل الصور والفيديوهات عند الضغط عليها فقط', storage: 'التخزين المستخدم', clear: 'مسح الذاكرة المؤقتة', cleared: 'تم مسح الذاكرة المؤقتة', language: 'اللغة', search: 'ابحث عن منتجات', mine: 'منتجاتك', account: 'الحساب', logout: 'تسجيل الخروج' },
+  fr: { name: 'Français', home: 'Accueil', chat: 'Discussions', videos: 'Vidéos', video: 'Vidéo', market: 'Marché', alerts: 'Alertes', profile: 'Profil', social: 'Social', chats: 'Discussions', marketplace: 'Marché', post: 'Publier', mind: 'Quoi de neuf ?', sell: 'Vendre', settings: 'Réglages', appearance: 'Apparence', mode: 'Mode', system: 'Système', light: 'Clair', dark: 'Sombre', accent: "Couleur d'accent", auto: 'Auto', data: 'Données et stockage', saver: 'Économiseur de données', saverDesc: 'Les photos et vidéos ne se chargent que si vous les touchez', storage: 'Stockage utilisé', clear: 'Vider le cache', cleared: 'Cache vidé', language: 'Langue', search: 'Rechercher des articles', mine: 'Vos annonces', account: 'Compte', logout: 'Se déconnecter' },
+  es: { name: 'Español', home: 'Inicio', chat: 'Chat', videos: 'Videos', video: 'Video', market: 'Mercado', alerts: 'Avisos', profile: 'Perfil', social: 'Social', chats: 'Chats', marketplace: 'Mercado', post: 'Publicar', mind: '¿Qué estás pensando?', sell: 'Vender', settings: 'Ajustes', appearance: 'Apariencia', mode: 'Modo', system: 'Sistema', light: 'Claro', dark: 'Oscuro', accent: 'Color de acento', auto: 'Auto', data: 'Datos y almacenamiento', saver: 'Ahorro de datos', saverDesc: 'Las fotos y los videos se cargan solo al tocarlos', storage: 'Almacenamiento usado', clear: 'Borrar caché', cleared: 'Caché borrada', language: 'Idioma', search: 'Buscar artículos', mine: 'Tus artículos', account: 'Cuenta', logout: 'Cerrar sesión' },
+  sw: { name: 'Kiswahili', home: 'Mwanzo', chat: 'Gumzo', videos: 'Video', video: 'Video', market: 'Soko', alerts: 'Arifa', profile: 'Wasifu', social: 'Jamii', chats: 'Mazungumzo', marketplace: 'Soko', post: 'Chapisha', mind: 'Unafikiria nini?', sell: 'Uza', settings: 'Mipangilio', appearance: 'Mwonekano', mode: 'Hali', system: 'Mfumo', light: 'Mwanga', dark: 'Giza', accent: 'Rangi kuu', auto: 'Otomatiki', data: 'Data na hifadhi', saver: 'Kiokoa data', saverDesc: 'Picha na video hupakiwa unapozigusa tu', storage: 'Hifadhi inayotumika', clear: 'Futa kache', cleared: 'Kache imefutwa', language: 'Lugha', search: 'Tafuta bidhaa', mine: 'Bidhaa zako', account: 'Akaunti', logout: 'Toka' }
 };
 
 const tr = k => (LANGS[S.lang] && LANGS[S.lang][k]) || LANGS.en[k] || k;
@@ -195,6 +195,12 @@ async function loadAlerts() {
   const mn = await sb.from('mentions').select('author_id,post_id,created_at').eq('mentioned_id', me).order('created_at', { ascending: false }).limit(30);
   const MN = mn.data || []; await loadProfiles(MN.map(x => x.author_id));
   items = items.concat(MN.map(x => ({ uid: x.author_id, text: nameOf(x.author_id) + ' mentioned you', at: x.created_at, pid: x.post_id })));
+  try {
+    if (!S.gifts) { const gc = await sb.from('gift_catalog').select('id,name,emoji,price').eq('active', true).order('sort'); S.gifts = gc.data || []; }
+    const gt = await sb.from('gift_transactions').select('sender_id,gift_id,qty,created_at').eq('receiver_id', me).order('created_at', { ascending: false }).limit(20);
+    const GT = gt.data || []; await loadProfiles(GT.map(x => x.sender_id));
+    items = items.concat(GT.map(x => { const g = S.gifts.find(y => y.id === x.gift_id) || { emoji: '🎁', name: 'a gift' }; return { uid: x.sender_id, text: nameOf(x.sender_id) + ' sent you ' + g.emoji + ' ' + g.name + ' x' + x.qty, at: x.created_at }; }));
+  } catch (e) {}
   items.sort((a, b) => new Date(b.at) - new Date(a.at));
   S.notes = items.slice(0, 30); S.ready.alerts = 1;
 }
@@ -305,7 +311,7 @@ async function ensureProfile(user) {
   S.profile = ins || row; S.pf[user.id] = S.profile;
 }
 async function enter(user) {
-  S.user = user; S.ready = {};
+  S.user = user; S.ready = {}; S.wallet = null;
   try { await ensureProfile(user); } catch (e) { S.profile = { id: user.id, display_name: (user.email || 'Member').split('@')[0] }; S.pf[user.id] = S.profile; }
   loadPrivate().catch(() => {});
   sb.auth.getSession().then(r => { if (r.data && r.data.session) saveAccount(r.data.session); }).catch(() => {});
@@ -393,7 +399,7 @@ function postCard(p) {
 }
 function viewHome() {
   if (gate()) return gate();
-  const row = installBar() + quickRow() + storiesRow();
+  const row = installBar() + composerBox() + quickRow() + storiesRow();
   if (!S.posts.length) return row + `<div class="empty" style="padding:60px 24px">No posts yet.<br>Be the first. Tap <b>${tr('post')}</b> at the top.</div>` + videoStrip();
   const at = Math.min(2, S.posts.length - 1);
   return row + S.posts.map((p, i) => postCard(p) + (i === at ? videoStrip() : '')).join('');
@@ -409,6 +415,7 @@ function viewVideo() {
       ${S.saver && !S.loaded.has('v' + v.id) ? `<button class="vplay" data-a="vplay" data-id="${v.id}">Tap to play<br><small>Data saver is on</small></button>` : ''}
       <div class="vshade"></div>
       <button class="vmute" data-a="vmute" aria-label="Sound">${S.muted ? I.mute : I.volume}</button>
+      <button class="vspd" data-a="vspeed" aria-label="Playback speed">${S.rate}x</button>
       <div class="vinfo"><b>${esc(nameOf(v.uid))}${p.username ? ' <span style="font-weight:500;opacity:.85">@' + esc(p.username) + '</span>' : ''}</b>${fChip(v.uid)}
         ${v.cap ? `<p>${esc(v.cap)}</p>` : ''}<div style="font-size:13px;opacity:.85;margin-top:4px" data-views="${v.id}">${v.views} views</div></div>
       <div class="vacts">
@@ -416,6 +423,7 @@ function viewVideo() {
         <button class="va ${v.liked ? 'on' : ''}" data-lk="${v.id}" data-a="vlike" data-id="${v.id}" aria-label="Like"><span class="c">${I.heart}</span><span class="n">${v.likes}</span></button>
         <button class="va" data-a="vcmt" data-id="${v.id}" aria-label="Comments"><span class="c">${I.cmt}</span><span data-cc="${v.id}">${v.cc}</span></button>
         <button class="va" data-a="vshare" data-id="${v.id}" aria-label="Share"><span class="c">${I.share}</span>Share</button>
+        ${v.uid !== S.user.id ? `<button class="va" data-a="gift" data-id="${v.uid}" data-t="video" data-i="${v.id}" aria-label="Send a gift"><span class="c">🎁</span>Gift</button>` : ''}
         ${v.uid !== S.user.id ? `<button class="va" data-a="vmore" data-id="${v.id}" aria-label="More options"><span class="c">${I.more}</span></button>` : ''}
         ${v.dl ? `<button class="va" data-a="vdl2" data-id="${v.id}" aria-label="Save video"><span class="c">${I.download}</span>Save</button>` : ''}
       </div></section>`;
@@ -468,6 +476,7 @@ function viewMe() {
     <div class="stats"><div><b>${S.me.videos}</b><span>Videos</span></div><button data-a="flist" data-id="${S.user.id}" data-k="followers"><b>${S.me.followers}</b><span>Followers</span></button><button data-a="flist" data-id="${S.user.id}" data-k="following"><b>${S.me.following}</b><span>Following</span></button><div><b>${S.me.posts}</b><span>Posts</span></div></div>
     <div style="padding:0 16px 8px;display:grid;grid-template-columns:1fr 1fr;gap:10px"><button class="btn alt" data-a="editprofile">Edit profile</button><button class="btn alt" data-a="opensaved">Saved posts</button></div>
     <div style="padding:0 16px 8px;display:grid;grid-template-columns:1fr 1fr;gap:10px"><button class="btn alt" data-a="invite">Invite friends</button><button class="btn alt" data-a="accounts">Switch account</button></div>
+    <div style="padding:0 16px 8px"><button class="btn alt" data-a="wallet">🪙 Wallet and gifts</button></div>
     <h3 class="sub">${tr('videos')}</h3>
     ${S.myVideos.length ? vgridHTML(S.myVideos) : `<div class="empty" style="padding:20px 16px">No videos yet. Open Videos and tap Video.</div>`}
     <h3 class="sub">Posts</h3>
@@ -492,7 +501,7 @@ function wireVideos() {
   S.vio = new IntersectionObserver(es => es.forEach(e => {
     const v = e.target.querySelector('video'); if (!v) return;
     if (e.isIntersecting && e.intersectionRatio >= 0.7) {
-      if (!(S.saver && !S.loaded.has('v' + v.dataset.id))) { v.muted = S.muted; v.play().catch(() => {}); }
+      if (!(S.saver && !S.loaded.has('v' + v.dataset.id))) { v.muted = S.muted; v.playbackRate = S.rate; v.play().catch(() => {}); }
     } else v.pause();
   }), { root: feed, threshold: [0, 0.7, 1] });
   feed.querySelectorAll('.vid').forEach(el => S.vio.observe(el));
@@ -800,7 +809,7 @@ function paintProfile() {
       acts = `<div style="padding:0 16px 12px"><div class="row2" style="grid-template-columns:1fr 1fr;margin-top:0">
         <button class="btn ${P.following ? 'alt' : ''}" data-a="pfollow" data-id="${id}">${P.following ? 'Following' : 'Follow'}</button>
         <button class="btn ${fr[2]}" data-a="${fr[0]}" data-id="${id}">${fr[1]}</button></div>
-        <div style="display:grid;grid-template-columns:${P.rel === 'received' ? '1fr 1fr' : '1fr'};gap:10px;margin-top:10px"><button class="btn alt" data-a="dm" data-id="${id}">Message</button>${P.rel === 'received' ? `<button class="btn alt" data-a="fno" data-id="${id}">Decline</button>` : ''}</div></div>`;
+        <div style="display:grid;grid-template-columns:${P.rel === 'received' ? '1fr 1fr' : '1fr'};gap:10px;margin-top:10px"><button class="btn alt" data-a="dm" data-id="${id}">Message</button>${P.rel === 'received' ? `<button class="btn alt" data-a="fno" data-id="${id}">Decline</button>` : ''}</div><button class="btn alt" data-a="gift" data-id="${id}" data-t="profile" style="margin-top:10px">🎁 Send a gift</button></div>`;
     }
   }
   const all = [...P.pinned, ...P.posts];
@@ -1304,6 +1313,7 @@ function editImage(file, opts) {
 }
 
 /* ---------- groups and events ---------- */
+const composerBox = () => `<button class="composer" data-a="newpost">${avOf(S.user.id, 40)}<span class="cp">${esc(tr('mind'))}</span></button>`;
 const quickRow = () => `<div class="quick"><button class="chip" data-a="groups">👥 Groups</button><button class="chip" data-a="events">📅 Events</button></div>`;
 const gav = (g, size) => av(g.name, g.id, size, safeUrl(g.avatar_url));
 const privIcon = p => `<span class="vis" title="${p === 'private' ? 'Private' : 'Public'}">${p === 'private' ? I.lock : I.globe}</span>`;
@@ -1538,6 +1548,70 @@ function groupForm(g) {
   bindUpload({ edit: true, ratio: '1:1' });
 }
 
+/* ---------- gifts and wallet (TEST MODE: coins have no cash value yet) ---------- */
+const coinFmt = n => Number(n || 0).toLocaleString('en-US');
+async function loadGiftData() {
+  if (!S.gifts) { const { data } = await sb.from('gift_catalog').select('id,name,emoji,price').eq('active', true).order('sort'); S.gifts = data || []; }
+  const { data: w, error } = await sb.rpc('ensure_wallet'); if (error) throw error; S.wallet = w;
+}
+async function openGift(uid, tType, tId) {
+  if (uid === S.user.id) return toast('You cannot send a gift to yourself');
+  try { await loadGiftData(); } catch (e) { return toast('Gifts are not available right now'); }
+  await loadProfiles([uid]);
+  S.giftTo = { uid, tType: tType || 'profile', tId: tId || null }; S.giftSel = null; S.giftQty = 1;
+  paintGiftSheet();
+}
+function paintGiftSheet() {
+  const T = S.giftTo; if (!T) return;
+  const sel = S.gifts.find(g => g.id === S.giftSel), total = sel ? sel.price * S.giftQty : 0, bal = S.wallet ? S.wallet.coins : 0;
+  sheet(`<h2>Send a gift</h2>
+    <div class="ls" style="margin:-6px 0 10px">To ${esc(nameOf(T.uid))}</div>
+    <div class="gbal"><span>🪙 ${coinFmt(bal)} coins</span><button class="chip" data-a="coins">Get coins</button></div>
+    <div class="ggrid">${S.gifts.map(g => `<button class="gcard ${S.giftSel === g.id ? 'on' : ''}" data-a="giftsel" data-id="${g.id}"><span class="ge">${g.emoji}</span><b>${esc(g.name)}</b><small>🪙 ${g.price}</small></button>`).join('')}</div>
+    <div class="dots" style="margin:12px 0">${[1, 5, 10, 20].map(n => `<button class="chip ${S.giftQty === n ? 'on' : ''}" data-a="giftqty" data-id="${n}">x${n}</button>`).join('')}</div>
+    <button class="btn" id="giftgo" data-a="giftsend" ${sel ? '' : 'disabled'}>${sel ? 'Send ' + sel.emoji + ' x' + S.giftQty + ' · 🪙 ' + coinFmt(total) : 'Choose a gift'}</button>
+    <p class="ls" style="margin-top:10px">Test mode: coins have no cash value yet.</p>`);
+}
+function giftBurst(emoji, qty) {
+  const n = Math.min(12, 3 + Math.floor(qty / 2));
+  for (let i = 0; i < n; i++) {
+    const el = document.createElement('div'); el.className = 'gburst'; el.textContent = emoji;
+    el.style.left = (15 + Math.random() * 70) + 'vw'; el.style.animationDelay = (i * 90) + 'ms'; el.style.fontSize = (34 + Math.random() * 26) + 'px';
+    document.body.appendChild(el); setTimeout(() => el.remove(), 2400 + i * 90);
+  }
+}
+async function openCoins() {
+  try { await loadGiftData(); } catch (e) { return toast('Your wallet is not available right now'); }
+  const w = S.wallet, last = w.last_claim ? new Date(w.last_claim).getTime() : 0, wait = last + 86400000 - Date.now(), can = wait <= 0;
+  sheet(`<h2>Coins</h2><div class="gbal"><span>🪙 ${coinFmt(w.coins)} coins</span></div>
+    <button class="btn" data-a="claim" ${can ? '' : 'disabled'}>${can ? 'Claim 50 free test coins' : 'Next free coins in about ' + Math.max(1, Math.ceil(wait / 3600000)) + ' h'}</button>
+    <div class="ls" style="margin:16px 0 6px">Buy coins</div>
+    ${[['100 coins', 'Starter'], ['500 coins', 'Popular'], ['1,000 coins', 'Best value']].map(([c, l]) => `<div class="packrow"><b>${c}</b><span class="ls">${l}</span><button class="btn alt sm2" disabled>Soon</button></div>`).join('')}
+    <p class="ls" style="margin-top:10px">Test mode: practice coins have no cash value. Paying with Chapa and Telebirr is not connected yet.</p>`);
+}
+const ledgerLabel = x => ({ claim: 'Free test coins', purchase: 'Coins bought', gift_sent: 'Gift sent: ' + (x.note || ''), gift_received: 'Gift received: ' + (x.note || ''), payout: 'Payout', adjust: 'Adjustment' }[x.kind] || x.kind);
+async function openWallet() {
+  clearInterval(S.gpoll); S.g = null; S.prof = null; clearInterval(S.poll); S.openThread = null;
+  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button><b class="ttl">Wallet and gifts</b></header><div class="setbody" id="wbody"><div class="empty" style="padding:40px">Loading...</div></div></div>`;
+  try {
+    await loadGiftData();
+    const [lg, rx] = await Promise.all([
+      sb.from('wallet_ledger').select('kind,coins,earnings,note,created_at').order('created_at', { ascending: false }).limit(30),
+      sb.from('gift_transactions').select('sender_id,gift_id,qty,created_at').eq('receiver_id', S.user.id).order('created_at', { ascending: false }).limit(20)
+    ]);
+    const R = rx.data || [], L = lg.data || []; await loadProfiles(R.map(x => x.sender_id));
+    const w = S.wallet, emo = id => (S.gifts.find(g => g.id === id) || {}).emoji || '🎁', b = $('#wbody'); if (!b) return;
+    b.innerHTML = `<div style="padding:16px;display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="wcard"><small>Coins</small><b>🪙 ${coinFmt(w.coins)}</b><button class="btn sm2" data-a="coins" style="margin-top:8px">Get coins</button></div>
+        <div class="wcard"><small>Creator earnings</small><b>⭐ ${coinFmt(w.earnings)}</b><button class="btn alt sm2" disabled style="margin-top:8px">Withdraw soon</button></div></div>
+      <p class="ls" style="padding:0 16px 8px">Test mode: coins and earnings have no cash value yet. Creators get 50% of each gift's value as earnings. Withdrawals will open once payments are connected.</p>
+      <h3 class="sub">Gifts you received</h3>
+      ${R.length ? R.map(x => `<div class="item"><span style="font-size:28px">${emo(x.gift_id)}</span><p>${esc(nameOf(x.sender_id))} sent x${x.qty}<small>${ago(x.created_at)}</small></p></div>`).join('') : '<div class="empty" style="padding:20px 16px">No gifts yet.</div>'}
+      <h3 class="sub">Activity</h3>
+      ${L.length ? L.map(x => `<div class="item"><p>${esc(ledgerLabel(x))}<small>${ago(x.created_at)}</small></p><b>${x.coins ? (x.coins > 0 ? '+' : '') + x.coins + ' 🪙' : '+' + x.earnings + ' ⭐'}</b></div>`).join('') : '<div class="empty" style="padding:20px 16px">No activity yet.</div>'}`;
+  } catch (e) { const b = $('#wbody'); if (b) b.innerHTML = '<div class="empty" style="padding:40px">Could not load your wallet.</div>'; }
+}
+
 /* ---------- settings + theme ---------- */
 function applyTheme() {
   const dark = S.mode === 'dark' || (S.mode === 'system' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
@@ -1659,6 +1733,34 @@ const ACT = {
     p.adl = v; p.dl = true; closeSheet(); toast(v ? 'People can now save this' : 'Saving turned off');
   },
   search: () => openSearch(),
+  gift: (id, el) => openGift(id, el.dataset.t, el.dataset.i),
+  giftsel: id => { S.giftSel = id; paintGiftSheet(); },
+  giftqty: id => { S.giftQty = +id; paintGiftSheet(); },
+  giftsend: async () => {
+    const T = S.giftTo, g = S.gifts && S.gifts.find(x => x.id === S.giftSel); if (!T || !g) return;
+    busy('#giftgo', true);
+    const { data, error } = await sb.rpc('send_gift', { p_receiver: T.uid, p_gift: g.id, p_qty: S.giftQty, p_target_type: T.tType, p_target_id: T.tId ? String(T.tId) : null });
+    if (error) {
+      busy('#giftgo', false); const m = error.message || '';
+      if (/enough coins/i.test(m)) { toast('Not enough coins'); openCoins(); } else toast(/yourself/i.test(m) ? 'You cannot send a gift to yourself' : 'Could not send the gift');
+      return;
+    }
+    if (S.wallet) S.wallet.coins = data;
+    closeSheet(); giftBurst(g.emoji, S.giftQty); toast('Sent ' + g.emoji + ' x' + S.giftQty + ' to ' + nameOf(T.uid));
+  },
+  coins: () => openCoins(),
+  claim: async () => {
+    const { data, error } = await sb.rpc('claim_test_coins');
+    if (error) return toast(/later/i.test(error.message || '') ? 'You already claimed today' : 'Could not claim coins');
+    if (S.wallet) S.wallet.coins = data; toast('50 coins added'); openCoins();
+  },
+  wallet: () => openWallet(),
+  vspeed: () => {
+    const r = [1, 1.5, 2, 0.5], i = r.indexOf(S.rate); S.rate = r[(i + 1) % r.length];
+    document.querySelectorAll('.vid video').forEach(v => { v.playbackRate = S.rate; });
+    document.querySelectorAll('.vspd').forEach(b => { b.textContent = S.rate + 'x'; });
+    toast('Speed ' + S.rate + 'x');
+  },
   accounts: () => openAccounts(),
   accswitch: id => switchAccount(id),
   accrm: id => { if (!confirm('Remove this account from this device? You can log in again later.')) return; putAccounts(getAccounts().filter(x => x.id !== id)); openAccounts(); },
@@ -1978,6 +2080,7 @@ const ACT = {
         <button class="optrow" data-a="psave" data-id="${p.id}">${S.savedPosts.has(p.id) ? 'Remove from saved' : 'Save post'}</button>
         <button class="optrow" data-a="user" data-id="${p.uid}">View profile</button>
         <button class="optrow red" data-a="rep" data-t="post" data-id="${p.id}" data-o="${p.uid}">Report post</button>
+        <button class="optrow" data-a="gift" data-id="${p.uid}" data-t="post" data-i="${p.id}">🎁 Send a gift to ${esc(nameOf(p.uid))}</button>
         <button class="optrow red" data-a="pblock" data-id="${p.uid}">Block ${esc(nameOf(p.uid))}</button>`);
     }
   },
@@ -2008,7 +2111,7 @@ const ACT = {
   vtoggle: (id, el) => { if (el.paused) { el.muted = S.muted; el.play().catch(() => {}); } else el.pause(); },
   vplay: (id, el) => {
     S.loaded.add('v' + id); el.remove();
-    const v = document.querySelector(`video[data-vid="${id}"]`); if (v) { v.preload = 'auto'; v.muted = S.muted; v.play().catch(() => {}); }
+    const v = document.querySelector(`video[data-vid="${id}"]`); if (v) { v.preload = 'auto'; v.muted = S.muted; v.playbackRate = S.rate; v.play().catch(() => {}); }
   },
   vmute: () => {
     S.muted = !S.muted;
