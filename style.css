@@ -438,3 +438,23 @@ body.dark .mark{color:#fff}
 .brand .sect{display:none;margin:0}
 @media (min-width:480px){.brand .sect{display:block}}
 @media (max-width:420px){.hbtn .hl{display:none}.hbtn{padding:9px 11px}}
+
+/* v0.15: composer box, gifts, speed */
+.composer{display:flex;align-items:center;gap:12px;width:calc(100% - 20px);margin:10px 10px 0;padding:8px 14px 8px 8px;border:1px solid var(--line);border-radius:999px;background:var(--card);text-align:start}
+.composer .cp{color:var(--mute);font-size:16px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vspd{position:absolute;top:62px;right:10px;min-width:44px;height:36px;border-radius:18px;background:rgba(0,0,0,.45);color:#fff;font-weight:700;font-size:14px;padding:0 10px;z-index:3}
+.gbal{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;font:800 20px var(--disp)}
+.ggrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.gcard{display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 4px;border-radius:14px;border:1.5px solid var(--line);background:var(--card);text-align:center}
+.gcard.on{border-color:var(--ink);background:var(--soft)}
+.gcard .ge{font-size:30px;line-height:1.1}
+.gcard b{font-size:12px}
+.gcard small{color:var(--mute);font-size:12px}
+.packrow{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
+.packrow .ls{flex:1}
+.wcard{padding:14px;border-radius:16px;border:1px solid var(--line);background:var(--card)}
+.wcard small{display:block;color:var(--mute)}
+.wcard b{font:800 24px var(--disp);display:block;margin-top:2px}
+.gburst{position:fixed;bottom:-10px;z-index:85;pointer-events:none;animation:gup 2s ease-out forwards}
+@keyframes gup{0%{transform:translateY(0) scale(.6);opacity:0}15%{opacity:1}100%{transform:translateY(-70vh) scale(1.2);opacity:0}}
+@media (max-width:380px){.ggrid{grid-template-columns:repeat(3,1fr)}}
