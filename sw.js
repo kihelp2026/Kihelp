@@ -1,6 +1,6 @@
 /* KiHelp service worker: makes the app installable and fast, never touches Supabase data */
-var VER = 'kihelp-19';
-var CORE = ['./', './index.html', './style.css?v=18', './app.js?v=18', './logo-320.png', './manifest.json', './icon-192.png', './icon-512.png'];
+var VER = 'kihelp-20';
+var CORE = ['./', './index.html', './style.css?v=19', './app.js?v=19', './logo-320.png', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', function (e) {
   e.waitUntil(
@@ -65,4 +65,40 @@ self.addEventListener('fetch', function (e) {
       })
     );
   }
+});
+
+/* Notifications: show them when KiHelp is closed or hidden */
+self.addEventListener('push', function (e) {
+  var d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (x) { d = { title: 'kihelp', body: e.data ? e.data.text() : '' }; }
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (list) {
+      var open = list.some(function (c) { return c.visibilityState === 'visible'; });
+      if (open) return;
+      var call = d.kind === 'call';
+      return self.registration.showNotification(d.title || 'kihelp', {
+        body: d.body || '',
+        icon: 'icon-192.png',
+        badge: 'icon-32.png',
+        tag: call ? 'kihelp-call' : (d.kind || 'kihelp'),
+        renotify: true,
+        requireInteraction: call,
+        vibrate: call ? [300, 150, 300, 150, 300] : [100],
+        data: { url: d.url || '#' }
+      });
+    })
+  );
+});
+
+self.addEventListener('notificationclick', function (e) {
+  e.notification.close();
+  var target = (e.notification.data && e.notification.data.url) || '#';
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (list) {
+      for (var i = 0; i < list.length; i++) {
+        if ('focus' in list[i]) { list[i].postMessage({ type: 'kihelp-open', url: target }); return list[i].focus(); }
+      }
+      return self.clients.openWindow('./' + target);
+    })
+  );
 });
