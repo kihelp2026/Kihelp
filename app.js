@@ -23,6 +23,8 @@ const I = {
   volume: ic('<path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16 9a4 4 0 0 1 0 6"/>'),
   mute: ic('<path d="M4 9v6h4l5 4V5L8 9z"/><path d="M17 9l4 6M21 9l-4 6"/>'),
   search: ic('<circle cx="11" cy="11" r="6"/><path d="M20 20l-4-4"/>'),
+  phone: ic('<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/>'),
+  cam: ic('<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/>'),
   sliders: ic('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>'),
   x: ic('<path d="M6 6l12 12M18 6L6 18"/>'),
   download: ic('<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>'),
@@ -317,12 +319,15 @@ async function enter(user) {
   sb.auth.getSession().then(r => { if (r.data && r.data.session) saveAccount(r.data.session); }).catch(() => {});
   loadSavedIds().catch(() => {});
   loadFollowing().catch(() => {});
+  computePushOffer(); loadPrefs().catch(() => {}); subscribeCalls(); checkRinging().catch(() => {});
   if (!store.get('kihelp.tipReact')) { store.set('kihelp.tipReact', '1'); setTimeout(() => toast('Tip: press and hold the heart to pick a reaction'), 3000); }
   hideAuth(); S.tab = S.focusVideo ? 'video' : 'home'; render(); refresh();
   if (S.focusPost) { const pid = S.focusPost; S.focusPost = null; openPost(pid); }
+  if (S.pendingRoute) { const h = S.pendingRoute; S.pendingRoute = null; setTimeout(() => routeHash(h), 400); }
   if (S.focusGroup) { const gid = S.focusGroup; S.focusGroup = null; openGroup(gid); }
 }
 function clearUserState() {
+  try { if (S.rt) sb.removeChannel(S.rt); } catch (e) {} S.rt = null; S.prefs = null; if (S.call) endCallLocal(); S.incoming = null; const ce = $('#call'); if (ce) { ce.classList.remove('open'); ce.innerHTML = ''; }
   clearInterval(S.poll); clearInterval(S.gpoll); S.openThread = null;
   Object.assign(S, { myGroups: null, g: null, evs: [], greqs: [], user: null, profile: null, pf: {}, posts: [], products: [], saved: new Set(), threads: [], notes: [], videos: [], myVideos: [], savedPosts: new Set(), prof: null, profPosts: [], savedList: [], myPosts: [], reqs: [], following: new Set(), fl: null, stories: { mine: null, others: [] }, ready: {}, authMode: 'login', pc: { phone: null, allow_phone_search: false, allow_email_search: false } });
 }
@@ -399,7 +404,7 @@ function postCard(p) {
 }
 function viewHome() {
   if (gate()) return gate();
-  const row = installBar() + composerBox() + quickRow() + storiesRow();
+  const row = installBar() + notifBar() + composerBox() + quickRow() + storiesRow();
   if (!S.posts.length) return row + `<div class="empty" style="padding:60px 24px">No posts yet.<br>Be the first. Tap <b>${tr('post')}</b> at the top.</div>` + videoStrip();
   const at = Math.min(2, S.posts.length - 1);
   return row + S.posts.map((p, i) => postCard(p) + (i === at ? videoStrip() : '')).join('');
@@ -574,7 +579,7 @@ async function openThread(id, draft) {
   if (!t) { t = { id, msgs: [], last: Date.now() }; S.threads.unshift(t); }
   S.openThread = id; S.reply = null; S.editM = null;
   const n = nameOf(id);
-  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button>${avOf(id, 38)}<b>${esc(n)}</b></header>
+  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button>${avOf(id, 38)}<b>${esc(n)}</b><span style="flex:1"></span><button class="ibtn" data-a="call" data-id="${id}" data-k="audio" aria-label="Voice call">${I.phone}</button><button class="ibtn" data-a="call" data-id="${id}" data-k="video" aria-label="Video call">${I.cam}</button></header>
     <div class="msgs" id="msgs"></div>
     <div id="cbar"></div>
     <div id="emop" class="emop" hidden></div>
@@ -1612,6 +1617,213 @@ async function openWallet() {
   } catch (e) { const b = $('#wbody'); if (b) b.innerHTML = '<div class="empty" style="padding:40px">Could not load your wallet.</div>'; }
 }
 
+/* ---------- push notifications ---------- */
+const b64uToBytes = s => { const p = '='.repeat((4 - s.length % 4) % 4), r = atob((s + p).replace(/-/g, '+').replace(/_/g, '/')), o = new Uint8Array(r.length); for (let i = 0; i < r.length; i++) o[i] = r.charCodeAt(i); return o; };
+const pushCapable = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+async function fetchVapid() { const r = await fetch(SUPA_URL + '/functions/v1/push'); const j = await r.json(); if (!j.publicKey) throw new Error('key'); return j.publicKey; }
+async function devicePush() { if (!pushCapable()) return null; const reg = await navigator.serviceWorker.ready; return reg.pushManager.getSubscription(); }
+async function pushStatus() {
+  if (!pushCapable()) return 'unsupported';
+  if (isIOS && !isStandalone()) return 'needs-install';
+  if (Notification.permission === 'denied') return 'blocked';
+  const sub = await devicePush(); if (!sub) return 'off';
+  const { data } = await sb.from('push_subscriptions').select('endpoint').eq('user_id', S.user.id).eq('endpoint', sub.endpoint).maybeSingle();
+  return data ? 'on' : 'off';
+}
+async function enablePush() {
+  if (!pushCapable()) throw new Error('unsupported');
+  const key = await fetchVapid();
+  const perm = await Notification.requestPermission(); if (perm !== 'granted') throw new Error('denied');
+  const reg = await navigator.serviceWorker.ready; let sub = await reg.pushManager.getSubscription();
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(key) });
+  const j = sub.toJSON();
+  const { error } = await sb.rpc('save_push_subscription', { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_ua: navigator.userAgent });
+  if (error) throw error;
+}
+async function removeDevicePush() { const sub = await devicePush().catch(() => null); if (sub) await sb.rpc('remove_push_subscription', { p_endpoint: sub.endpoint }); }
+function computePushOffer() { S.pushOffer = pushCapable() && Notification.permission === 'default' && !(isIOS && !isStandalone()); }
+function notifBar() {
+  if (!S.pushOffer || store.get('kihelp.notifDismissed')) return '';
+  return `<div class="instbar"><span>Get alerts for messages and calls</span><button class="btn sm2" data-a="pushon">Turn on</button><button class="ibtn" data-a="notifx" aria-label="Dismiss">${I.x}</button></div>`;
+}
+async function loadPrefs() { const { data } = await sb.from('notification_prefs').select('messages,social,activity').eq('user_id', S.user.id).maybeSingle(); S.prefs = data || { messages: true, social: true, activity: true }; }
+async function savePref(k, v) {
+  S.prefs = Object.assign({ messages: true, social: true, activity: true }, S.prefs, { [k]: v });
+  const { error } = await sb.from('notification_prefs').upsert({ user_id: S.user.id, messages: S.prefs.messages, social: S.prefs.social, activity: S.prefs.activity, updated_at: new Date().toISOString() });
+  if (error) toast('Could not save');
+}
+async function paintPushRow() {
+  const box = $('#pushrow'); if (!box) return;
+  let st = 'unsupported'; try { st = await pushStatus(); } catch (e) {}
+  if (!S.prefs) await loadPrefs().catch(() => { S.prefs = { messages: true, social: true, activity: true }; });
+  const b2 = $('#pushrow'); if (!b2) return;
+  const sw = (on, a, v) => `<button class="switch ${on ? 'on' : ''}" role="switch" aria-checked="${on}" data-a="${a}"${v ? ` data-v="${v}"` : ''}><i></i></button>`;
+  const note = { unsupported: 'This browser cannot show notifications.', 'needs-install': 'On iPhone, add KiHelp to your Home Screen first, then turn notifications on.', blocked: 'Notifications are blocked. Allow them in your browser settings for this site.' }[st], p = S.prefs;
+  b2.innerHTML = `<div class="srow"><div><div class="lbl">Notifications on this device</div><div class="ls">${note || 'Get alerts for messages, calls and more, even when KiHelp is closed.'}</div></div>${note ? '' : sw(st === 'on', st === 'on' ? 'pushoff' : 'pushon')}</div>
+    ${st === 'on' ? `<div class="srow"><div class="lbl">Messages and calls</div>${sw(p.messages, 'prefset', 'messages')}</div><div class="srow"><div class="lbl">Friends, followers and gifts</div>${sw(p.social, 'prefset', 'social')}</div><div class="srow"><div class="lbl">Comments and mentions</div>${sw(p.activity, 'prefset', 'activity')}</div>` : ''}`;
+}
+
+/* ---------- opening links from notifications ---------- */
+function routeHash(h) {
+  if (!S.user || !h) return; let m;
+  if ((m = h.match(/^#p=([0-9]{1,15})$/))) openPost(m[1]);
+  else if ((m = h.match(/^#v=([0-9a-f-]{36})$/i))) { S.focusVideo = m[1]; ACT.watch(m[1]); }
+  else if ((m = h.match(/^#g=([0-9a-f-]{36})$/i))) openGroup(m[1]);
+  else if ((m = h.match(/^#c=([0-9a-f-]{36})$/i))) openThread(m[1]);
+  else if ((m = h.match(/^#u=([0-9a-f-]{36})$/i))) openUser(m[1]);
+  else if ((m = h.match(/^#call=([0-9a-f-]{36})$/i))) checkCall(m[1]);
+  else if (h === '#n=alerts') { $('#over').innerHTML = ''; closeSheet(); S.tab = 'alerts'; render(); refresh(); }
+}
+if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', e => { if (e.data && e.data.type === 'kihelp-open') routeHash(e.data.url); });
+
+/* ---------- voice and video calls (peer to peer, signalled through Supabase) ---------- */
+const ICE = { iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }] };
+function playRing(on) {
+  clearInterval(S.ringT); if (!on) return;
+  const beep = () => {
+    try { const AC = window.AudioContext || window.webkitAudioContext; S.ac = S.ac || new AC(); const ac = S.ac; if (ac.state === 'suspended') ac.resume(); const o = ac.createOscillator(), g = ac.createGain(); o.frequency.value = 440; g.gain.value = 0.08; o.connect(g); g.connect(ac.destination); o.start(); o.stop(ac.currentTime + 0.35); } catch (e) {}
+    try { if (navigator.vibrate) navigator.vibrate([300, 150, 300]); } catch (e) {}
+  };
+  beep(); S.ringT = setInterval(beep, 2200);
+}
+function subscribeCalls() {
+  try {
+    if (S.rt) sb.removeChannel(S.rt);
+    const me = S.user.id;
+    S.rt = sb.channel('kihelp-calls-' + me)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'calls', filter: 'callee_id=eq.' + me }, p => onIncoming(p.new))
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'calls', filter: 'caller_id=eq.' + me }, p => onCallUpdate(p.new))
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'calls', filter: 'callee_id=eq.' + me }, p => onCallUpdate(p.new))
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'call_signals', filter: 'to_id=eq.' + me }, p => handleSignal(p.new))
+      .subscribe();
+  } catch (e) {}
+}
+async function checkRinging() {
+  const { data } = await sb.from('calls').select('id,caller_id,callee_id,kind,status,created_at').eq('callee_id', S.user.id).eq('status', 'ringing').gt('created_at', new Date(Date.now() - 45000).toISOString()).order('created_at', { ascending: false }).limit(1);
+  if (data && data[0]) onIncoming(data[0]);
+}
+async function checkCall(id) {
+  const { data } = await sb.from('calls').select('id,caller_id,callee_id,kind,status,created_at').eq('id', id).eq('callee_id', S.user.id).maybeSingle();
+  if (data && data.status === 'ringing' && Date.now() - new Date(data.created_at).getTime() < 60000) onIncoming(data); else toast('That call has ended');
+}
+function callLabel(t) { const e = $('#cls'); if (e) e.textContent = t; if (S.call) S.call.label = t; }
+function paintCall() {
+  const c = S.call, el = $('#call'); if (!el) return;
+  if (!c) { if (!S.incoming) { el.classList.remove('open'); el.innerHTML = ''; } return; }
+  const video = c.kind === 'video';
+  el.innerHTML = `<div class="cl-wrap ${video ? 'vid' : ''} ${c.state === 'connected' ? 'on' : ''}"><video id="crv" class="cl-remote" playsinline autoplay></video>
+    ${video ? '<video id="clv" class="cl-local" playsinline autoplay muted></video>' : ''}
+    <div class="cl-top"><div class="cl-av">${avOf(c.peer, 96)}</div><b>${esc(nameOf(c.peer))}</b><span id="cls">${esc(c.label || 'Calling...')}</span></div>
+    <div class="cl-bar"><button class="clb" data-a="cmute" aria-label="Mute"><span>${I.mic}</span><small>Mute</small></button>
+      ${video ? `<button class="clb" data-a="ccam" aria-label="Camera"><span>${I.cam}</span><small>Camera</small></button><button class="clb" data-a="cflip" aria-label="Switch camera"><span>&#8635;</span><small>Flip</small></button>` : ''}
+      <button class="clb end" data-a="cend" aria-label="End call"><span>${I.phone}</span><small>End</small></button></div></div>`;
+  el.classList.add('open');
+  const lv = $('#clv'); if (lv) lv.srcObject = c.local;
+  const rv = $('#crv'); if (rv && c.remote) { rv.srcObject = c.remote; rv.play().catch(() => {}); }
+}
+function paintIncoming() {
+  const inc = S.incoming, el = $('#call'); if (!el) return;
+  if (!inc) { playRing(false); if (!S.call) { el.classList.remove('open'); el.innerHTML = ''; } return; }
+  el.innerHTML = `<div class="cl-wrap"><div class="cl-top"><div class="cl-av">${avOf(inc.caller_id, 120)}</div><b>${esc(nameOf(inc.caller_id))}</b><span>${inc.kind === 'video' ? 'Incoming video call' : 'Incoming voice call'}</span></div>
+    <div class="cl-bar"><button class="clb end" data-a="cdecline" aria-label="Decline"><span>${I.phone}</span><small>Decline</small></button><button class="clb ok" data-a="caccept" aria-label="Accept"><span>${I.phone}</span><small>Accept</small></button></div></div>`;
+  el.classList.add('open'); playRing(true);
+}
+function dismissIncoming() { if (S.incoming) clearTimeout(S.incoming.timer); S.incoming = null; paintIncoming(); }
+async function onIncoming(rec) {
+  if (!rec || rec.status !== 'ringing' || Date.now() - new Date(rec.created_at).getTime() > 60000) return;
+  if (S.call || S.incoming) { sb.rpc('set_call_status', { p_id: rec.id, p_status: 'declined' }); return; }
+  await loadProfiles([rec.caller_id]);
+  S.incoming = Object.assign({}, rec, { timer: setTimeout(() => { if (S.incoming && S.incoming.id === rec.id) dismissIncoming(); }, 60000) });
+  paintIncoming();
+}
+function onCallUpdate(rec) {
+  const c = S.call;
+  if (c && c.id === rec.id) {
+    if (rec.status === 'accepted' && c.role === 'caller' && c.state === 'ringing') { c.state = 'connecting'; playRing(false); callLabel('Connecting...'); armConnect(); }
+    else if (['declined', 'ended', 'canceled', 'missed'].includes(rec.status)) endCallLocal(rec.status === 'declined' ? nameOf(c.peer) + ' declined the call' : 'Call ended');
+  }
+  if (S.incoming && S.incoming.id === rec.id && rec.status !== 'ringing') dismissIncoming();
+}
+function armConnect() {
+  const c = S.call; if (!c) return; clearTimeout(c.connT);
+  c.connT = setTimeout(() => { if (S.call && S.call.id === c.id && S.call.state !== 'connected') { toast('Could not connect the call. Check your internet.'); hangup(); } }, 30000);
+}
+function makePC() {
+  const c = S.call, pc = new RTCPeerConnection(ICE); c.pc = pc;
+  c.local.getTracks().forEach(t => pc.addTrack(t, c.local));
+  pc.ontrack = e => { c.remote = e.streams[0]; const v = $('#crv'); if (v) { v.srcObject = c.remote; v.play().catch(() => {}); } };
+  pc.onicecandidate = e => { if (e.candidate) sendSignal('ice', e.candidate.toJSON()); };
+  pc.onconnectionstatechange = () => {
+    if (!S.call || S.call.pc !== pc) return;
+    if (pc.connectionState === 'connected') callConnected();
+    else if (pc.connectionState === 'failed') { toast('The call lost its connection'); hangup(); }
+  };
+  return pc;
+}
+async function sendSignal(kind, payload) { const c = S.call; if (!c) return; await sb.from('call_signals').insert({ call_id: c.id, from_id: S.user.id, to_id: c.peer, kind, payload }); }
+async function drainIce() { const c = S.call; while (c && c.pending.length) { try { await c.pc.addIceCandidate(c.pending.shift()); } catch (e) {} } }
+async function handleSignal(s) {
+  const c = S.call; if (!c || s.call_id !== c.id || !c.pc) return; const pc = c.pc;
+  try {
+    if (s.kind === 'offer') { if (c.gotOffer) return; c.gotOffer = true; await pc.setRemoteDescription(s.payload); await drainIce(); const ans = await pc.createAnswer(); await pc.setLocalDescription(ans); await sendSignal('answer', { type: ans.type, sdp: ans.sdp }); }
+    else if (s.kind === 'answer') { if (c.gotAnswer) return; c.gotAnswer = true; await pc.setRemoteDescription(s.payload); await drainIce(); }
+    else if (s.kind === 'ice') { if (pc.remoteDescription) await pc.addIceCandidate(s.payload); else c.pending.push(s.payload); }
+  } catch (e) {}
+}
+function callConnected() {
+  const c = S.call; if (!c || c.state === 'connected') return;
+  c.state = 'connected'; playRing(false); clearTimeout(c.ringTimer); clearTimeout(c.connT); c.t0 = Date.now();
+  const w = document.querySelector('#call .cl-wrap'); if (w) w.classList.add('on');
+  clearInterval(c.timer); c.timer = setInterval(() => { const s = Math.floor((Date.now() - c.t0) / 1000); callLabel(Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0')); }, 1000); callLabel('0:00');
+}
+function endCallLocal(msg) {
+  const c = S.call; playRing(false);
+  if (c) { clearTimeout(c.ringTimer); clearTimeout(c.connT); clearInterval(c.timer); try { if (c.pc) c.pc.close(); } catch (e) {} try { if (c.local) c.local.getTracks().forEach(t => t.stop()); } catch (e) {} }
+  S.call = null; paintCall(); if (msg) toast(msg);
+}
+async function hangup() {
+  const c = S.call; if (!c) return;
+  try { await sb.rpc('set_call_status', { p_id: c.id, p_status: c.role === 'caller' && c.state === 'ringing' ? 'canceled' : 'ended' }); } catch (e) {}
+  endCallLocal('Call ended');
+}
+async function startCall(uid, kind) {
+  if (S.call || S.incoming) return toast('You are already in a call');
+  if (!window.RTCPeerConnection || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return toast('Calls are not supported on this browser');
+  await loadProfiles([uid]); let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: kind === 'video' ? { facingMode: 'user' } : false }); }
+  catch (e) { return toast('Please allow the ' + (kind === 'video' ? 'camera and microphone' : 'microphone') + ' to call'); }
+  const { data: id, error } = await sb.rpc('start_call', { p_callee: uid, p_kind: kind });
+  if (error || !id) { stream.getTracks().forEach(t => t.stop()); return toast(/busy/i.test((error && error.message) || '') ? nameOf(uid) + ' is on another call' : 'Could not start the call'); }
+  S.call = { id, role: 'caller', peer: uid, kind, local: stream, pending: [], state: 'ringing', label: 'Calling...' };
+  paintCall(); playRing(true);
+  const pc = makePC();
+  try { const offer = await pc.createOffer(); await pc.setLocalDescription(offer); await sendSignal('offer', { type: offer.type, sdp: offer.sdp }); }
+  catch (e) { hangup(); return toast('Could not start the call'); }
+  S.call.ringTimer = setTimeout(async () => { const cc = S.call; if (cc && cc.id === id && cc.state === 'ringing') { try { await sb.rpc('set_call_status', { p_id: id, p_status: 'missed' }); } catch (e) {} endCallLocal('No answer'); } }, 45000);
+}
+async function acceptCall() {
+  const inc = S.incoming; if (!inc) return; playRing(false); clearTimeout(inc.timer);
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: inc.kind === 'video' ? { facingMode: 'user' } : false }); }
+  catch (e) { toast('Please allow the microphone to answer'); return declineCall(); }
+  const { error } = await sb.rpc('set_call_status', { p_id: inc.id, p_status: 'accepted' });
+  if (error) { stream.getTracks().forEach(t => t.stop()); S.incoming = null; paintIncoming(); return toast('This call has already ended'); }
+  S.call = { id: inc.id, role: 'callee', peer: inc.caller_id, kind: inc.kind, local: stream, pending: [], state: 'connecting', label: 'Connecting...' };
+  S.incoming = null; paintCall(); makePC(); armConnect();
+  const { data } = await sb.from('call_signals').select('id,call_id,kind,payload').eq('call_id', S.call.id).eq('to_id', S.user.id).order('id');
+  for (const s of (data || [])) await handleSignal(s);
+}
+async function declineCall() { const inc = S.incoming; if (!inc) return; try { await sb.rpc('set_call_status', { p_id: inc.id, p_status: 'declined' }); } catch (e) {} dismissIncoming(); }
+async function flipCamera() {
+  const c = S.call; if (!c || !c.pc) return; c.facing = c.facing === 'environment' ? 'user' : 'environment';
+  try {
+    const ns = await navigator.mediaDevices.getUserMedia({ video: { facingMode: c.facing } }), nt = ns.getVideoTracks()[0];
+    const snd = c.pc.getSenders().find(s => s.track && s.track.kind === 'video'); if (snd) await snd.replaceTrack(nt);
+    c.local.getVideoTracks().forEach(t => { t.stop(); c.local.removeTrack(t); }); c.local.addTrack(nt);
+    const lv = $('#clv'); if (lv) lv.srcObject = c.local;
+  } catch (e) { toast('Could not switch the camera'); }
+}
+
 /* ---------- settings + theme ---------- */
 function applyTheme() {
   const dark = S.mode === 'dark' || (S.mode === 'system' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
@@ -1653,6 +1865,8 @@ function openSettings() {
     <div class="srow"><div><div class="lbl">Find me by phone</div><div class="ls">Only people who type your exact number can find you</div></div>${sw(S.pc.allow_phone_search, 'tglphone')}</div>
     ${isStandalone() ? '' : `<h3 class="sub">App</h3>
     <div class="srow"><button class="lbl" data-a="install" style="flex:1">Install KiHelp on this device</button></div>`}
+    <h3 class="sub">Notifications</h3>
+    <div id="pushrow"><div class="srow"><div class="ls">Checking...</div></div></div>
     <h3 class="sub">People</h3>
     <div class="srow"><button class="lbl" data-a="invite" style="flex:1">Invite friends</button></div>
     <div class="srow"><button class="lbl" data-a="blocked" style="flex:1">Blocked users</button></div>
@@ -1669,7 +1883,7 @@ function openSettings() {
     <div class="ls" style="padding:16px">KiHelp 0.14</div>
   </div></div>`;
   document.querySelector('.setbody').scrollTop = scroll;
-  showUsage();
+  showUsage(); paintPushRow();
 }
 
 /* ---------- actions ---------- */
@@ -1685,6 +1899,7 @@ const ACT = {
   clearcache: () => clearCache(),
   logout: async () => {
     if (!confirm('Log out of this account?')) return;
+    try { await removeDevicePush(); } catch (e) {}
     const id = S.user.id; S.switching = true;
     try { await sb.auth.signOut({ scope: 'local' }); } catch (e) {}
     S.switching = false; putAccounts(getAccounts().filter(x => x.id !== id));
@@ -1733,6 +1948,21 @@ const ACT = {
     p.adl = v; p.dl = true; closeSheet(); toast(v ? 'People can now save this' : 'Saving turned off');
   },
   search: () => openSearch(),
+  call: (id, el) => startCall(id, el.dataset.k),
+  caccept: () => acceptCall(),
+  cdecline: () => declineCall(),
+  cend: () => hangup(),
+  cmute: (id, el) => { const c = S.call; if (!c) return; const t = c.local.getAudioTracks(), on = !(t[0] && t[0].enabled); t.forEach(x => { x.enabled = on; }); el.classList.toggle('off', !on); },
+  ccam: (id, el) => { const c = S.call; if (!c) return; const t = c.local.getVideoTracks(), on = !(t[0] && t[0].enabled); t.forEach(x => { x.enabled = on; }); el.classList.toggle('off', !on); },
+  cflip: () => flipCamera(),
+  pushon: async () => {
+    try { await enablePush(); S.pushOffer = false; toast('Notifications are on'); }
+    catch (e) { toast(e && e.message === 'denied' ? 'Notifications are blocked. Allow them in your browser settings.' : 'Could not turn on notifications'); }
+    if ($('#pushrow')) paintPushRow(); else afterBg();
+  },
+  pushoff: async () => { try { await removeDevicePush(); toast('Notifications are off on this device'); } catch (e) { toast('Could not turn them off'); } paintPushRow(); },
+  prefset: async (id, el) => { const k = el.dataset.v; await savePref(k, !(S.prefs && S.prefs[k])); paintPushRow(); },
+  notifx: () => { store.set('kihelp.notifDismissed', '1'); render(true); },
   gift: (id, el) => openGift(id, el.dataset.t, el.dataset.i),
   giftsel: id => { S.giftSel = id; paintGiftSheet(); },
   giftqty: id => { S.giftQty = +id; paintGiftSheet(); },
@@ -2548,6 +2778,7 @@ window.addEventListener('online', () => toast('Back online'));
 async function boot() {
   const hm = location.hash.match(/^#v=([0-9a-f-]{36})$/i); if (hm) S.focusVideo = hm[1];
   const hp = location.hash.match(/^#p=([0-9]{1,15})$/); if (hp) S.focusPost = hp[1];
+  const hr = location.hash.match(/^#(c|u|call|n)=/); if (hr) S.pendingRoute = location.hash;
   const hg = location.hash.match(/^#g=([0-9a-f-]{36})$/i); if (hg) S.focusGroup = hg[1];
   const lg = location.hash.match(/^#(privacy|terms|rules)$/i); if (lg) S.focusLegal = lg[1].toLowerCase();
   applyTheme(); render();
