@@ -478,3 +478,27 @@ body.dark .mark{color:#fff}
 .clb.end svg{transform:rotate(135deg)}
 .clb.ok span{background:#2fb86b}
 .clb svg{width:28px;height:28px}
+
+/* v0.17: live streaming */
+#live{position:fixed;top:0;right:0;bottom:0;left:0;z-index:64;background:#000;color:#fff;display:none}
+#live.open{display:block}
+.lv-wrap{position:absolute;top:0;right:0;bottom:0;left:0;max-width:640px;margin:0 auto;overflow:hidden;background:#000}
+.lv-video{position:absolute;top:0;right:0;bottom:0;left:0}
+.lv-video>div,.lv-video video{width:100%!important;height:100%!important;object-fit:cover}
+.lv-top{position:absolute;left:0;right:0;top:calc(env(safe-area-inset-top) + 10px);display:flex;align-items:center;gap:8px;padding:0 12px;z-index:3}
+.lv-badge{background:#e5484d;color:#fff;font-weight:800;font-size:12px;padding:3px 9px;border-radius:6px;letter-spacing:.05em}
+.lv-n{font-size:13px;font-weight:700;text-shadow:0 1px 3px #000}
+.lv-who{display:flex;align-items:center;gap:8px;text-shadow:0 1px 3px #000}
+.lv-end{background:#e5484d;color:#fff;font-weight:800;padding:8px 16px;border-radius:99px}
+.lv-ic{width:42px;height:42px;border-radius:50%;background:rgba(0,0,0,.45);color:#fff;display:grid;place-items:center;font-size:20px;flex:none}
+.lv-title{position:absolute;left:14px;right:14px;top:calc(env(safe-area-inset-top) + 64px);font-weight:700;text-shadow:0 1px 4px #000;z-index:3}
+.lv-msgs{position:absolute;left:12px;right:70px;bottom:calc(env(safe-area-inset-bottom) + 78px);max-height:34%;overflow:hidden;z-index:3;display:flex;flex-direction:column;justify-content:flex-end;gap:4px}
+.lv-m{background:rgba(0,0,0,.42);padding:4px 10px;border-radius:14px;align-self:flex-start;max-width:100%;overflow-wrap:anywhere;font-size:15px}
+.lv-m button{color:#9be7ff;font-weight:800}
+.lv-bar{position:absolute;left:0;right:0;bottom:calc(env(safe-area-inset-bottom) + 12px);display:flex;gap:8px;padding:0 12px;z-index:4;align-items:center}
+.lv-bar input{flex:1;min-width:0;background:rgba(0,0,0,.45);border-color:rgba(255,255,255,.4);color:#fff;border-radius:999px}
+.lv-bar input::placeholder{color:rgba(255,255,255,.7)}
+.lvh{position:absolute;bottom:90px;font-size:30px;pointer-events:none;z-index:5;animation:lvup 2.1s ease-out forwards}
+@keyframes lvup{0%{transform:translateY(0) scale(.6);opacity:0}15%{opacity:1}100%{transform:translateY(-55vh) scale(1.3);opacity:0}}
+.ring.live{background:linear-gradient(135deg,#e5484d,#ff7a00);position:relative}
+.livetag{position:absolute;left:50%;bottom:-6px;transform:translateX(-50%);background:#e5484d;color:#fff;font:800 10px system-ui;padding:1px 6px;border-radius:5px;font-style:normal;border:2px solid var(--paper)}
