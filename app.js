@@ -252,7 +252,7 @@ async function loadVideos() {
 async function refresh() {
   const t = S.tab;
   try {
-    if (t === 'home') { await loadFeed(); loadStories().then(afterBg).catch(() => {}); if (!S.ready.video) loadVideos().then(afterBg).catch(() => {}); }
+    if (t === 'home') { await loadFeed(); loadLive().then(afterBg).catch(() => {}); loadStories().then(afterBg).catch(() => {}); if (!S.ready.video) loadVideos().then(afterBg).catch(() => {}); }
     else if (t === 'market') await loadProducts();
     else if (t === 'chat') await loadThreads();
     else if (t === 'alerts') await loadAlerts();
@@ -320,6 +320,7 @@ async function enter(user) {
   loadSavedIds().catch(() => {});
   loadFollowing().catch(() => {});
   computePushOffer(); loadPrefs().catch(() => {}); subscribeCalls(); checkRinging().catch(() => {});
+  clearInterval(S.liveT); S.liveT = setInterval(() => { if (S.user && S.tab === 'home' && !$('#over').innerHTML && !S.live && document.visibilityState === 'visible') loadLive().then(afterBg).catch(() => {}); }, 30000);
   if (!store.get('kihelp.tipReact')) { store.set('kihelp.tipReact', '1'); setTimeout(() => toast('Tip: press and hold the heart to pick a reaction'), 3000); }
   hideAuth(); S.tab = S.focusVideo ? 'video' : 'home'; render(); refresh();
   if (S.focusPost) { const pid = S.focusPost; S.focusPost = null; openPost(pid); }
@@ -327,6 +328,7 @@ async function enter(user) {
   if (S.focusGroup) { const gid = S.focusGroup; S.focusGroup = null; openGroup(gid); }
 }
 function clearUserState() {
+  clearInterval(S.liveT); if (S.live) leaveLive(true); S.lives = [];
   try { if (S.rt) sb.removeChannel(S.rt); } catch (e) {} S.rt = null; S.prefs = null; if (S.call) endCallLocal(); S.incoming = null; const ce = $('#call'); if (ce) { ce.classList.remove('open'); ce.innerHTML = ''; }
   clearInterval(S.poll); clearInterval(S.gpoll); S.openThread = null;
   Object.assign(S, { myGroups: null, g: null, evs: [], greqs: [], user: null, profile: null, pf: {}, posts: [], products: [], saved: new Set(), threads: [], notes: [], videos: [], myVideos: [], savedPosts: new Set(), prof: null, profPosts: [], savedList: [], myPosts: [], reqs: [], following: new Set(), fl: null, stories: { mine: null, others: [] }, ready: {}, authMode: 'login', pc: { phone: null, allow_phone_search: false, allow_email_search: false } });
@@ -1118,7 +1120,7 @@ function storiesRow() {
   const add = `<button class="story" data-a="snew"><span class="ring add">${avOf(me, 56)}<i class="plusb">+</i></span>Add story</button>`;
   const mine = st.mine ? `<button class="story" data-a="sopen" data-id="${me}"><span class="ring">${avOf(me, 56)}</span>Your story</button>` : '';
   const others = st.others.map(g => `<button class="story" data-a="sopen" data-id="${g.uid}"><span class="ring ${g.unseen ? '' : 'seen'}">${avOf(g.uid, 56)}</span>${esc(nameOf(g.uid).split(' ')[0])}</button>`).join('');
-  return `<div class="stories">${add}${mine}${others}</div>`;
+  return `<div class="stories">${add}${liveItems()}${mine}${others}</div>`;
 }
 function videoStrip() {
   if (!S.videos.length) return '';
@@ -1319,7 +1321,7 @@ function editImage(file, opts) {
 
 /* ---------- groups and events ---------- */
 const composerBox = () => `<button class="composer" data-a="newpost">${avOf(S.user.id, 40)}<span class="cp">${esc(tr('mind'))}</span></button>`;
-const quickRow = () => `<div class="quick"><button class="chip" data-a="groups">👥 Groups</button><button class="chip" data-a="events">📅 Events</button></div>`;
+const quickRow = () => `<div class="quick"><button class="chip" data-a="groups">👥 Groups</button><button class="chip" data-a="events">📅 Events</button><button class="chip" data-a="golive">🔴 Go live</button></div>`;
 const gav = (g, size) => av(g.name, g.id, size, safeUrl(g.avatar_url));
 const privIcon = p => `<span class="vis" title="${p === 'private' ? 'Private' : 'Public'}">${p === 'private' ? I.lock : I.globe}</span>`;
 const GCOLS = 'id,name,description,avatar_url,privacy,owner_id,created_at';
@@ -1787,7 +1789,7 @@ async function hangup() {
   endCallLocal('Call ended');
 }
 async function startCall(uid, kind) {
-  if (S.call || S.incoming) return toast('You are already in a call');
+  if (S.call || S.incoming || S.live) return toast('Finish your live or call first');
   if (!window.RTCPeerConnection || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return toast('Calls are not supported on this browser');
   await loadProfiles([uid]); let stream;
   try { stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: kind === 'video' ? { facingMode: 'user' } : false }); }
@@ -1822,6 +1824,135 @@ async function flipCamera() {
     c.local.getVideoTracks().forEach(t => { t.stop(); c.local.removeTrack(t); }); c.local.addTrack(nt);
     const lv = $('#clv'); if (lv) lv.srcObject = c.local;
   } catch (e) { toast('Could not switch the camera'); }
+}
+
+/* ---------- live streaming (Agora) ---------- */
+const AGORA_URLS = [
+  'https://download.agora.io/sdk/release/AgoraRTC_N-4.23.2.js',
+  'https://download.agora.io/sdk/release/AgoraRTC_N-4.22.0.js',
+  'https://download.agora.io/sdk/release/AgoraRTC_N-4.20.2.js',
+  'https://cdn.jsdelivr.net/npm/agora-rtc-sdk-ng@4.20.2/AgoraRTC_N-production.js',
+  'https://cdn.jsdelivr.net/npm/agora-rtc-sdk-ng@4/AgoraRTC_N-production.js'
+];
+function loadAgora() {
+  return new Promise((res, rej) => {
+    if (window.AgoraRTC) return res(window.AgoraRTC);
+    let i = 0;
+    const next = () => {
+      if (i >= AGORA_URLS.length) return rej(new Error('agora'));
+      const s = document.createElement('script'); s.src = AGORA_URLS[i++];
+      s.onload = () => window.AgoraRTC ? res(window.AgoraRTC) : next(); s.onerror = next; document.head.appendChild(s);
+    };
+    next();
+  });
+}
+async function liveToken(host, role) {
+  const { data: { session } } = await sb.auth.getSession();
+  const r = await fetch(SUPA_URL + '/functions/v1/agora-token', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (session ? session.access_token : ''), apikey: SUPA_KEY }, body: JSON.stringify({ channel: 'live-' + host, role }) });
+  const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || 'token'); return j;
+}
+async function loadLive() {
+  const { data, error } = await sb.from('live_streams').select('id,host_id,title,started_at').eq('status', 'live').gt('last_ping', new Date(Date.now() - 90000).toISOString()).order('started_at', { ascending: false }).limit(20);
+  if (error) throw error;
+  await loadProfiles((data || []).map(x => x.host_id));
+  S.lives = (data || []).filter(x => x.host_id !== S.user.id);
+}
+const liveItems = () => (S.lives || []).map(l => `<button class="story" data-a="livewatch" data-id="${l.id}" data-h="${l.host_id}"><span class="ring live">${avOf(l.host_id, 56)}<i class="livetag">LIVE</i></span>${esc(nameOf(l.host_id).split(' ')[0])}</button>`).join('');
+function openGoLive() {
+  if (S.live || S.call) return toast('Finish your live or call first');
+  sheet(`<h2>Go live</h2><div class="fld"><label for="lvt">Title (optional)</label><input id="lvt" maxlength="80" placeholder="What is your live about?"></div>
+    <div class="note">Anyone on KiHelp can watch. Use Wi-Fi if you can, and keep this screen open while you are live.</div>
+    <button class="btn" id="lvgo" data-a="lvstart">Start live</button>`);
+}
+function paintLive() {
+  const L = S.live, el = $('#live'); if (!el) return;
+  if (!L) { el.classList.remove('open'); el.innerHTML = ''; return; }
+  const host = L.role === 'host';
+  el.innerHTML = `<div class="lv-wrap"><div class="lv-video" id="lvv"></div>
+    <div class="lv-top">${host ? '' : `<span class="lv-who">${avOf(L.host, 34)}<b>${esc(nameOf(L.host))}</b></span>`}<span class="lv-badge">LIVE</span><span class="lv-n" id="lvn">0 watching</span><span style="flex:1"></span>${host ? '<button class="lv-end" data-a="lvend">End</button>' : `<button class="lv-ic" data-a="lvmenu" aria-label="More options">${I.more}</button><button class="lv-ic" data-a="lvleave" aria-label="Leave">${I.x}</button>`}</div>
+    ${L.title ? `<div class="lv-title">${esc(L.title)}</div>` : ''}
+    <div class="lv-msgs" id="lvm"></div>
+    <div class="lv-bar"><input id="lvi" maxlength="200" placeholder="Say something..." autocomplete="off"><button class="lv-ic" data-a="lvsend" aria-label="Send">${I.send}</button>${host ? '' : '<button class="lv-ic" data-a="lvgift" aria-label="Send a gift">🎁</button>'}<button class="lv-ic" data-a="lvheart" aria-label="Heart">❤️</button></div></div>`;
+  el.classList.add('open');
+  if (host && L.tracks && L.tracks[1]) L.tracks[1].play($('#lvv'));
+  paintLiveMsgs();
+}
+async function addLiveMsg(row) {
+  const L = S.live; if (!L || L.id !== row.stream_id) return;
+  await loadProfiles([row.user_id]); if (L.msgs.some(m => m.id === row.id)) return;
+  L.msgs.push({ id: row.id, uid: row.user_id, t: row.body }); if (L.msgs.length > 60) L.msgs.shift(); paintLiveMsgs();
+}
+function paintLiveMsgs() {
+  const b = $('#lvm'), L = S.live; if (!b || !L) return;
+  b.innerHTML = L.msgs.slice(-8).map(m => `<div class="lv-m"><button data-a="lvmsg" data-id="${m.uid}">${esc(nameOf(m.uid))}</button> ${esc(m.t)}</div>`).join('');
+}
+let lastHeart = 0;
+function floatHeart() {
+  const w = document.querySelector('#live .lv-wrap'); if (!w) return;
+  const h = document.createElement('div'); h.className = 'lvh'; h.textContent = ['❤️', '💖', '💗', '💛'][Math.floor(Math.random() * 4)]; h.style.right = (12 + Math.random() * 56) + 'px';
+  w.appendChild(h); setTimeout(() => h.remove(), 2300);
+}
+function joinLiveRoom() {
+  const L = S.live;
+  L.ch = sb.channel('kihelp-live-' + L.id, { config: { presence: { key: S.user.id }, broadcast: { self: false } } })
+    .on('presence', { event: 'sync' }, () => { if (!S.live || S.live.id !== L.id) return; L.viewers = Math.max(0, Object.keys(L.ch.presenceState()).length - 1); const e = $('#lvn'); if (e) e.textContent = L.viewers + ' watching'; })
+    .on('broadcast', { event: 'heart' }, () => floatHeart())
+    .on('broadcast', { event: 'kick' }, ({ payload }) => { if (payload && payload.uid === S.user.id) { toast('You were removed from this live'); leaveLive(); } })
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'live_messages', filter: 'stream_id=eq.' + L.id }, p => addLiveMsg(p.new))
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'live_streams', filter: 'id=eq.' + L.id }, p => { if (p.new && p.new.status === 'ended' && S.live && S.live.role === 'viewer' && S.live.id === L.id) { toast('The live has ended'); leaveLive(); } })
+    .subscribe(st => { if (st === 'SUBSCRIBED') { try { L.ch.track({ at: Date.now() }); } catch (e) {} } });
+  sb.from('live_messages').select('id,stream_id,user_id,body').eq('stream_id', L.id).order('id', { ascending: false }).limit(15).then(async ({ data }) => {
+    if (!data || !S.live || S.live.id !== L.id) return; await loadProfiles(data.map(x => x.user_id));
+    data.reverse().forEach(r => { if (!L.msgs.some(m => m.id === r.id)) L.msgs.push({ id: r.id, uid: r.user_id, t: r.body }); }); paintLiveMsgs();
+  });
+}
+async function leaveLive() {
+  const L = S.live; if (!L) return; S.live = null;
+  (L.timers || []).forEach(t => clearInterval(t));
+  try { if (L.ch) sb.removeChannel(L.ch); } catch (e) {}
+  try { if (L.tracks) L.tracks.forEach(t => { t.stop(); t.close(); }); } catch (e) {}
+  try { if (L.client) { L.client.removeAllListeners(); await L.client.leave(); } } catch (e) {}
+  paintLive();
+}
+async function startLive() {
+  if (S.live) return; const title = ($('#lvt') ? $('#lvt').value.trim() : '').slice(0, 80);
+  const fail = m => { busy('#lvgo', false, 'Start live'); toast(m); };
+  busy('#lvgo', true, 'Starting...');
+  let AR; try { AR = await loadAgora(); } catch (e) { return fail('Could not load the live video tool. Check your internet.'); }
+  let tracks;
+  try { const cfg = S.saver ? { width: 480, height: 854, frameRate: 20, bitrateMax: 600 } : { width: 720, height: 1280, frameRate: 24, bitrateMax: 1500 }; tracks = await AR.createMicrophoneAndCameraTracks({}, { encoderConfig: cfg }); }
+  catch (e) { return fail('Please allow the camera and microphone to go live'); }
+  const closeAll = () => tracks.forEach(t => { try { t.stop(); t.close(); } catch (x) {} });
+  const { data: id, error } = await sb.rpc('start_live', { p_title: title || null });
+  if (error || !id) { closeAll(); return fail('Could not start the live'); }
+  let tk; try { tk = await liveToken(S.user.id, 'host'); } catch (e) { closeAll(); await sb.rpc('end_live'); return fail('Could not connect to the live service'); }
+  const client = AR.createClient({ mode: 'live', codec: 'vp8' }); client.setClientRole('host');
+  try { await client.join(tk.appId, tk.channel, tk.token, tk.uid); await client.publish(tracks); }
+  catch (e) { closeAll(); try { await client.leave(); } catch (x) {} await sb.rpc('end_live'); return fail('Could not go live (' + ((e && (e.code || e.message)) || 'error') + ')'); }
+  client.on('token-privilege-will-expire', async () => { try { const t = await liveToken(S.user.id, 'host'); await client.renewToken(t.token); } catch (e) {} });
+  closeSheet();
+  S.live = { id, host: S.user.id, role: 'host', client, tracks, title, msgs: [], viewers: 0, started: Date.now(), peak: 0, timers: [] };
+  paintLive(); joinLiveRoom();
+  S.live.timers.push(setInterval(() => { const L = S.live; if (L) { L.peak = Math.max(L.peak, L.viewers); sb.rpc('live_ping', { p_stream: L.id, p_viewers: L.peak }); } }, 20000));
+}
+async function watchLive(streamId, hostId) {
+  if (S.live || S.call) return toast('Finish your live or call first');
+  let AR; try { AR = await loadAgora(); } catch (e) { return toast('Could not load the live video tool. Check your internet.'); }
+  let tk; try { tk = await liveToken(hostId, 'audience'); } catch (e) { return toast(/removed/i.test(e.message || '') ? 'You were removed from this live' : 'This live is not on right now'); }
+  await loadProfiles([hostId]);
+  const client = AR.createClient({ mode: 'live', codec: 'vp8' }); client.setClientRole('audience');
+  S.live = { id: tk.streamId || streamId, host: hostId, role: 'viewer', client, title: ((S.lives || []).find(l => l.id === streamId) || {}).title || '', msgs: [], viewers: 0, timers: [] };
+  paintLive();
+  client.on('user-published', async (user, type) => {
+    try { await client.subscribe(user, type); } catch (e) { return; }
+    if (type === 'video') { const box = $('#lvv'); if (box) { box.innerHTML = ''; user.videoTrack.play(box); } }
+    if (type === 'audio') user.audioTrack.play();
+  });
+  client.on('user-left', () => { if (S.live && S.live.client === client) { toast('The live has ended'); leaveLive(); } });
+  client.on('token-privilege-will-expire', async () => { try { const t = await liveToken(hostId, 'audience'); await client.renewToken(t.token); } catch (e) {} });
+  try { await client.join(tk.appId, tk.channel, tk.token, tk.uid); }
+  catch (e) { leaveLive(); return toast('Could not join the live'); }
+  joinLiveRoom();
 }
 
 /* ---------- settings + theme ---------- */
@@ -1948,6 +2079,32 @@ const ACT = {
     p.adl = v; p.dl = true; closeSheet(); toast(v ? 'People can now save this' : 'Saving turned off');
   },
   search: () => openSearch(),
+  golive: () => openGoLive(),
+  lvstart: () => startLive(),
+  livewatch: (id, el) => watchLive(id, el.dataset.h),
+  lvleave: () => leaveLive(),
+  lvend: async () => {
+    const L = S.live; if (!L || L.role !== 'host') return; if (!confirm('End your live now?')) return;
+    const secs = Math.floor((Date.now() - L.started) / 1000), peak = Math.max(L.peak || 0, L.viewers || 0);
+    try { await sb.rpc('live_ping', { p_stream: L.id, p_viewers: peak }); await sb.rpc('end_live'); } catch (e) {}
+    await leaveLive(); toast('Live ended: ' + Math.floor(secs / 60) + ':' + String(secs % 60).padStart(2, '0') + ', up to ' + peak + ' watching');
+  },
+  lvsend: async () => {
+    const L = S.live, i = $('#lvi'), v = i && i.value.trim(); if (!L || !v) return; i.value = '';
+    const { error } = await sb.from('live_messages').insert({ stream_id: L.id, user_id: S.user.id, body: v });
+    if (error) { i.value = v; toast('Could not send'); }
+  },
+  lvheart: () => { const L = S.live; if (!L || Date.now() - lastHeart < 150) return; lastHeart = Date.now(); floatHeart(); try { L.ch.send({ type: 'broadcast', event: 'heart', payload: {} }); } catch (e) {} },
+  lvgift: () => { const L = S.live; if (L && L.role === 'viewer') openGift(L.host, 'profile', null); },
+  lvmenu: () => { const L = S.live; if (L) sheet(`<h2>${esc(nameOf(L.host))}</h2><button class="optrow red" data-a="lvrpt">Report this live</button>`); },
+  lvrpt: () => { const L = S.live; if (L) { closeSheet(); openReport('user', L.host, L.host); } },
+  lvmsg: id => { const L = S.live; if (!L || L.role !== 'host' || id === S.user.id) return; sheet(`<h2>${esc(nameOf(id))}</h2><button class="optrow red" data-a="lvban" data-id="${id}">Remove from this live</button>`); },
+  lvban: async id => {
+    const L = S.live; if (!L) return; closeSheet();
+    const { error } = await sb.rpc('ban_live_viewer', { p_stream: L.id, p_user: id });
+    if (error) return toast('Could not remove this person');
+    try { L.ch.send({ type: 'broadcast', event: 'kick', payload: { uid: id } }); } catch (e) {} toast('Removed from your live');
+  },
   call: (id, el) => startCall(id, el.dataset.k),
   caccept: () => acceptCall(),
   cdecline: () => declineCall(),
@@ -2652,6 +2809,7 @@ if (window.matchMedia) { const mq = matchMedia('(prefers-color-scheme: dark)'); 
 document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.id === 'mi') { const b = document.querySelector('[data-a="send"]'); if (b) b.click(); }
   if (e.key === 'Enter' && e.target.id === 'gi') ACT.gsend();
+  if (e.key === 'Enter' && e.target.id === 'lvi') ACT.lvsend();
   if (e.key === 'Enter' && e.target.matches && e.target.matches('.lm')) e.target.click();
   if (e.key === 'Escape') { if (S.viewer) closeViewer(); else closeSheet(); }
   if (S.sv && !/INPUT|TEXTAREA/.test(e.target.tagName || '')) { if (e.key === 'ArrowRight') storyNext(); else if (e.key === 'ArrowLeft') storyPrev(); else if (e.key === 'Escape') closeStory(); }
