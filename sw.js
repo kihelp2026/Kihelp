@@ -1,6 +1,6 @@
 /* KiHelp service worker: makes the app installable and fast, never touches Supabase data */
-var VER = 'kihelp-20';
-var CORE = ['./', './index.html', './style.css?v=19', './app.js?v=19', './logo-320.png', './manifest.json', './icon-192.png', './icon-512.png'];
+var VER = 'kihelp-21';
+var CORE = ['./', './index.html', './style.css?v=20', './app.js?v=20', './logo-320.png', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', function (e) {
   e.waitUntil(
@@ -54,7 +54,7 @@ self.addEventListener('fetch', function (e) {
   }
 
   /* Libraries and fonts: show the saved copy, refresh it quietly in the background */
-  if (/(jsdelivr\.net|unpkg\.com|googleapis\.com|gstatic\.com)$/.test(url.hostname)) {
+  if (/(jsdelivr\.net|unpkg\.com|googleapis\.com|gstatic\.com|download\.agora\.io)$/.test(url.hostname)) {
     e.respondWith(
       caches.match(req).then(function (hit) {
         var net = fetch(req).then(function (r) {
