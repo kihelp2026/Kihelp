@@ -502,3 +502,47 @@ body.dark .mark{color:#fff}
 @keyframes lvup{0%{transform:translateY(0) scale(.6);opacity:0}15%{opacity:1}100%{transform:translateY(-55vh) scale(1.3);opacity:0}}
 .ring.live{background:linear-gradient(135deg,#e5484d,#ff7a00);position:relative}
 .livetag{position:absolute;left:50%;bottom:-6px;transform:translateX(-50%);background:#e5484d;color:#fff;font:800 10px system-ui;padding:1px 6px;border-radius:5px;font-style:normal;border:2px solid var(--paper)}
+
+/* v0.18: header, nav, posts, messages, suggestions */
+.ttl2{font:800 26px var(--disp);letter-spacing:-.02em}
+.hav{display:block;padding:0;margin-inline-start:4px;border-radius:50%}
+.avbtn{display:block;padding:0;border-radius:50%;flex:none}
+.gl{font-size:14px;line-height:1}
+.big .gl{font-size:18px}
+#nav button.desk{display:none}
+@media (min-width:900px){#nav button.desk{display:flex}}
+.navplus{flex:1;display:grid;place-items:center;padding:2px 0}
+.navplus span{width:56px;height:38px;border-radius:14px;background:var(--acc);color:var(--acc-ink);display:grid;place-items:center}
+.navplus svg{width:26px;height:26px;stroke-width:2.4}
+@media (min-width:900px){.navplus{flex:none;display:flex;justify-content:flex-start;padding:6px 8px}.navplus span{width:46px;height:38px}}
+.cgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.ccard{display:flex;flex-direction:column;gap:2px;padding:14px;border-radius:16px;border:1.5px solid var(--line);background:var(--card);text-align:start}
+.ccard span{font-size:28px;line-height:1.1}
+.ccard small{color:var(--mute);font-size:13px}
+.pcar .pit,.pcar.single .pit{aspect-ratio:var(--ar,1/1);max-height:none;background:#000}
+.pcar .pit img,.pcar.single .pit img{width:100%;height:100%;object-fit:cover;max-height:none}
+.pcar .pit video,.pcar.single .pit video{width:100%;height:100%;object-fit:contain;max-height:none}
+.pdots{display:flex;justify-content:center;gap:5px;padding:8px 0 2px}
+.pdots i{width:6px;height:6px;border-radius:50%;background:var(--line)}
+.pdots i.on{background:var(--acc)}
+.fchip{border:0;background:none;padding:0 2px;margin-inline-start:6px;color:var(--acc);font-weight:700;font-size:14px;line-height:1.3}
+.fchip::before{content:'\2022\00a0';color:var(--mute)}
+.vinfo .fchip{color:#fff}
+.ptext.clamp:not(.open){display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;padding-bottom:0;margin-bottom:6px}
+.bt.clamp:not(.open){display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+.seemore{display:block;background:none;color:var(--mute);font-weight:600;padding:0 16px 8px}
+.bub .seemore{padding:2px 0 0;color:inherit;opacity:.8}
+.mrow{display:flex;gap:8px;align-items:flex-end;align-self:flex-start;max-width:88%}
+.mrow .av{flex:none}
+.mcol{min-width:0}
+.mcol .bub{max-width:100%}
+.mcol .gn{margin:0 0 2px 4px}
+.sgstrip{margin:12px 0 0;padding:4px 0 8px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.sgh{display:flex;align-items:center;justify-content:space-between;padding:6px 16px 4px}
+.sgcard{position:relative;flex:none;width:148px;padding:14px 10px 12px;border-radius:16px;border:1px solid var(--line);background:var(--card);display:flex;flex-direction:column;align-items:center;gap:3px;text-align:center}
+.sgcard b{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sgcard small{color:var(--mute);margin-bottom:6px}
+.sgcard .btn{width:100%}
+.sgx{position:absolute;top:4px;right:4px;width:28px;height:28px;display:grid;place-items:center;color:var(--mute)}
+.sgx svg{width:16px;height:16px}
+.sgav{padding:0;border-radius:50%}
