@@ -29,7 +29,7 @@ const I = {
   x: ic('<path d="M6 6l12 12M18 6L6 18"/>'),
   download: ic('<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>'),
   expand: ic('<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>'),
-  globe: ic('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>'),
+  globe: '<span class="gl" aria-hidden="true">🌍</span>',
   lock: ic('<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>'),
   users: ic('<circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.5 3-5 6-5s6 1.5 6 5M16 5.5a3 3 0 0 1 0 5M18 15c2 .6 3 2 3 5"/>'),
   heartfill: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-8.5-5.4-8.5-11.5A4.7 4.7 0 0 1 12 6.8a4.7 4.7 0 0 1 8.5 2.7C20.5 15.6 12 21 12 21z"/></svg>',
@@ -56,6 +56,8 @@ const S = {
 };
 const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
 try { Object.assign(S, JSON.parse(store.get('kihelp.settings') || '{}')); } catch (e) {}
+if (S.mode !== 'light' && S.mode !== 'dark') S.mode = (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+S.xp = new Set(); S.ovStack = []; S.suggest = null; S.navBack = false;
 const saveSettings = () => store.set('kihelp.settings', JSON.stringify({ mode: S.mode, accent: S.accent, saver: S.saver, lang: S.lang }));
 
 const LANGS = {
@@ -252,7 +254,7 @@ async function loadVideos() {
 async function refresh() {
   const t = S.tab;
   try {
-    if (t === 'home') { await loadFeed(); loadLive().then(afterBg).catch(() => {}); loadStories().then(afterBg).catch(() => {}); if (!S.ready.video) loadVideos().then(afterBg).catch(() => {}); }
+    if (t === 'home') { await loadFeed(); loadLive().then(afterBg).catch(() => {}); loadSuggest().then(afterBg).catch(() => {}); loadStories().then(afterBg).catch(() => {}); if (!S.ready.video) loadVideos().then(afterBg).catch(() => {}); }
     else if (t === 'market') await loadProducts();
     else if (t === 'chat') await loadThreads();
     else if (t === 'alerts') await loadAlerts();
@@ -260,6 +262,7 @@ async function refresh() {
     else if (t === 'me') await loadMe();
   } catch (e) { S.ready[t] = 'err'; toast('Could not load. Check your internet.'); }
   if (S.tab === t && !$('#over').innerHTML) render(true);
+  if (S.restoreScroll && S.tab === t && t !== 'video') { const y = S.restoreScroll; S.restoreScroll = 0; setTimeout(() => { const m = $('#main'); if (m) m.scrollTop = y; }, 80); }
 }
 
 /* ---------- auth ---------- */
@@ -322,12 +325,13 @@ async function enter(user) {
   computePushOffer(); loadPrefs().catch(() => {}); subscribeCalls(); checkRinging().catch(() => {});
   clearInterval(S.liveT); S.liveT = setInterval(() => { if (S.user && S.tab === 'home' && !$('#over').innerHTML && !S.live && document.visibilityState === 'visible') loadLive().then(afterBg).catch(() => {}); }, 30000);
   if (!store.get('kihelp.tipReact')) { store.set('kihelp.tipReact', '1'); setTimeout(() => toast('Tip: press and hold the heart to pick a reaction'), 3000); }
-  hideAuth(); S.tab = S.focusVideo ? 'video' : 'home'; render(); refresh();
+  hideAuth(); S.tab = S.focusVideo ? 'video' : (S.restoreTab || 'home'); S.restoreTab = null; render(); refresh();
   if (S.focusPost) { const pid = S.focusPost; S.focusPost = null; openPost(pid); }
   if (S.pendingRoute) { const h = S.pendingRoute; S.pendingRoute = null; setTimeout(() => routeHash(h), 400); }
   if (S.focusGroup) { const gid = S.focusGroup; S.focusGroup = null; openGroup(gid); }
 }
 function clearUserState() {
+  try { localStorage.removeItem('kihelp.view'); } catch (e) {} S.ovStack = []; S.suggest = null;
   clearInterval(S.liveT); if (S.live) leaveLive(true); S.lives = [];
   try { if (S.rt) sb.removeChannel(S.rt); } catch (e) {} S.rt = null; S.prefs = null; if (S.call) endCallLocal(); S.incoming = null; const ce = $('#call'); if (ce) { ce.classList.remove('open'); ce.innerHTML = ''; }
   clearInterval(S.poll); clearInterval(S.gpoll); S.openThread = null;
@@ -347,12 +351,14 @@ const gate = () => {
 };
 
 function head() {
-  const t = S.tab;
+  const t = S.tab, home = t === 'home';
   const title = tr({ home: 'social', video: 'videos', chat: 'chats', market: 'marketplace', alerts: 'alerts', me: 'profile' }[t]);
-  const act = t === 'home' ? `<button class="hbtn" data-a="newpost">${I.plus}<span class="hl">${tr('post')}</span></button>`
-    : t === 'video' ? `<button class="hbtn" data-a="vupload">${I.plus}<span class="hl">${tr('video')}</span></button>`
+  const act = t === 'video' ? `<button class="hbtn" data-a="vupload">${I.plus}<span class="hl">${tr('video')}</span></button>`
     : t === 'market' ? `<button class="hbtn" data-a="sell">${I.plus}<span class="hl">${tr('sell')}</span></button>` : '';
-  return `<div class="brand"><div class="mark">kihelp</div><div class="sect">${title}</div></div><div class="hr">${act}<button class="ibtn" data-a="alerts" aria-label="${tr('alerts')}">${I.bell}</button><button class="ibtn" data-a="search" aria-label="Search people">${I.search}</button><button class="ibtn" data-a="settings" aria-label="${tr('settings')}">${I.sliders}</button></div>`;
+  const left = home ? '<div class="brand"></div>' : `<div class="brand"><div class="ttl2">${title}</div></div>`;
+  const prof = home ? `<button class="hav" data-a="tab" data-id="me" aria-label="Profile">${avOf(S.user.id, 34)}</button>` : '';
+  const gear = t === 'me' ? `<button class="ibtn" data-a="settings" aria-label="${tr('settings')}">${I.sliders}</button>` : '';
+  return `${left}<div class="hr">${act}<button class="ibtn" data-a="search" aria-label="Search people">${I.search}</button><button class="ibtn" data-a="alerts" aria-label="${tr('alerts')}">${I.bell}</button>${gear}${prof}</div>`;
 }
 const postLists = () => $('#onep') ? [S.onePost] : $('#pposts') ? [S.profPosts] : $('#spl') ? [S.savedList] : S.tab === 'me' ? [S.myPosts] : [S.posts];
 const findPost = id => postLists()[0].find(x => x.id == id) || [...S.posts, ...S.myPosts, ...S.profPosts, ...S.savedList].find(x => x.id == id);
@@ -371,7 +377,7 @@ function mediaBlock(p) {
       ? `<div class="pit"><video src="${esc(it.url)}" controls playsinline preload="metadata"></video><button class="pexp" data-a="vopen" data-id="${p.id}" data-i="${i}" aria-label="Full screen">${I.expand}</button></div>`
       : `<div class="pit"><img src="${esc(it.url)}" alt="" loading="lazy" data-dt="p" data-id="${p.id}" data-i="${i}"></div>`;
   };
-  return `<div class="pcar ${single ? 'single' : ''}"><div class="rail">${m.map(item).join('')}</div>${single ? '' : `<span class="pcount">1 / ${m.length}</span>`}</div>`;
+  return `<div class="pcar ${single ? 'single' : ''}"><div class="rail">${m.map(item).join('')}</div>${single ? '' : `<span class="pcount">1 / ${m.length}</span>`}</div>${single ? '' : `<div class="pdots">${m.map((_, i) => `<i class="${i === 0 ? 'on' : ''}"></i>`).join('')}</div>`}`;
 }
 function commentsHTML(p) {
   const top = p.cm.filter(c => !c.pid), kids = c => p.cm.filter(x => x.pid === c.id);
@@ -391,7 +397,7 @@ function likeBtn(p) {
 function postCard(p) {
   return `<article class="post">
     <div class="prow"><button class="ph-row" data-a="user" data-id="${p.uid}">${avOf(p.uid)}<div><b>${esc(nameOf(p.uid))}</b><small>${p.t}${p.ed ? ' · edited' : ''} · ${visIcon(p.vis)}</small></div></button>${fChip(p.uid)}${p.pin ? '<span class="pbadge">Pinned</span>' : ''}<span style="flex:1"></span><button class="ibtn" data-a="pmenu" data-id="${p.id}" aria-label="More options">${I.more}</button></div>
-    ${p.text ? `<p class="ptext" data-dt="pt" data-id="${p.id}">${fmtText(p.text)}</p>` : ''}
+    ${p.text ? `<p class="ptext clamp${S.xp.has('p' + p.id) ? ' open' : ''}" data-xk="p${p.id}" data-dt="pt" data-id="${p.id}">${fmtText(p.text)}</p>` : ''}
     ${mediaBlock(p)}
     <div class="acts">
       ${likeBtn(p)}
@@ -409,7 +415,7 @@ function viewHome() {
   const row = installBar() + notifBar() + composerBox() + quickRow() + storiesRow();
   if (!S.posts.length) return row + `<div class="empty" style="padding:60px 24px">No posts yet.<br>Be the first. Tap <b>${tr('post')}</b> at the top.</div>` + videoStrip();
   const at = Math.min(2, S.posts.length - 1);
-  return row + S.posts.map((p, i) => postCard(p) + (i === at ? videoStrip() : '')).join('');
+  return row + S.posts.map((p, i) => postCard(p) + (i === 0 ? suggestStrip() : '') + (i === at ? videoStrip() : '')).join('');
 }
 const vgridHTML = list => list.length ? `<div class="vgrid">${list.map(v => `<button data-a="watch" data-id="${v.id}" aria-label="Watch video">${S.saver ? `<div class="ph" style="--h:${hue(v.id)};width:100%;height:100%"></div>` : `<video src="${esc(v.video_url)}#t=0.1" muted playsinline preload="metadata"></video>`}<span>${Number(v.views) || 0} views</span></button>`).join('')}</div>` : '';
 function viewVideo() {
@@ -478,12 +484,13 @@ function viewAlerts() {
 function viewMe() {
   if (gate()) return gate();
   const p = S.profile || {}, mine = S.products.filter(l => l.sid === S.user.id);
-  return `<div class="prof">${avOf(S.user.id)}<div><div class="big">${esc(p.display_name || 'Member')} <span class="vis" title="Public profile">${I.globe}</span></div><div class="ls">${p.username ? '@' + esc(p.username) + ' · ' : ''}${esc(p.country || '')}</div>${p.username ? '' : '<div class="ls">Add a username in Edit profile</div>'}</div></div>
+  return `<div class="prof"><button class="avbtn" data-a="avview" data-id="${S.user.id}" aria-label="View profile photo">${avOf(S.user.id)}</button><div><div class="big">${esc(p.display_name || 'Member')} <span class="vis" title="Public profile">${I.globe}</span></div><div class="ls">${p.username ? '@' + esc(p.username) + ' · ' : ''}${esc(p.country || '')}</div>${p.username ? '' : '<div class="ls">Add a username in Edit profile</div>'}</div></div>
     ${p.bio ? `<p style="padding:0 16px 10px">${esc(p.bio)}</p>` : ''}
     <div class="stats"><div><b>${S.me.videos}</b><span>Videos</span></div><button data-a="flist" data-id="${S.user.id}" data-k="followers"><b>${S.me.followers}</b><span>Followers</span></button><button data-a="flist" data-id="${S.user.id}" data-k="following"><b>${S.me.following}</b><span>Following</span></button><div><b>${S.me.posts}</b><span>Posts</span></div></div>
     <div style="padding:0 16px 8px;display:grid;grid-template-columns:1fr 1fr;gap:10px"><button class="btn alt" data-a="editprofile">Edit profile</button><button class="btn alt" data-a="opensaved">Saved posts</button></div>
     <div style="padding:0 16px 8px;display:grid;grid-template-columns:1fr 1fr;gap:10px"><button class="btn alt" data-a="invite">Invite friends</button><button class="btn alt" data-a="accounts">Switch account</button></div>
     <div style="padding:0 16px 8px"><button class="btn alt" data-a="wallet">🪙 Wallet and gifts</button></div>
+    <div style="padding:0 16px 8px"><button class="btn alt" data-a="mylives">🔴 My lives</button></div>
     <h3 class="sub">${tr('videos')}</h3>
     ${S.myVideos.length ? vgridHTML(S.myVideos) : `<div class="empty" style="padding:20px 16px">No videos yet. Open Videos and tap Video.</div>`}
     <h3 class="sub">Posts</h3>
@@ -497,8 +504,9 @@ function render(keepScroll) {
   $('#main').classList.toggle('vmode', S.tab === 'video');
   $('#head').innerHTML = head();
   $('#main').innerHTML = { home: viewHome, video: viewVideo, chat: viewChat, market: viewMarket, alerts: viewAlerts, me: viewMe }[S.tab]();
-  $('#nav').innerHTML = TABS.map(([k, l, i]) => `<button class="${S.tab === k ? 'on' : ''}" data-a="tab" data-id="${k}" aria-label="${tr(l)}"><span class="pill">${I[i]}</span>${tr(l)}</button>`).join('');
+  $('#nav').innerHTML = [['home', 'home', 'home'], ['video', 'videos', 'film'], ['create', '', 'plus'], ['chat', 'chat', 'chat'], ['market', 'market', 'shop'], ['me', 'profile', 'user']].map(([k, l, i]) => k === 'create' ? `<button class="navplus" data-a="create" aria-label="Create"><span>${I.plus}</span></button>` : `<button class="${S.tab === k ? 'on' : ''}${k === 'me' ? ' desk' : ''}" data-a="tab" data-id="${k}" aria-label="${tr(l)}"><span class="pill">${I[i]}</span>${tr(l)}</button>`).join('');
   $('#main').scrollTop = keepScroll ? top : 0;
+  setTimeout(syncHist, 0);
   if (S.tab === 'video') { const nf = $('#vf'); if (nf && keepScroll && vtop) nf.scrollTop = vtop; wireVideos(); }
 }
 function wireVideos() {
@@ -750,7 +758,7 @@ function openSearch() {
   $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button>
     <input id="ps" type="search" placeholder="Name, @username, email or phone" aria-label="Search people" maxlength="60" style="flex:1" autocomplete="off"></header>
     <div class="setbody" id="pres"><div class="empty" style="padding:40px 24px">Search people by name or @username.<br><br>You can also find someone by their exact email or phone number, if they allowed it in their privacy settings.</div></div></div>`;
-  setTimeout(() => $('#ps') && $('#ps').focus(), 50);
+  setTimeout(() => $('#ps') && $('#ps').focus(), 50); paintSuggestList();
 }
 async function runSearch(q) {
   const box = $('#pres'); if (!box) return;
@@ -820,7 +828,7 @@ function paintProfile() {
     }
   }
   const all = [...P.pinned, ...P.posts];
-  b.innerHTML = `<div class="pcenter">${avOf(id, 88)}<div class="big" style="margin-top:10px">${esc(pr.display_name || 'Member')} <span class="vis" title="Public profile">${I.globe}</span></div>
+  b.innerHTML = `<div class="pcenter"><button class="avbtn" data-a="avview" data-id="${id}" aria-label="View profile photo">${avOf(id, 88)}</button><div class="big" style="margin-top:10px">${esc(pr.display_name || 'Member')} <span class="vis" title="Public profile">${I.globe}</span></div>
       <div class="ls">${pr.username ? '@' + esc(pr.username) : ''}${pr.country ? (pr.username ? ' · ' : '') + esc(pr.country) : ''}</div>
       ${pr.bio ? `<p style="margin-top:10px;white-space:pre-wrap">${esc(pr.bio)}</p>` : ''}</div>
     <div class="stats" style="justify-content:center"><div><b>${P.postsN}</b><span>Posts</span></div><button data-a="flist" data-id="${id}" data-k="followers"><b>${P.followers}</b><span>Followers</span></button><button data-a="flist" data-id="${id}" data-k="following"><b>${P.followingN}</b><span>Following</span></button></div>
@@ -893,8 +901,10 @@ function bubble(x, t) {
   if (x.fwd) inner += '<div class="fwd">Forwarded</div>';
   if (x.media) inner += mediaBubble(x.media);
   if (sm) inner += `<button class="sharecardb" data-a="openshared" data-k="${sm[1].toLowerCase()}" data-id="${sm[2]}"><span><b>${shareLabel(sm[1])}</b><br><small>Tap to open</small></span></button>`;
-  else if (x.t) inner += `<div class="bt">${fmtText(x.t)}</div>`;
-  return `<div class="${cls}"${x.id ? ` data-a="mmenu" data-id="${x.id}"` : ''}>${inner}<small class="meta">${x.ed ? 'edited · ' : ''}${hm(x.at)}</small></div>`;
+  else if (x.t) inner += `<div class="bt clamp${S.xp.has('m' + x.id) ? ' open' : ''}" data-xk="m${x.id}">${fmtText(x.t)}</div>`;
+  const core = `<div class="${cls}"${x.id ? ` data-a="mmenu" data-id="${x.id}"` : ''}>${inner}<small class="meta">${x.ed ? 'edited · ' : ''}${hm(x.at)}</small></div>`;
+  if (x.me || !t) return core;
+  return `<div class="mrow">${avOf(t.id, 30)}<div class="mcol"><div class="gn">${esc(nameOf(t.id))}</div>${core}</div></div>`;
 }
 function openViewer(items, idx, dl) {
   if (!items || !items.length) return;
@@ -946,7 +956,7 @@ function singleTap(d) {
 document.addEventListener('scroll', e => {
   const t = e.target; if (!t || !t.classList) return;
   const i = Math.round(Math.abs(t.scrollLeft) / (t.clientWidth || 1)), n = t.children ? t.children.length : 0;
-  if (t.classList.contains('rail')) { const c = t.parentElement.querySelector('.pcount'); if (c) c.textContent = (i + 1) + ' / ' + n; }
+  if (t.classList.contains('rail')) { const c = t.parentElement.querySelector('.pcount'); if (c) c.textContent = (i + 1) + ' / ' + n; const dd = t.parentElement.nextElementSibling; if (dd && dd.classList.contains('pdots')) [].slice.call(dd.children).forEach((d, k) => d.classList.toggle('on', k === i)); }
   else if (t.id === 'vwr') { const c = $('#vwc'); if (c) c.textContent = (i + 1) + ' / ' + n; if (S.viewer) S.viewer.idx = i; }
 }, true);
 
@@ -1080,6 +1090,7 @@ document.addEventListener('contextmenu', e => { if (e.target.closest('[data-a="l
 function syncFollowUI(id) {
   const f = S.following.has(id);
   document.querySelectorAll(`.fchip[data-id="${id}"]`).forEach(b => { if (f) b.remove(); });
+  document.querySelectorAll(`.fbtn[data-id="${id}"]`).forEach(b => { b.textContent = f ? 'Following' : 'Follow'; b.classList.toggle('alt', f); });
   if (S.prof && S.prof.id === id) { S.prof.following = f; paintProfile(); }
   if ($('#fl')) paintFollowList();
 }
@@ -1459,8 +1470,10 @@ function gbubble(m) {
   const mine = m.uid === S.user.id, cls = 'bub' + (mine ? ' me' : '');
   if (m.del) return `<div class="${cls} del">Message deleted</div>`;
   const sm = SHARE_RE.exec(m.t || '');
-  const body = sm ? `<button class="sharecardb" data-a="openshared" data-k="${sm[1].toLowerCase()}" data-id="${sm[2]}"><span><b>${shareLabel(sm[1])}</b><br><small>Tap to open</small></span></button>` : `<div class="bt">${fmtText(m.t)}</div>`;
-  return `<div class="${cls}"${m.id ? ` data-a="gmmenu" data-id="${m.id}"` : ''}>${mine ? '' : `<div class="gn">${esc(nameOf(m.uid))}</div>`}${body}<small class="meta">${m.ed ? 'edited · ' : ''}${hm(m.at)}</small></div>`;
+  const body = sm ? `<button class="sharecardb" data-a="openshared" data-k="${sm[1].toLowerCase()}" data-id="${sm[2]}"><span><b>${shareLabel(sm[1])}</b><br><small>Tap to open</small></span></button>` : `<div class="bt clamp${S.xp.has('g' + m.id) ? ' open' : ''}" data-xk="g${m.id}">${fmtText(m.t)}</div>`;
+  const core = `<div class="${cls}"${m.id ? ` data-a="gmmenu" data-id="${m.id}"` : ''}>${body}<small class="meta">${m.ed ? 'edited · ' : ''}${hm(m.at)}</small></div>`;
+  if (mine) return core;
+  return `<div class="mrow">${avOf(m.uid, 30)}<div class="mcol"><div class="gn">${esc(nameOf(m.uid))}</div>${core}</div></div>`;
 }
 function paintGroupMsgs() {
   const el = $('#gmsgs'), G = S.g; if (!el || !G) return;
@@ -1860,8 +1873,10 @@ async function loadLive() {
 const liveItems = () => (S.lives || []).map(l => `<button class="story" data-a="livewatch" data-id="${l.id}" data-h="${l.host_id}"><span class="ring live">${avOf(l.host_id, 56)}<i class="livetag">LIVE</i></span>${esc(nameOf(l.host_id).split(' ')[0])}</button>`).join('');
 function openGoLive() {
   if (S.live || S.call) return toast('Finish your live or call first');
+  S.liveSave = true;
   sheet(`<h2>Go live</h2><div class="fld"><label for="lvt">Title (optional)</label><input id="lvt" maxlength="80" placeholder="What is your live about?"></div>
     <div class="note">Anyone on KiHelp can watch. Use Wi-Fi if you can, and keep this screen open while you are live.</div>
+    <div class="srow" style="padding:6px 0 14px;border:0"><div><div class="lbl">Save this live</div><div class="ls">Keep a copy in My lives. It uses your storage, about 6 MB per minute.</div></div><button class="switch on" id="lvsave" role="switch" aria-checked="true" data-a="tglsave"><i></i></button></div>
     <button class="btn" id="lvgo" data-a="lvstart">Start live</button>`);
 }
 function paintLive() {
@@ -1932,8 +1947,8 @@ async function startLive() {
   client.on('token-privilege-will-expire', async () => { try { const t = await liveToken(S.user.id, 'host'); await client.renewToken(t.token); } catch (e) {} });
   closeSheet();
   S.live = { id, host: S.user.id, role: 'host', client, tracks, title, msgs: [], viewers: 0, started: Date.now(), peak: 0, timers: [] };
-  paintLive(); joinLiveRoom();
-  S.live.timers.push(setInterval(() => { const L = S.live; if (L) { L.peak = Math.max(L.peak, L.viewers); sb.rpc('live_ping', { p_stream: L.id, p_viewers: L.peak }); } }, 20000));
+  S.live.save = !!S.liveSave; paintLive(); joinLiveRoom(); startReplayRecording(S.live);
+  S.live.timers.push(setInterval(() => { const L = S.live; if (L) { L.peak = Math.max(L.peak, L.viewers); sb.rpc('live_ping', { p_stream: L.id, p_viewers: L.peak }); if (L.rec && L.rec.ok > 0) sb.rpc('save_live_replay', { p_stream: L.id, p_parts: L.rec.ok, p_ext: L.rec.ext, p_seconds: Math.floor((Date.now() - L.started) / 1000) }); } }, 20000));
 }
 async function watchLive(streamId, hostId) {
   if (S.live || S.call) return toast('Finish your live or call first');
@@ -1970,9 +1985,14 @@ async function showUsage() {
   try { const e = await navigator.storage.estimate(); el.textContent = (e.usage / 1048576).toFixed(1) + ' MB'; } catch (x) { el.textContent = '-'; }
 }
 async function clearCache() {
+  let before = 0; try { before = (await navigator.storage.estimate()).usage || 0; } catch (e) {}
   try { if (window.caches) for (const k of await caches.keys()) await caches.delete(k); } catch (e) {}
-  S.loaded.clear(); S.q = ''; S.cat = 'All'; S.opt = 'all';
-  toast(tr('cleared')); showUsage();
+  try { sessionStorage.clear(); } catch (e) {}
+  S.loaded.clear(); S.q = ''; S.cat = 'All'; S.opt = 'all'; S.sig = {};
+  let after = before; try { after = (await navigator.storage.estimate()).usage || 0; } catch (e) {}
+  const freed = Math.max(0, before - after);
+  toast(tr('cleared') + (freed > 51200 ? ' · ' + (freed / 1048576).toFixed(1) + ' MB freed' : ''));
+  showUsage();
 }
 function openSettings() {
   const scroll = document.querySelector('.setbody') ? document.querySelector('.setbody').scrollTop : 0;
@@ -1981,7 +2001,7 @@ function openSettings() {
   $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button><b class="ttl">${tr('settings')}</b></header>
   <div class="setbody">
     <h3 class="sub">${tr('appearance')}</h3>
-    <div class="srow col"><div class="lbl">${tr('mode')}</div><div class="seg c3">${['system', 'light', 'dark'].map(m => `<button class="${S.mode === m ? 'on' : ''}" data-a="mode" data-id="${m}">${tr(m)}</button>`).join('')}</div></div>
+    <div class="srow col"><div class="lbl">${tr('mode')}</div><div class="seg">${['light', 'dark'].map(m => `<button class="${S.mode === m ? 'on' : ''}" data-a="mode" data-id="${m}">${tr(m)}</button>`).join('')}</div></div>
     <div class="srow col"><div class="lbl">${tr('accent')}</div><div class="dots">
       <button class="chip ${S.accent === 'auto' ? 'on' : ''}" data-a="accent" data-id="auto">${tr('auto')}</button>
       ${Object.entries(AC).map(([k, c]) => `<button class="dotb ${S.accent === k ? 'on' : ''}" style="background:${c}" data-a="accent" data-id="${k}" aria-label="${k}"></button>`).join('')}</div></div>
@@ -2079,6 +2099,45 @@ const ACT = {
     p.adl = v; p.dl = true; closeSheet(); toast(v ? 'People can now save this' : 'Saving turned off');
   },
   search: () => openSearch(),
+  create: () => sheet(`<h2>Create</h2><div class="cgrid">
+    <button class="ccard" data-a="cnew" data-id="post"><span>📝</span><b>Post</b><small>Text and photos</small></button>
+    <button class="ccard" data-a="cnew" data-id="video"><span>🎬</span><b>Video</b><small>Short video</small></button>
+    <button class="ccard" data-a="cnew" data-id="story"><span>📖</span><b>Story</b><small>Gone in 24 hours</small></button>
+    <button class="ccard" data-a="cnew" data-id="live"><span>🔴</span><b>Go live</b><small>Broadcast now</small></button>
+    <button class="ccard" data-a="cnew" data-id="sell"><span>🛍️</span><b>Sell</b><small>List an item</small></button>
+    <button class="ccard" data-a="cnew" data-id="event"><span>📅</span><b>Event</b><small>Plan a meetup</small></button>
+    <button class="ccard" data-a="cnew" data-id="group"><span>👥</span><b>Group</b><small>Public or private</small></button></div>`),
+  cnew: id => { closeSheet(); setTimeout(() => { const f = { post: ACT.newpost, video: ACT.vupload, story: ACT.snew, live: ACT.golive, sell: ACT.sell, event: ACT.enew, group: ACT.gnew }[id]; if (f) f(); }, 60); },
+  avview: id => { const p = S.pf[id], url = safeUrl(p && p.avatar_url); if (url) openViewer([{ type: 'image', url }], 0, false); else toast('No profile photo yet'); },
+  xpand: (id, el) => { const t = el.previousElementSibling; if (t) { t.classList.add('open'); if (t.dataset.xk) S.xp.add(t.dataset.xk); } el.remove(); },
+  sgdismiss: id => { S.suggest = (S.suggest || []).filter(p => p.id !== id); render(true); },
+  sgall: () => openSearch(),
+  tglsave: () => { S.liveSave = !S.liveSave; const b = $('#lvsave'); if (b) { b.classList.toggle('on', S.liveSave); b.setAttribute('aria-checked', String(S.liveSave)); } },
+  mylives: () => openMyLives(),
+  lvrow: id => {
+    const s = (S.myLives || []).find(x => x.id === id); if (!s) return; const has = s.replay_parts > 0 && s.status !== 'live';
+    sheet(`<h2>${esc(s.title || 'Live')}</h2><div class="ls" style="margin:-6px 0 8px">${esc(new Date(s.started_at).toLocaleString())}</div>
+      ${has ? `<button class="optrow" data-a="lvplay" data-id="${s.id}">▶ Watch the saved live</button><button class="optrow" data-a="lvshare" data-id="${s.id}">${s.replay_public ? '🔒 Make it private again' : '🌍 Share it on my profile'}</button><button class="optrow red" data-a="lvdelrep" data-id="${s.id}">Delete the saved video</button>` : '<div class="ls" style="padding:6px 0">No saved video for this live.</div>'}
+      ${s.status === 'live' ? '' : `<button class="optrow red" data-a="lvdel" data-id="${s.id}">Delete this live completely</button>`}`);
+  },
+  lvplay: id => { const s = (S.myLives || []).find(x => x.id === id); if (s) { closeSheet(); openReplay(s); } },
+  lvshare: async id => {
+    const s = (S.myLives || []).find(x => x.id === id); if (!s) return; closeSheet();
+    const { error } = await sb.rpc('set_replay_public', { p_stream: id, p_public: !s.replay_public });
+    if (error) return toast('Could not update'); toast(s.replay_public ? 'Now private' : 'Shared on your profile'); openMyLives();
+  },
+  lvdelrep: async id => {
+    const s = (S.myLives || []).find(x => x.id === id); if (!s) return; closeSheet();
+    if (!confirm('Delete the saved video of this live? This cannot be undone.')) return;
+    await wipeReplayFiles(s); const { error } = await sb.rpc('clear_live_replay', { p_stream: id });
+    if (error) return toast('Could not delete'); toast('Saved video deleted'); openMyLives();
+  },
+  lvdel: async id => {
+    const s = (S.myLives || []).find(x => x.id === id); if (!s) return; closeSheet();
+    if (!confirm('Delete this live and its saved video? This cannot be undone.')) return;
+    await wipeReplayFiles(s); const { error } = await sb.rpc('remove_live', { p_stream: id });
+    if (error) return toast('Could not delete'); toast('Live deleted'); openMyLives();
+  },
   golive: () => openGoLive(),
   lvstart: () => startLive(),
   livewatch: (id, el) => watchLive(id, el.dataset.h),
@@ -2086,8 +2145,9 @@ const ACT = {
   lvend: async () => {
     const L = S.live; if (!L || L.role !== 'host') return; if (!confirm('End your live now?')) return;
     const secs = Math.floor((Date.now() - L.started) / 1000), peak = Math.max(L.peak || 0, L.viewers || 0);
+    let saved = 0; if (L.rec) { toast('Saving your live...'); try { saved = (await finishReplayRecording(L)) || 0; } catch (e) {} }
     try { await sb.rpc('live_ping', { p_stream: L.id, p_viewers: peak }); await sb.rpc('end_live'); } catch (e) {}
-    await leaveLive(); toast('Live ended: ' + Math.floor(secs / 60) + ':' + String(secs % 60).padStart(2, '0') + ', up to ' + peak + ' watching');
+    await leaveLive(); toast('Live ended: ' + Math.floor(secs / 60) + ':' + String(secs % 60).padStart(2, '0') + ', up to ' + peak + ' watching' + (saved ? '. Saved to My lives' : ''));
   },
   lvsend: async () => {
     const L = S.live, i = $('#lvi'), v = i && i.value.trim(); if (!L || !v) return; i.value = '';
@@ -2215,7 +2275,7 @@ const ACT = {
     if (error) { busy('#gnbtn', false, 'Save changes'); return toast('Could not save the group'); }
     closeSheet(); S.myGroups = null; toast('Group updated'); loadGroup(G.id);
   },
-  gback: () => { clearInterval(S.gpoll); const from = S.g && S.g.from; S.g = null; if (from === 'groups') openGroups(); else { $('#over').innerHTML = ''; render(true); } },
+  gback: () => { if (layers().length) history.back(); else legacyBack(); },
   gtab: id => { if (S.g) { S.g.tab = id; paintGroup(); } },
   gjoin: async () => {
     const G = S.g; if (!G || !G.row) return;
@@ -2672,7 +2732,7 @@ const ACT = {
   },
   share: id => openShare('post', id),
   thread: id => openThread(id),
-  back: () => { clearInterval(S.gpoll); S.g = null; stopRecCancel(); S.reply = null; S.editM = null; clearInterval(S.poll); S.openThread = null; S.prof = null; $('#over').innerHTML = ''; render(true); if (S.tab === 'chat') refresh(); },
+  back: () => { if (layers().length) history.back(); else legacyBack(); },
   send: id => sendMsg(id),
   cat: id => { S.cat = id; $('#cats').innerHTML = catChips(); $('#grid').innerHTML = gridHTML(); },
   opt: id => { S.opt = id; $('#opts').innerHTML = optChips(); $('#grid').innerHTML = gridHTML(); },
@@ -2932,6 +2992,190 @@ document.addEventListener('kihelp-update', showUpdateBar);
 if (window.__kihelpUpdate) showUpdateBar();
 window.addEventListener('offline', () => toast('You are offline'));
 window.addEventListener('online', () => toast('Back online'));
+
+/* ---------- back button, double-back to exit, staying in place after refresh ---------- */
+const H = { n: 0, ignore: 0, last: 0 };
+function layers() {
+  const L = [], on = id => { const e = $('#' + id); return !!(e && e.classList.contains('open')); };
+  if (on('call')) L.push('call');
+  if (document.querySelector('.imged')) L.push('imged');
+  if (on('sheet')) L.push('sheet');
+  if (on('story')) L.push('story');
+  if (on('live')) L.push('live');
+  if (on('viewer')) L.push('viewer');
+  const ov = $('#over') && $('#over').innerHTML.trim() ? Math.max(1, S.ovStack.length) : 0;
+  for (let i = 0; i < ov; i++) L.push('over');
+  if (S.user && S.tab !== 'home') L.push('tab');
+  return L;
+}
+function legacyBack() {
+  clearInterval(S.gpoll); S.g = null; stopRecCancel(); S.reply = null; S.editM = null; clearInterval(S.poll); S.openThread = null; S.prof = null;
+  S.ovStack.length = 0; $('#over').innerHTML = ''; render(true); if (S.tab === 'chat') refresh();
+}
+function closeTop(name) {
+  if (name === 'call') { if (S.incoming && !S.call) { declineCall(); return true; } toast('End the call first'); return false; }
+  if (name === 'imged') { const b = document.querySelector('.imged [data-ie="cancel"]'); if (b) b.click(); return true; }
+  if (name === 'sheet') { closeSheet(); return true; }
+  if (name === 'story') { closeStory(); return true; }
+  if (name === 'live') { if (S.live && S.live.role === 'viewer') { leaveLive(); return true; } toast('Tap End to finish your live'); return false; }
+  if (name === 'viewer') { closeViewer(); return true; }
+  if (name === 'over') {
+    clearInterval(S.gpoll); clearInterval(S.poll); S.openThread = null; stopRecCancel(); S.reply = null; S.editM = null;
+    if (S.ovStack.length > 1) {
+      S.ovStack.pop(); const top = S.ovStack[S.ovStack.length - 1]; S.g = null; S.prof = null; S.navBack = true;
+      try { top.fn(); } catch (e) {} finally { S.navBack = false; }
+      return true;
+    }
+    legacyBack(); return true;
+  }
+  if (name === 'tab') { S.tab = 'home'; render(); refresh(); return true; }
+  return true;
+}
+function syncHist() {
+  if (!S.user) return;
+  if (!$('#over').innerHTML.trim()) S.ovStack.length = 0;
+  const d = layers().length;
+  if (d > H.n) { for (let i = H.n; i < d; i++) history.pushState({ k: 'l' }, ''); H.n = d; }
+  else if (d < H.n) { const diff = H.n - d; H.n = d; H.ignore++; history.go(-diff); }
+}
+function exitBack() {
+  const now = Date.now();
+  if (now - H.last < 2200) { history.back(); return; }
+  H.last = now; toast('Press back again to exit'); history.pushState({ k: 'guard' }, '');
+}
+window.addEventListener('popstate', () => {
+  if (H.ignore > 0) { H.ignore--; return; }
+  if (!S.user) return;
+  const L = layers();
+  if (L.length) { H.n = Math.max(0, H.n - 1); if (!closeTop(L[0])) { history.pushState({ k: 'l' }, ''); H.n++; } setTimeout(syncHist, 0); return; }
+  const k = history.state && history.state.k;
+  if (!k || k === 'base') exitBack(); else history.back();
+});
+(function () {
+  const st = history.state && history.state.k;
+  if (st === 'guard') { /* page was refreshed: keep the stack */ }
+  else if (st === 'l') history.replaceState({ k: 'guard' }, '');
+  else { history.replaceState({ k: 'base' }, ''); history.pushState({ k: 'guard' }, ''); }
+  const hq = () => setTimeout(syncHist, 0);
+  ['sheet', 'viewer', 'story', 'call', 'live'].forEach(id => { const e = document.getElementById(id); if (e) new MutationObserver(hq).observe(e, { attributes: true, attributeFilter: ['class'] }); });
+  new MutationObserver(hq).observe(document.getElementById('over'), { childList: true });
+  new MutationObserver(hq).observe(document.getElementById('app'), { childList: true });
+  ['openThread', 'openUser', 'openPost', 'openGroup', 'openGroups', 'openEvents', 'openSaved', 'openBlocked', 'openWallet', 'openSearch', 'openSettings', 'openFollowList', 'openStoryComposer', 'openMyLives'].forEach(name => {
+    const f = window[name]; if (typeof f !== 'function') return;
+    window[name] = function () {
+      const args = [].slice.call(arguments), sig = name + JSON.stringify(args.filter(a => typeof a !== 'object'));
+      if (!S.navBack && S.user) { const top = S.ovStack[S.ovStack.length - 1]; if (!top || top.sig !== sig) S.ovStack.push({ sig, name, args, fn: () => f.apply(null, args) }); }
+      return f.apply(this, arguments);
+    };
+  });
+  const save = () => {
+    try {
+      const top = S.ovStack[S.ovStack.length - 1], pre = top && ({ openUser: '#u=', openThread: '#c=', openPost: '#p=', openGroup: '#g=' })[top.name];
+      const route = pre && typeof top.args[0] === 'string' ? pre + top.args[0] : '';
+      if (S.user) localStorage.setItem('kihelp.view', JSON.stringify({ tab: S.tab, route, sc: ($('#main') || {}).scrollTop || 0, t: Date.now() }));
+    } catch (e) {}
+  };
+  window.addEventListener('pagehide', save);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') save(); });
+  try {
+    const v = JSON.parse(localStorage.getItem('kihelp.view') || 'null');
+    if (v && Date.now() - v.t < 3600000 && !location.hash) { S.restoreTab = v.tab; S.restoreScroll = v.sc || 0; if (v.route) S.pendingRoute = v.route; }
+  } catch (e) {}
+})();
+
+/* ---------- see more, post frame, suggested people ---------- */
+let clampQ = 0;
+function fitClamps() {
+  document.querySelectorAll('.clamp:not(.open)').forEach(el => {
+    if (el.nextElementSibling && el.nextElementSibling.classList.contains('seemore')) return;
+    if (el.scrollHeight > el.clientHeight + 2) { const b = document.createElement('button'); b.className = 'seemore'; b.setAttribute('data-a', 'xpand'); b.textContent = 'See more'; el.insertAdjacentElement('afterend', b); }
+  });
+}
+new MutationObserver(() => { cancelAnimationFrame(clampQ); clampQ = requestAnimationFrame(fitClamps); }).observe(document.getElementById('app'), { childList: true, subtree: true });
+function setPostRatio(t) {
+  const car = t.closest && t.closest('.pcar'); if (!car || car.dataset.ar) return;
+  const first = car.querySelector('.pit'); if (!first || !first.contains(t)) return;
+  const w = t.naturalWidth || t.videoWidth, h = t.naturalHeight || t.videoHeight; if (!w || !h) return;
+  car.style.setProperty('--ar', Math.min(1.91, Math.max(0.8, w / h)).toFixed(3)); car.dataset.ar = '1';
+}
+document.addEventListener('load', e => { if (e.target && e.target.tagName === 'IMG') setPostRatio(e.target); }, true);
+document.addEventListener('loadedmetadata', e => { if (e.target && e.target.tagName === 'VIDEO') setPostRatio(e.target); }, true);
+async function loadSuggest() {
+  const { data, error } = await sb.rpc('suggest_people', { p_limit: 15 }); if (error) throw error;
+  S.suggest = data || []; S.suggest.forEach(p => { S.pf[p.id] = Object.assign({}, S.pf[p.id], p); });
+}
+function suggestStrip() {
+  if (S.hideSuggest || !S.suggest) return '';
+  const cards = S.suggest.filter(p => !S.following.has(p.id)).slice(0, 12).map(p => `<div class="sgcard"><button class="sgx" data-a="sgdismiss" data-id="${p.id}" aria-label="Hide">${I.x}</button><button class="sgav" data-a="user" data-id="${p.id}">${avOf(p.id, 64)}</button><b>${esc(p.display_name || 'Member')}</b><small>${Number(p.mutual) > 0 ? p.mutual + ' mutual' : p.username ? '@' + esc(p.username) : 'Suggested'}</small><button class="btn sm2 fbtn" data-a="qfollow" data-id="${p.id}">Follow</button></div>`).join('');
+  return cards ? `<div class="sgstrip"><div class="sgh"><h3 class="sub" style="padding:0">Suggested for you</h3><button class="chip" data-a="sgall">See all</button></div><div class="vrail">${cards}</div></div>` : '';
+}
+async function paintSuggestList() {
+  const box = $('#pres'); if (!box) return;
+  try { if (!S.suggest) await loadSuggest(); } catch (e) { return; }
+  const list = (S.suggest || []).filter(p => !S.following.has(p.id)); if (!$('#pres') || !list.length || ($('#ps') && $('#ps').value.trim())) return;
+  $('#pres').innerHTML = `<h3 class="sub">Suggested for you</h3>` + list.map(p => `<div class="reqrow"><button data-a="user" data-id="${p.id}" style="display:flex;gap:10px;align-items:center;flex:1;min-width:0">${avOf(p.id, 46)}<span class="tx"><b>${esc(p.display_name || 'Member')}</b><span class="ls" style="display:block">${p.username ? '@' + esc(p.username) : ''}${Number(p.mutual) > 0 ? ' · ' + p.mutual + ' mutual' : ''}</span></span></button><button class="btn sm2 fbtn" data-a="qfollow" data-id="${p.id}">Follow</button></div>`).join('');
+}
+
+/* ---------- saving lives and looking after them ---------- */
+function startReplayRecording(L) {
+  if (!L.save || !window.MediaRecorder || !L.tracks || !L.tracks[0] || !L.tracks[1]) return;
+  const mime = ['video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'].find(m => MediaRecorder.isTypeSupported(m)); if (!mime) return;
+  const R = L.rec = { mime, ext: mime.indexOf('mp4') >= 0 ? 'mp4' : 'webm', n: 0, ok: 0, stop: false, queue: Promise.resolve() };
+  let stream; try { stream = new MediaStream([L.tracks[0].getMediaStreamTrack(), L.tracks[1].getMediaStreamTrack()]); } catch (e) { L.rec = null; return; }
+  const part = () => {
+    if (R.stop) return;
+    let mr; try { mr = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: S.saver ? 450000 : 800000, audioBitsPerSecond: 64000 }); } catch (e) { return; }
+    const chunks = []; R.cur = mr;
+    mr.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+    mr.onstop = () => { const idx = R.n++, blob = new Blob(chunks, { type: mime.split(';')[0] }); if (blob.size > 1000) R.queue = R.queue.then(() => uploadReplayPart(L, idx, blob)).catch(() => {}); if (!R.stop) part(); };
+    try { mr.start(); } catch (e) { return; }
+    R.timer = setTimeout(() => { try { if (mr.state !== 'inactive') mr.stop(); } catch (e) {} }, 60000);
+  };
+  part();
+}
+async function uploadReplayPart(L, idx, blob) {
+  const R = L.rec; if (!R) return; const path = `${S.user.id}/live/${L.id}/${idx}.${R.ext}`;
+  for (let a = 0; a < 3; a++) {
+    const { error } = await sb.storage.from('media').upload(path, blob, { contentType: blob.type, cacheControl: '31536000' });
+    if (!error || /exist|duplicate/i.test(error.message || '')) { R.ok = Math.max(R.ok, idx + 1); return; }
+    await new Promise(r => setTimeout(r, 1500 * (a + 1)));
+  }
+}
+async function finishReplayRecording(L) {
+  const R = L.rec; if (!R) return 0; R.stop = true; clearTimeout(R.timer);
+  await new Promise(res => {
+    const mr = R.cur;
+    if (mr && mr.state !== 'inactive') { const prev = mr.onstop; mr.onstop = () => { try { prev(); } catch (e) {} res(); }; try { mr.stop(); } catch (e) { res(); } } else res();
+  });
+  await R.queue.catch(() => {});
+  if (R.ok > 0) await sb.rpc('save_live_replay', { p_stream: L.id, p_parts: R.ok, p_ext: R.ext, p_seconds: Math.floor((Date.now() - L.started) / 1000) });
+  return R.ok;
+}
+const replayUrl = (s, i) => `${SUPA_URL}/storage/v1/object/public/media/${s.host_id}/live/${s.id}/${i}.${s.replay_ext}`;
+const mmss = n => Math.floor(n / 60) + ':' + String(n % 60).padStart(2, '0');
+async function openMyLives() {
+  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button><b class="ttl">My lives</b></header><div class="setbody" id="mlbody"><div class="empty" style="padding:40px">Loading...</div></div></div>`;
+  const { data, error } = await sb.from('live_streams').select('id,host_id,title,started_at,ended_at,peak_viewers,replay_parts,replay_ext,replay_seconds,replay_public,status').eq('host_id', S.user.id).order('started_at', { ascending: false }).limit(50);
+  const b = $('#mlbody'); if (!b) return;
+  if (error) { b.innerHTML = '<div class="empty" style="padding:40px">Could not load your lives.</div>'; return; }
+  S.myLives = data || [];
+  b.innerHTML = S.myLives.length ? `<p class="ls" style="padding:12px 16px">Lives you saved stay here. You can watch them, share them to your profile, or delete them anytime.</p>` + S.myLives.map(s => {
+    const secs = s.replay_seconds || (s.ended_at ? Math.max(0, Math.floor((new Date(s.ended_at) - new Date(s.started_at)) / 1000)) : 0);
+    return `<button class="evrow" data-a="lvrow" data-id="${s.id}"><span class="evd"><b>${new Date(s.started_at).getDate()}</b><small>${esc(new Date(s.started_at).toLocaleString([], { month: 'short' }))}</small></span><span class="tx"><b>${esc(s.title || 'Live')}</b><span class="l">${mmss(secs)} · up to ${s.peak_viewers} watching</span></span><span class="pbadge">${s.status === 'live' ? 'Live now' : s.replay_parts > 0 ? (s.replay_public ? 'Shared' : 'Saved') : 'No copy'}</span></button>`;
+  }).join('') : '<div class="empty" style="padding:50px 24px">No lives yet.<br>Tap Create, then Go live.</div>';
+}
+function openReplay(s) {
+  S.viewer = { items: [], idx: 0, dl: false }; const v = $('#viewer');
+  v.innerHTML = `<div class="vwtop"><button class="vwb" data-a="vclose" aria-label="Close">${I.x}</button><span id="rpn">Part 1 / ${s.replay_parts}</span><span style="width:44px"></span></div><div class="vwrail" style="display:grid;place-items:center"><video id="rpv" controls autoplay playsinline style="max-width:100%;max-height:100%"></video></div>`;
+  v.classList.add('open'); let i = 0; const el = $('#rpv');
+  const play = () => { el.src = replayUrl(s, i); el.play().catch(() => {}); const n = $('#rpn'); if (n) n.textContent = 'Part ' + (i + 1) + ' / ' + s.replay_parts; };
+  const next = () => { if (i < s.replay_parts - 1) { i++; play(); } };
+  el.onended = next; el.onerror = next; play();
+}
+async function wipeReplayFiles(s) {
+  const paths = []; for (let i = 0; i < (s.replay_parts || 0); i++) paths.push(`${S.user.id}/live/${s.id}/${i}.${s.replay_ext}`);
+  for (let k = 0; k < paths.length; k += 50) { try { await sb.storage.from('media').remove(paths.slice(k, k + 50)); } catch (e) {} }
+}
 
 async function boot() {
   const hm = location.hash.match(/^#v=([0-9a-f-]{36})$/i); if (hm) S.focusVideo = hm[1];
