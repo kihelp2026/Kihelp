@@ -356,7 +356,7 @@ function head() {
   const act = t === 'video' ? `<button class="hbtn" data-a="vupload">${I.plus}<span class="hl">${tr('video')}</span></button>`
     : t === 'market' ? `<button class="hbtn" data-a="sell">${I.plus}<span class="hl">${tr('sell')}</span></button>` : '';
   const left = home ? '<div class="brand"></div>' : `<div class="brand"><div class="ttl2">${title}</div></div>`;
-  const prof = home ? `<button class="hav" data-a="tab" data-id="me" aria-label="Profile">${avOf(S.user.id, 34)}</button>` : '';
+  const prof = home && S.user ? `<button class="hav" data-a="tab" data-id="me" aria-label="Profile">${avOf(S.user.id, 34)}</button>` : '';
   const gear = t === 'me' ? `<button class="ibtn" data-a="settings" aria-label="${tr('settings')}">${I.sliders}</button>` : '';
   return `${left}<div class="hr">${act}<button class="ibtn" data-a="search" aria-label="Search people">${I.search}</button><button class="ibtn" data-a="alerts" aria-label="${tr('alerts')}">${I.bell}</button>${gear}${prof}</div>`;
 }
