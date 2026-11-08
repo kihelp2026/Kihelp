@@ -58,7 +58,8 @@ const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { ret
 try { Object.assign(S, JSON.parse(store.get('kihelp.settings') || '{}')); } catch (e) {}
 if (S.mode !== 'light' && S.mode !== 'dark') S.mode = (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
 S.xp = new Set(); S.ovStack = []; S.suggest = null; S.navBack = false;
-const saveSettings = () => store.set('kihelp.settings', JSON.stringify({ mode: S.mode, accent: S.accent, saver: S.saver, lang: S.lang }));
+const saveSettings = () => store.set('kihelp.settings', JSON.stringify({ mode: S.mode, accent: S.accent, saver: S.saver, lang: S.lang, tlang: S.tlang, defVis: S.defVis, defComments: S.defComments, defRx: S.defRx }));
+S.txon = new Set(); S.txout = {}; S.txsrc = {};
 
 const LANGS = {
   en: { name: 'English', home: 'Home', chat: 'Chat', videos: 'Videos', video: 'Video', market: 'Market', alerts: 'Alerts', profile: 'Profile', social: 'Social', chats: 'Chats', marketplace: 'Marketplace', post: 'Post', mind: "What's on your mind?", sell: 'Sell', settings: 'Settings', appearance: 'Appearance', mode: 'Mode', system: 'System', light: 'Light', dark: 'Dark', accent: 'Accent color', auto: 'Auto', data: 'Data and storage', saver: 'Data saver', saverDesc: 'Photos and videos load only when you tap them', storage: 'Storage used', clear: 'Clear cache', cleared: 'Cache cleared', language: 'Language', search: 'Search items', mine: 'Your listings', account: 'Account', logout: 'Log out' },
@@ -85,16 +86,18 @@ const smedia = (m, cls, key) => (S.saver && !S.loaded.has(key))
 async function loadProfiles(ids) {
   ids = [...new Set(ids)].filter(i => i && !S.pf[i]);
   if (!ids.length) return;
-  const { data } = await sb.from('profiles').select('id,display_name,username,country,bio,avatar_url').in('id', ids);
+  const { data } = await sb.from('profiles').select('id,display_name,username,country,bio,avatar_url,banner_url,links').in('id', ids);
   (data || []).forEach(p => S.pf[p.id] = p);
 }
 const RX = { love: '❤️', like: '👍', haha: '😂', wow: '😮', sad: '😢', angry: '😡' };
+const RXLIST = ['❤️', '👍', '🔥', '😂', '😮', '😢', '😡', '🙏', '👏', '🎉', '🤔', '💯', '😍', '🤩', '👎', '💔', '🥰', '😎', '🤣', '😭'];
+const RXLEG = { love: '❤️', like: '👍', haha: '😂', wow: '😮', sad: '😢', angry: '😡' };
 function rxOf(list) {
   const rxs = {}; let mine = null;
-  list.forEach(l => { const r = RX[l.reaction] ? l.reaction : 'love'; rxs[r] = (rxs[r] || 0) + 1; if (l.user_id === S.user.id) mine = r; });
+  list.forEach(l => { const e = RXLEG[l.reaction] || l.reaction || '❤️'; rxs[e] = (rxs[e] || 0) + 1; if (l.user_id === S.user.id) mine = e; });
   return { rxs, react: mine, liked: !!mine, likes: list.length };
 }
-const POSTCOLS = 'id,user_id,content,created_at,media_url,media_type,visibility,pinned_at,allow_download,edited_at';
+const POSTCOLS = 'id,user_id,content,created_at,media_url,media_type,visibility,pinned_at,allow_download,edited_at,allowed_reactions,comments_enabled,repost_of';
 async function hydratePosts(posts) {
   const ids = posts.map(p => p.id);
   let likes = [], cms = [], pm = [];
@@ -107,17 +110,30 @@ async function hydratePosts(posts) {
     likes = l.data || []; cms = c.data || []; pm = m.data || [];
   }
   await loadProfiles([...posts.map(p => p.user_id), ...cms.map(c => c.user_id)]);
-  return posts.map(p => {
-    let media = pm.filter(x => x.post_id === p.id && safeUrl(x.url)).map(x => ({ type: x.type === 'video' ? 'video' : 'image', url: x.url }));
+  const mediaOf = (p, rows) => {
+    let media = (rows || []).filter(x => x.post_id === p.id && safeUrl(x.url)).map(x => ({ type: x.type === 'video' ? 'video' : 'image', url: x.url }));
     if (!media.length && safeUrl(p.media_url)) media = [{ type: p.media_type === 'video' ? 'video' : 'image', url: p.media_url }];
-    return {
-      id: p.id, uid: p.user_id, t: ago(p.created_at), text: p.content, media,
-      adl: !!p.allow_download, dl: !!p.allow_download || p.user_id === S.user.id, ed: !!p.edited_at,
-      vis: p.visibility || 'public', pin: !!p.pinned_at,
-      ...rxOf(likes.filter(l => l.post_id === p.id)),
-      cm: cms.filter(c => c.post_id === p.id).map(c => ({ id: c.id, uid: c.user_id, w: nameOf(c.user_id), t: c.content, pid: c.parent_id, ed: !!c.edited_at, at: c.created_at }))
-    };
-  });
+    return media;
+  };
+  const out = posts.map(p => ({
+    id: p.id, uid: p.user_id, t: ago(p.created_at), text: p.content, media: mediaOf(p, pm),
+    adl: !!p.allow_download, dl: !!p.allow_download || p.user_id === S.user.id, ed: !!p.edited_at,
+    allowed: p.allowed_reactions || null, cmOn: p.comments_enabled !== false, repostOf: p.repost_of || null,
+    vis: p.visibility || 'public', pin: !!p.pinned_at,
+    ...rxOf(likes.filter(l => l.post_id === p.id)),
+    cm: cms.filter(c => c.post_id === p.id).map(c => ({ id: c.id, uid: c.user_id, w: nameOf(c.user_id), t: c.content, pid: c.parent_id, ed: !!c.edited_at, at: c.created_at }))
+  }));
+  const rids = [...new Set(posts.map(p => p.repost_of).filter(Boolean))];
+  if (rids.length) {
+    try {
+      const { data: od } = await sb.from('posts').select(POSTCOLS).in('id', rids);
+      const { data: om2 } = await sb.from('post_media').select('post_id,url,type,position').in('post_id', rids).order('position', { ascending: true });
+      await loadProfiles((od || []).map(o => o.user_id));
+      const map = {}; (od || []).forEach(o => { map[o.id] = { id: o.id, uid: o.user_id, text: o.content, media: mediaOf(o, om2) }; });
+      out.forEach(p => { if (p.repostOf) p.orig = map[p.repostOf] || null; });
+    } catch (e) {}
+  }
+  return out;
 }
 async function loadFeed() {
   const { data, error } = await sb.from('posts').select(POSTCOLS).order('created_at', { ascending: false }).limit(40);
@@ -353,8 +369,7 @@ const gate = () => {
 function head() {
   const t = S.tab, home = t === 'home';
   const title = tr({ home: 'social', video: 'videos', chat: 'chats', market: 'marketplace', alerts: 'alerts', me: 'profile' }[t]);
-  const act = t === 'video' ? `<button class="hbtn" data-a="vupload">${I.plus}<span class="hl">${tr('video')}</span></button>`
-    : t === 'market' ? `<button class="hbtn" data-a="sell">${I.plus}<span class="hl">${tr('sell')}</span></button>` : '';
+  const act = '';
   const left = home ? '<div class="brand"></div>' : `<div class="brand"><div class="ttl2">${title}</div></div>`;
   const prof = home && S.user ? `<button class="hav" data-a="tab" data-id="me" aria-label="Profile">${avOf(S.user.id, 34)}</button>` : '';
   const gear = t === 'me' ? `<button class="ibtn" data-a="settings" aria-label="${tr('settings')}">${I.sliders}</button>` : '';
@@ -383,44 +398,49 @@ function commentsHTML(p) {
   const top = p.cm.filter(c => !c.pid), kids = c => p.cm.filter(x => x.pid === c.id);
   const row = (c, sub) => (S.editC && S.editC.id === c.id)
     ? `<div class="cmt${sub ? ' sub' : ''}"><input id="ec${c.id}" value="${esc(c.t)}" maxlength="1000"><div class="crow"><button class="btn sm2" data-a="csave" data-id="${c.id}" data-p="${p.id}">Save</button><button class="btn alt sm2" data-a="ccancel">Cancel</button></div></div>`
-    : `<div class="cmt${sub ? ' sub' : ''}"><b>${esc(c.w)}</b>${fmtText(c.t)}${c.ed ? ' <small class="ls">(edited)</small>' : ''}
+    : `<div class="cmt${sub ? ' sub' : ''}"><b>${esc(c.w)}</b>${fmtText(txShow('c' + c.id, c.t))}${txLink('c' + c.id, c.t)}${c.ed ? ' <small class="ls">(edited)</small>' : ''}
       <div class="cact"><span class="ls">${ago(c.at)}</span><button data-a="creply" data-id="${c.id}" data-p="${p.id}">Reply</button>${c.uid === S.user.id ? `<button data-a="cedit" data-id="${c.id}">Edit</button><button data-a="cdel" data-id="${c.id}" data-p="${p.id}">Delete</button>` : `<button data-a="rep" data-t="comment" data-id="${c.id}" data-o="${c.uid}">Report</button>`}</div></div>`;
   return top.map(c => row(c, false) + kids(c).map(k => row(k, true)).join('')).join('');
 }
 const replyChip = p => S.replyC && S.replyC.p === p.id ? `<div class="rchip">Replying to <b>${esc(S.replyC.name)}</b><button data-a="creplyx" aria-label="Cancel reply">${I.x}</button></div>` : '';
 const fChip = id => (id !== S.user.id && !S.following.has(id)) ? `<button class="fchip" data-a="qfollow" data-id="${id}">Follow</button>` : '';
-function likeBtn(p) {
-  const emoji = p.react && p.react !== 'love' ? RX[p.react] : null;
-  const top = Object.entries(p.rxs).filter(([k, n]) => n > 0 && k !== 'love').sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => RX[k]).join('');
-  return `<button class="${p.liked ? 'on' : ''}" data-a="like" data-id="${p.id}" aria-label="React">${emoji ? `<span class="remo">${emoji}</span>` : I.heart}${top ? `<span class="rsum">${top}</span>` : ''}${p.likes}</button>`;
+function repostCard(p) {
+  if (!p.repostOf) return '';
+  const o = p.orig;
+  if (!o) return '<div class="rpbox gone">This post is not available.</div>';
+  const m = o.media && o.media[0];
+  return `<button class="rpbox" data-a="openpost" data-id="${o.id}"><span class="rph">${avOf(o.uid, 26)}<b>${esc(nameOf(o.uid))}</b></span>${o.text ? `<span class="rpt">${esc(o.text.slice(0, 300))}</span>` : ''}${m ? (m.type === 'image' ? `<img src="${esc(m.url)}" alt="" loading="lazy">` : '<span class="rpv">▶ Video</span>') : ''}</button>`;
 }
 function postCard(p) {
+  const rxs = Object.entries(p.rxs || {}).filter(e => e[1] > 0).sort((a, b) => b[1] - a[1]);
+  const chips = rxs.map(([e, n]) => `<button class="rxchip ${p.react === e ? 'on' : ''}" data-a="rxtap" data-id="${p.id}" data-e="${e}">${e}<span>${n}</span></button>`).join('');
+  const canReact = !p.allowed || p.allowed.length > 0, cmOn = p.cmOn !== false;
   return `<article class="post">
-    <div class="prow"><button class="ph-row" data-a="user" data-id="${p.uid}">${avOf(p.uid)}<div><b>${esc(nameOf(p.uid))}</b><small>${p.t}${p.ed ? ' · edited' : ''} · ${visIcon(p.vis)}</small></div></button>${fChip(p.uid)}${p.pin ? '<span class="pbadge">Pinned</span>' : ''}<span style="flex:1"></span><button class="ibtn" data-a="pmenu" data-id="${p.id}" aria-label="More options">${I.more}</button></div>
-    ${p.text ? `<p class="ptext clamp${S.xp.has('p' + p.id) ? ' open' : ''}" data-xk="p${p.id}" data-dt="pt" data-id="${p.id}">${fmtText(p.text)}</p>` : ''}
+    <div class="prow"><button class="ph-row" data-a="user" data-id="${p.uid}">${avOf(p.uid)}<div><b>${esc(nameOf(p.uid))}</b><small>${p.t}${p.ed ? ' · edited' : ''} · ${visIcon(p.vis)}${p.repostOf ? ' · 🔁 reposted' : ''}</small></div></button>${fChip(p.uid)}${p.pin ? '<span class="pbadge">Pinned</span>' : ''}<span style="flex:1"></span><button class="ibtn" data-a="pmenu" data-id="${p.id}" aria-label="More options">${I.more}</button></div>
+    ${p.text ? `<p class="ptext clamp${S.xp.has('p' + p.id) ? ' open' : ''}" data-xk="p${p.id}" data-dt="pt" data-id="${p.id}">${fmtText(txShow('p' + p.id, p.text))}</p>${txLink('p' + p.id, p.text)}` : ''}
+    ${repostCard(p)}
     ${mediaBlock(p)}
     <div class="acts">
-      ${likeBtn(p)}
-      <button data-a="cmt" data-id="${p.id}" aria-label="Comments">${I.cmt}${p.cm.length}</button>
+      <button class="${p.react === '❤️' ? 'on' : ''}" data-a="like" data-id="${p.id}" aria-label="Love">${I.heart}</button>
+      ${cmOn ? `<button data-a="cmt" data-id="${p.id}" aria-label="Comments">${I.cmt}${p.cm.length}</button>` : ''}
       <button data-a="share" data-id="${p.id}" aria-label="Share">${I.share}</button>
       <button class="sp ${S.savedPosts.has(p.id) ? 'on' : ''}" data-a="psave" data-id="${p.id}" aria-label="Save post">${I.save}</button>
     </div>
-    ${S.open.has(p.id) ? `<div class="cmts">${commentsHTML(p)}
-      ${replyChip(p)}
-      <div class="cin"><input id="ci${p.id}" data-mention placeholder="Write a comment" maxlength="1000"><button class="send" data-a="addcmt" data-id="${p.id}" aria-label="Send comment">${I.send}</button></div></div>` : ''}
+    ${chips || canReact ? `<div class="rxrow">${chips}${canReact ? `<button class="rxchip add" data-a="rxadd" data-id="${p.id}" aria-label="Add a reaction">☺<span>+</span></button>` : ''}</div>` : ''}
+    ${!cmOn ? '<div class="ls" style="padding:2px 16px 8px">Comments are turned off.</div>' : S.open.has(p.id) ? `<div class="cmts">${commentsHTML(p)}\n      ${replyChip(p)}\n      <div class="cin"><input id="ci${p.id}" data-mention placeholder="Write a comment" maxlength="1000"><button class="send" data-a="addcmt" data-id="${p.id}" aria-label="Send comment">${I.send}</button></div></div>` : ''}
   </article>`;
 }
 function viewHome() {
   if (gate()) return gate();
   const row = installBar() + notifBar() + composerBox() + quickRow() + storiesRow();
-  if (!S.posts.length) return row + `<div class="empty" style="padding:60px 24px">No posts yet.<br>Be the first. Tap <b>${tr('post')}</b> at the top.</div>` + videoStrip();
+  if (!S.posts.length) return row + `<div class="empty" style="padding:60px 24px">No posts yet.<br>Be the first. Share something in the box above.</div>` + videoStrip();
   const at = Math.min(2, S.posts.length - 1);
   return row + S.posts.map((p, i) => postCard(p) + (i === 0 ? suggestStrip() : '') + (i === at ? videoStrip() : '')).join('');
 }
 const vgridHTML = list => list.length ? `<div class="vgrid">${list.map(v => `<button data-a="watch" data-id="${v.id}" aria-label="Watch video">${S.saver ? `<div class="ph" style="--h:${hue(v.id)};width:100%;height:100%"></div>` : `<video src="${esc(v.video_url)}#t=0.1" muted playsinline preload="metadata"></video>`}<span>${Number(v.views) || 0} views</span></button>`).join('')}</div>` : '';
 function viewVideo() {
   if (gate()) return gate();
-  if (!S.videos.length) return `<div class="empty" style="padding:60px 24px;color:#fff">No videos yet.<br>Tap <b>${tr('video')}</b> at the top to post the first one.</div>`;
+  if (!S.videos.length) return `<div class="empty" style="padding:60px 24px;color:#fff">No videos yet.<br>Tap <b>+</b> below to post the first video.</div>`;
   return `<div class="vidfeed" id="vf" tabindex="0">${S.videos.map(v => {
     const p = S.pf[v.uid] || {};
     return `<section class="vid" data-vid="${v.id}">
@@ -462,7 +482,7 @@ function listingCard(l) {
 function gridHTML() {
   const q = S.q.trim().toLowerCase();
   const items = S.products.filter(l => (S.cat === 'All' || l.cat === S.cat) && (S.opt === 'all' || l.opt === S.opt) && (!q || l.title.toLowerCase().includes(q)));
-  if (!items.length) return `<div class="empty">${S.products.length ? 'No items match. Clear the filters.' : 'No items for sale yet. Tap Sell to add the first one.'}</div>`;
+  if (!items.length) return `<div class="empty">${S.products.length ? 'No items match. Clear the filters.' : 'No items for sale yet. Tap + below to sell the first item.'}</div>`;
   return items.map(listingCard).join('');
 }
 const optChips = () => [['all', 'Any price type'], ...Object.entries(OPT)].map(([k, v]) => `<button class="chip ${S.opt === k ? 'on' : ''}" data-a="opt" data-id="${k}">${v}</button>`).join('');
@@ -484,17 +504,14 @@ function viewAlerts() {
 function viewMe() {
   if (gate()) return gate();
   const p = S.profile || {}, mine = S.products.filter(l => l.sid === S.user.id);
-  return `<div class="prof"><button class="avbtn" data-a="avview" data-id="${S.user.id}" aria-label="View profile photo">${avOf(S.user.id)}</button><div><div class="big">${esc(p.display_name || 'Member')} <span class="vis" title="Public profile">${I.globe}</span></div><div class="ls">${p.username ? '@' + esc(p.username) + ' · ' : ''}${esc(p.country || '')}</div>${p.username ? '' : '<div class="ls">Add a username in Edit profile</div>'}</div></div>
-    ${p.bio ? `<p style="padding:0 16px 10px">${esc(p.bio)}</p>` : ''}
+  return `${bannerHTML(p)}<div class="prof"><button class="avbtn" data-a="avview" data-id="${S.user.id}" aria-label="View profile photo">${avOf(S.user.id)}</button><div><div class="big">${esc(p.display_name || 'Member')} <span class="vis" title="Public profile">${I.globe}</span></div><div class="ls">${p.username ? '@' + esc(p.username) + ' · ' : ''}${esc(p.country || '')}</div>${p.username ? '' : '<div class="ls">Add a username in Edit profile</div>'}</div></div>
+    ${p.bio ? `<p style="padding:0 16px 10px;white-space:pre-wrap">${esc(p.bio)}</p>` : ''}${linksHTML(p)}
     <div class="stats"><div><b>${S.me.videos}</b><span>Videos</span></div><button data-a="flist" data-id="${S.user.id}" data-k="followers"><b>${S.me.followers}</b><span>Followers</span></button><button data-a="flist" data-id="${S.user.id}" data-k="following"><b>${S.me.following}</b><span>Following</span></button><div><b>${S.me.posts}</b><span>Posts</span></div></div>
     <div style="padding:0 16px 8px;display:grid;grid-template-columns:1fr 1fr;gap:10px"><button class="btn alt" data-a="editprofile">Edit profile</button><button class="btn alt" data-a="opensaved">Saved posts</button></div>
     <div style="padding:0 16px 8px;display:grid;grid-template-columns:1fr 1fr;gap:10px"><button class="btn alt" data-a="invite">Invite friends</button><button class="btn alt" data-a="accounts">Switch account</button></div>
     <div style="padding:0 16px 8px"><button class="btn alt" data-a="wallet">🪙 Wallet and gifts</button></div>
     <div style="padding:0 16px 8px"><button class="btn alt" data-a="mylives">🔴 My lives</button></div>
-    <h3 class="sub">${tr('videos')}</h3>
-    ${S.myVideos.length ? vgridHTML(S.myVideos) : `<div class="empty" style="padding:20px 16px">No videos yet. Open Videos and tap Video.</div>`}
-    <h3 class="sub">Posts</h3>
-    ${S.myPosts.length ? S.myPosts.map(postCard).join('') : `<div class="empty" style="padding:20px 16px">No posts yet.</div>`}
+    ${meTabs()}
     <h3 class="sub">${tr('mine')}</h3>
     ${mine.length ? `<div class="grid">${mine.map(listingCard).join('')}</div>` : `<div class="empty" style="padding:20px 16px">Nothing for sale yet. Tap Market, then Sell.</div>`}`;
 }
@@ -828,14 +845,13 @@ function paintProfile() {
     }
   }
   const all = [...P.pinned, ...P.posts];
-  b.innerHTML = `<div class="pcenter"><button class="avbtn" data-a="avview" data-id="${id}" aria-label="View profile photo">${avOf(id, 88)}</button><div class="big" style="margin-top:10px">${esc(pr.display_name || 'Member')} <span class="vis" title="Public profile">${I.globe}</span></div>
+  b.innerHTML = `${bannerHTML(pr)}<div class="pcenter"><button class="avbtn" data-a="avview" data-id="${id}" aria-label="View profile photo">${avOf(id, 88)}</button><div class="big" style="margin-top:10px">${esc(pr.display_name || 'Member')} <span class="vis" title="Public profile">${I.globe}</span></div>
       <div class="ls">${pr.username ? '@' + esc(pr.username) : ''}${pr.country ? (pr.username ? ' · ' : '') + esc(pr.country) : ''}</div>
-      ${pr.bio ? `<p style="margin-top:10px;white-space:pre-wrap">${esc(pr.bio)}</p>` : ''}</div>
+      ${pr.bio ? `<p style="margin-top:10px;white-space:pre-wrap">${esc(pr.bio)}</p>` : ''}${linksHTML(pr)}</div>
     <div class="stats" style="justify-content:center"><div><b>${P.postsN}</b><span>Posts</span></div><button data-a="flist" data-id="${id}" data-k="followers"><b>${P.followers}</b><span>Followers</span></button><button data-a="flist" data-id="${id}" data-k="following"><b>${P.followingN}</b><span>Following</span></button></div>
     ${acts}
-    ${P.vids.length ? `<h3 class="sub">${tr('videos')}</h3>${vgridHTML(P.vids)}` : ''}
-    <h3 class="sub">Posts</h3>
-    <div id="pposts">${P.loading ? '<div class="empty" style="padding:30px">Loading...</div>' : all.length ? all.map(postCard).join('') : `<div class="empty" style="padding:30px 20px">${P.blocked ? '' : 'No posts to show.'}</div>`}</div>
+    ${ptabs(P.tab || 'posts')}
+    <div id="pposts">${P.loading ? '<div class="empty" style="padding:30px">Loading...</div>' : all.length ? (P.tab === 'photos' ? mediaGrid(all, 'image') : P.tab === 'videos' ? vgridHTML(P.vids) + mediaGrid(all, 'video') : all.map(postCard).join('')) : `<div class="empty" style="padding:30px 20px">${P.blocked ? '' : 'No posts to show.'}</div>`}</div>
     ${P.more && !P.loading ? `<div style="padding:12px 16px"><button class="btn alt" data-a="pmore" data-id="${id}">Load more</button></div>` : ''}`;
   b.scrollTop = top;
 }
@@ -901,7 +917,7 @@ function bubble(x, t) {
   if (x.fwd) inner += '<div class="fwd">Forwarded</div>';
   if (x.media) inner += mediaBubble(x.media);
   if (sm) inner += `<button class="sharecardb" data-a="openshared" data-k="${sm[1].toLowerCase()}" data-id="${sm[2]}"><span><b>${shareLabel(sm[1])}</b><br><small>Tap to open</small></span></button>`;
-  else if (x.t) inner += `<div class="bt clamp${S.xp.has('m' + x.id) ? ' open' : ''}" data-xk="m${x.id}">${fmtText(x.t)}</div>`;
+  else if (x.t) inner += `<div class="bt clamp${S.xp.has('m' + x.id) ? ' open' : ''}" data-xk="m${x.id}">${fmtText(txShow('m' + x.id, x.t))}</div>${txLink('m' + x.id, x.t)}`;
   const core = `<div class="${cls}"${x.id ? ` data-a="mmenu" data-id="${x.id}"` : ''}>${inner}<small class="meta">${x.ed ? 'edited · ' : ''}${hm(x.at)}</small></div>`;
   if (x.me || !t) return core;
   return `<div class="mrow">${avOf(t.id, 30)}<div class="mcol"><div class="gn">${esc(nameOf(t.id))}</div>${core}</div></div>`;
@@ -952,6 +968,7 @@ function singleTap(d) {
   const k = d.dataset.dt;
   if (k === 'p') { const p = findPost(d.dataset.id); if (p) openViewer(p.media, +d.dataset.i || 0, p.dl); }
   else if (k === 'v') { const v = document.querySelector(`video[data-vid="${d.dataset.id}"]`); if (v) ACT.vtoggle(d.dataset.id, v); }
+  else if (k === 'pt') { const sm = d.nextElementSibling; if (sm && sm.classList && sm.classList.contains('seemore')) sm.click(); }
 }
 document.addEventListener('scroll', e => {
   const t = e.target; if (!t || !t.classList) return;
@@ -975,6 +992,7 @@ async function openShare(kind, id) {
   S.share = { kind, id };
   const fw = kind === 'msg', gi = kind === 'group', gs = kind === 'post' || kind === 'video';
   sheet(`<h2>${fw ? 'Forward to' : gi ? 'Invite to group' : 'Share'}</h2>
+    ${kind === 'post' ? `<button class="optrow" data-a="repost" data-id="${id}">🔁 Repost to my profile</button>` : ''}
     ${fw ? '' : `<button class="optrow" data-a="shext">${gi ? 'Share link outside KiHelp' : 'Share outside KiHelp'} ${I.share}</button>
     <div class="lbl" style="padding:14px 4px 6px">Send to someone on KiHelp</div>`}
     <input id="shq" placeholder="Search name or @username" maxlength="60" autocomplete="off">
@@ -1059,6 +1077,7 @@ function bindMulti() {
 
 /* ---------- reactions, follow lists ---------- */
 async function setReaction(p, r) {
+  if (r && p.allowed && !p.allowed.includes(r)) return toast('That reaction is not allowed on this post');
   const snap = { react: p.react, liked: p.liked, likes: p.likes, rxs: { ...p.rxs } }, prev = p.react;
   if (prev) p.rxs[prev] = Math.max(0, (p.rxs[prev] || 0) - 1);
   if (r) p.rxs[r] = (p.rxs[r] || 0) + 1;
@@ -1071,21 +1090,29 @@ async function setReaction(p, r) {
 }
 function showReactBar(btn) {
   const old = $('#rxbar'); if (old) old.remove();
-  const id = btn.dataset.id, r = btn.getBoundingClientRect();
-  const bar = document.createElement('div'); bar.id = 'rxbar'; bar.className = 'rxbar';
-  bar.innerHTML = Object.entries(RX).map(([k, e]) => `<button data-a="react" data-id="${id}" data-r="${k}" aria-label="${k}">${e}</button>`).join('');
+  const id = btn.dataset.id, p = findPost(id), list = RXLIST.filter(e => !p || !p.allowed || p.allowed.includes(e));
+  if (!list.length) return toast('Reactions are turned off for this post');
+  const r = btn.getBoundingClientRect(), bar = document.createElement('div'); bar.id = 'rxbar'; bar.className = 'rxbar';
+  bar.innerHTML = list.map(e => `<button data-a="react" data-id="${id}" data-r="${e}" aria-label="${e}">${e}</button>`).join('');
   document.body.appendChild(bar);
-  const w = bar.offsetWidth;
-  bar.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.left)) + 'px';
-  bar.style.top = Math.max(8, r.top - bar.offsetHeight - 8) + 'px';
+  const w = bar.offsetWidth; bar.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.left)) + 'px'; bar.style.top = Math.max(8, r.top - bar.offsetHeight - 8) + 'px';
+}
+async function rxWho(id, emoji) {
+  const { data } = await sb.from('post_likes').select('user_id').eq('post_id', +id).eq('reaction', emoji).limit(100);
+  const ids = (data || []).map(x => x.user_id); await loadProfiles(ids);
+  sheet(`<h2>${emoji} ${ids.length}</h2>${ids.length ? ids.map(u => `<div class="reqrow" style="padding-inline:0">${avOf(u, 40)}<div class="tx"><b>${esc(nameOf(u))}</b></div></div>`).join('') : '<div class="ls">No one yet.</div>'}`);
 }
 document.addEventListener('pointerdown', e => {
-  const b = e.target.closest('[data-a="like"]'); if (!b) return;
+  const b = e.target.closest('[data-a="like"],[data-a="rxtap"]'); if (!b) return;
   S.lpFired = false; clearTimeout(S.lpT);
-  S.lpT = setTimeout(() => { S.lpFired = true; showReactBar(b); }, 450);
+  S.lpT = setTimeout(() => { S.lpFired = true; if (b.dataset.a === 'like') showReactBar(b); else rxWho(b.dataset.id, b.dataset.e); }, 450);
 });
 ['pointerup', 'pointercancel', 'scroll'].forEach(ev => document.addEventListener(ev, () => clearTimeout(S.lpT), true));
-document.addEventListener('contextmenu', e => { if (e.target.closest('[data-a="like"]')) e.preventDefault(); });
+document.addEventListener('contextmenu', e => { if (e.target.closest('[data-a="like"],[data-a="rxtap"]')) e.preventDefault(); });
+function paintRxEdit() {
+  const E = S.rxEdit; if (!E) return;
+  sheet(`<h2>Allowed reactions</h2><p class="ls" style="margin-bottom:8px">People can only react with the emojis you pick.</p><div class="rxpick">${RXLIST.map(e => `<button class="${E.sel.has(e) ? 'on' : ''}" data-a="rxsel" data-e="${e}">${e}</button>`).join('')}</div><div class="dots" style="margin:12px 0"><button class="chip" data-a="rxall">All</button><button class="chip" data-a="rxnone">None</button></div><button class="btn" data-a="rxsave">Save</button>`);
+}
 
 function syncFollowUI(id) {
   const f = S.following.has(id);
@@ -1332,7 +1359,7 @@ function editImage(file, opts) {
 
 /* ---------- groups and events ---------- */
 const composerBox = () => `<button class="composer" data-a="newpost">${avOf(S.user.id, 40)}<span class="cp">${esc(tr('mind'))}</span></button>`;
-const quickRow = () => `<div class="quick"><button class="chip" data-a="groups">👥 Groups</button><button class="chip" data-a="events">📅 Events</button><button class="chip" data-a="golive">🔴 Go live</button></div>`;
+const quickRow = () => `<div class="quick"><button class="chip" data-a="groups">👥 Groups</button><button class="chip" data-a="events">📅 Events</button></div>`;
 const gav = (g, size) => av(g.name, g.id, size, safeUrl(g.avatar_url));
 const privIcon = p => `<span class="vis" title="${p === 'private' ? 'Private' : 'Public'}">${p === 'private' ? I.lock : I.globe}</span>`;
 const GCOLS = 'id,name,description,avatar_url,privacy,owner_id,created_at';
@@ -1394,6 +1421,7 @@ document.addEventListener('input', e => {
     box.innerHTML = list.length ? list.map(p => `<div class="reqrow" style="padding-inline:0">${avOf(p.id, 42)}<div class="tx"><b>${esc(p.display_name || 'Member')}</b>${p.username ? `<div class="ls">@${esc(p.username)}</div>` : ''}</div><button class="btn sm2" data-a="gaddp" data-id="${p.id}">Add</button></div>`).join('') : '<div class="ls" style="padding:12px 4px">No one found.</div>';
   }, 350);
 });
+document.addEventListener('input', e => { if (e.target.id === 'setq') { S.setq = e.target.value; const l = $('#setlist'); if (l) l.innerHTML = settingsListHTML(); } });
 let gqT;
 document.addEventListener('input', e => { if (e.target.id === 'gq') { S.gq = e.target.value; clearTimeout(gqT); gqT = setTimeout(paintGroupsList, 300); } });
 
@@ -1470,7 +1498,7 @@ function gbubble(m) {
   const mine = m.uid === S.user.id, cls = 'bub' + (mine ? ' me' : '');
   if (m.del) return `<div class="${cls} del">Message deleted</div>`;
   const sm = SHARE_RE.exec(m.t || '');
-  const body = sm ? `<button class="sharecardb" data-a="openshared" data-k="${sm[1].toLowerCase()}" data-id="${sm[2]}"><span><b>${shareLabel(sm[1])}</b><br><small>Tap to open</small></span></button>` : `<div class="bt clamp${S.xp.has('g' + m.id) ? ' open' : ''}" data-xk="g${m.id}">${fmtText(m.t)}</div>`;
+  const body = sm ? `<button class="sharecardb" data-a="openshared" data-k="${sm[1].toLowerCase()}" data-id="${sm[2]}"><span><b>${shareLabel(sm[1])}</b><br><small>Tap to open</small></span></button>` : `<div class="bt clamp${S.xp.has('g' + m.id) ? ' open' : ''}" data-xk="g${m.id}">${fmtText(txShow('g' + m.id, m.t))}</div>${txLink('g' + m.id, m.t)}`;
   const core = `<div class="${cls}"${m.id ? ` data-a="gmmenu" data-id="${m.id}"` : ''}>${body}<small class="meta">${m.ed ? 'edited · ' : ''}${hm(m.at)}</small></div>`;
   if (mine) return core;
   return `<div class="mrow">${avOf(m.uid, 30)}<div class="mcol"><div class="gn">${esc(nameOf(m.uid))}</div>${core}</div></div>`;
@@ -1496,7 +1524,7 @@ async function loadEventsHub() {
 }
 async function openEvents() {
   clearInterval(S.gpoll); S.g = null; S.prof = null; clearInterval(S.poll); S.openThread = null;
-  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button><b class="ttl">Events</b><span style="flex:1"></span><button class="hbtn" data-a="enew">${I.plus}New</button></header>
+  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button><b class="ttl">Events</b><span style="flex:1"></span></header>
     <div class="chips" id="evchips"></div><div class="setbody" id="evlist"><div class="empty" style="padding:40px">Loading...</div></div></div>`;
   if (!S.myGroups) await loadMyGroups().catch(() => {});
   try { S.evs = await loadEventsHub(); } catch (e) { S.evs = []; toast('Could not load events'); }
@@ -1507,7 +1535,7 @@ function paintEventsList() {
   $('#evchips').innerHTML = [['all', 'Upcoming'], ['going', 'Going'], ['groups', 'My groups']].map(([k, l]) => `<button class="chip ${S.evf === k ? 'on' : ''}" data-a="evf" data-id="${k}">${l}</button>`).join('');
   const myg = new Set((S.myGroups || []).filter(m => m.status === 'active').map(m => m.group_id));
   const list = S.evs.filter(e => S.evf === 'going' ? e.mine === 'going' : S.evf === 'groups' ? (e.group_id && myg.has(e.group_id)) : true);
-  box.innerHTML = list.length ? list.map(eventRow).join('') : '<div class="empty" style="padding:50px 24px">No events here yet.<br>Tap <b>New</b> to create one.</div>';
+  box.innerHTML = list.length ? list.map(eventRow).join('') : '<div class="empty" style="padding:50px 24px">No events here yet.<br>Use the <b>+</b> button to create one.</div>';
 }
 const refreshEventViews = async () => {
   if ($('#evlist')) { try { S.evs = await loadEventsHub(); } catch (e) {} paintEventsList(); }
@@ -1874,10 +1902,10 @@ const liveItems = () => (S.lives || []).map(l => `<button class="story" data-a="
 function openGoLive() {
   if (S.live || S.call) return toast('Finish your live or call first');
   S.liveSave = true;
-  sheet(`<h2>Go live</h2><div class="fld"><label for="lvt">Title (optional)</label><input id="lvt" maxlength="80" placeholder="What is your live about?"></div>
+  sheet(`<h2>Live streaming</h2><div class="fld"><label for="lvt">Title (optional)</label><input id="lvt" maxlength="80" placeholder="What is your live about?"></div>
     <div class="note">Anyone on KiHelp can watch. Use Wi-Fi if you can, and keep this screen open while you are live.</div>
     <div class="srow" style="padding:6px 0 14px;border:0"><div><div class="lbl">Save this live</div><div class="ls">Keep a copy in My lives. It uses your storage, about 6 MB per minute.</div></div><button class="switch on" id="lvsave" role="switch" aria-checked="true" data-a="tglsave"><i></i></button></div>
-    <button class="btn" id="lvgo" data-a="lvstart">Start live</button>`);
+    <button class="btn" id="lvgo" data-a="lvstart">Start streaming</button>`);
 }
 function paintLive() {
   const L = S.live, el = $('#live'); if (!el) return;
@@ -1931,7 +1959,7 @@ async function leaveLive() {
 }
 async function startLive() {
   if (S.live) return; const title = ($('#lvt') ? $('#lvt').value.trim() : '').slice(0, 80);
-  const fail = m => { busy('#lvgo', false, 'Start live'); toast(m); };
+  const fail = m => { busy('#lvgo', false, 'Start streaming'); toast(m); };
   busy('#lvgo', true, 'Starting...');
   let AR; try { AR = await loadAgora(); } catch (e) { return fail('Could not load the live video tool. Check your internet.'); }
   let tracks;
@@ -1970,6 +1998,52 @@ async function watchLive(streamId, hostId) {
   joinLiveRoom();
 }
 
+/* ---------- translation ---------- */
+const TLANGS = [['en', 'English'], ['am', 'አማርኛ (Amharic)'], ['om', 'Afaan Oromoo'], ['ti', 'ትግርኛ (Tigrinya)'], ['so', 'Soomaali'], ['sw', 'Kiswahili'], ['ar', 'العربية (Arabic)'], ['fr', 'Français'], ['es', 'Español'], ['pt', 'Português'], ['de', 'Deutsch'], ['it', 'Italiano'], ['ru', 'Русский'], ['zh', '中文 (Chinese)'], ['ja', '日本語'], ['ko', '한국어'], ['hi', 'हिन्दी'], ['bn', 'বাংলা'], ['ur', 'اردو'], ['tr', 'Türkçe'], ['id', 'Bahasa Indonesia'], ['vi', 'Tiếng Việt'], ['th', 'ไทย'], ['nl', 'Nederlands'], ['pl', 'Polski'], ['uk', 'Українська'], ['fa', 'فارسی'], ['he', 'עברית'], ['ha', 'Hausa'], ['yo', 'Yorùbá'], ['ig', 'Igbo'], ['zu', 'isiZulu'], ['af', 'Afrikaans'], ['rw', 'Kinyarwanda'], ['mg', 'Malagasy']];
+const tlangName = c => (TLANGS.find(x => x[0] === c) || [c, c])[1];
+const txOk = t => typeof t === 'string' && t.trim().length >= 2 && /\p{L}/u.test(t) && !/^kihelp:\/\//.test(t);
+const txShow = (k, raw) => (S.txon.has(k) && S.txout[k]) ? S.txout[k] : raw;
+function txLink(k, raw) {
+  if (!txOk(raw)) return '';
+  S.txsrc[k] = raw;
+  return S.txon.has(k) ? `<button class="txl" data-a="txt" data-k="${k}">Translated to ${esc(tlangName(S.tlang))} · See original</button><button class="txl" data-a="txchg">Change language</button>` : `<button class="txl" data-a="txt" data-k="${k}">Translate</button>`;
+}
+async function translateText(text, target) {
+  const { data: { session } } = await sb.auth.getSession();
+  const r = await fetch(SUPA_URL + '/functions/v1/translate', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (session ? session.access_token : ''), apikey: SUPA_KEY }, body: JSON.stringify({ text: text.slice(0, 1500), target }) });
+  const j = await r.json().catch(() => ({})); if (!r.ok || !j.translated) throw new Error(j.error || 'translate'); return j.translated;
+}
+function txRepaint() { repaint(); if ($('#msgs')) { const t = curThread(); if (t) paintMsgs(t); } if ($('#gmsgs')) paintGroupMsgs(); }
+async function doTranslate(k) {
+  const raw = S.txsrc[k]; if (!raw) return;
+  if (!S.txout[k]) { toast('Translating...'); try { S.txout[k] = await translateText(raw, S.tlang); } catch (e) { return toast('Could not translate right now. Try again soon.'); } }
+  S.txon.add(k); txRepaint();
+}
+function openTxLang() {
+  sheet(`<h2>Translate into</h2><div class="langlist">${TLANGS.map(([c, n]) => `<button class="optrow ${S.tlang === c ? 'sel' : ''}" data-a="txlang" data-id="${c}"><span>${esc(n)}</span><span class="rdio"></span></button>`).join('')}</div>`);
+}
+function setTlang(c) { S.tlang = c; saveSettings(); S.txon.clear(); S.txout = {}; }
+document.addEventListener('change', e => { if (e.target.id === 'tlang') { setTlang(e.target.value); toast('Translation language saved'); } });
+
+/* ---------- profile: banner, links, tabs ---------- */
+const bannerHTML = p => safeUrl(p && p.banner_url) ? `<div class="banner"><img src="${esc(p.banner_url)}" alt=""></div>` : '<div class="banner nob"></div>';
+const linksHTML = p => {
+  const L = (Array.isArray(p && p.links) ? p.links : []).filter(l => l && /^https:\/\//i.test(l.url || ''));
+  return L.length ? `<div class="plinks">${L.map(l => { let h = ''; try { h = new URL(l.url).hostname.replace(/^www\./, ''); } catch (e) {} return `<a class="lnk" href="${esc(l.url)}" target="_blank" rel="noopener nofollow ugc">🔗 ${esc(l.label || h)}</a>`; }).join('')}</div>` : '';
+};
+function mediaGrid(posts, type) {
+  const cells = [];
+  (posts || []).forEach(p => (p.media || []).forEach((m, i) => { if (m.type === type) cells.push(`<button data-a="gview" data-id="${p.id}" data-i="${i}">${type === 'video' ? `<video src="${esc(m.url)}#t=0.1" muted playsinline preload="metadata"></video>` : `<img src="${esc(m.url)}" alt="" loading="lazy">`}</button>`); }));
+  return cells.length ? `<div class="mgrid">${cells.join('')}</div>` : `<div class="empty" style="padding:30px 16px">No ${type === 'video' ? 'videos' : 'photos'} yet.</div>`;
+}
+const ptabs = cur => `<div class="ptabs">${[['posts', 'Posts'], ['photos', 'Photos'], ['videos', 'Videos']].map(([k, l]) => `<button class="${cur === k ? 'on' : ''}" data-a="ptab" data-id="${k}">${l}</button>`).join('')}</div>`;
+function meTabs() {
+  const t = S.mtab || 'posts';
+  const body = t === 'posts' ? (S.myPosts.length ? S.myPosts.map(postCard).join('') : '<div class="empty" style="padding:20px 16px">No posts yet.</div>')
+    : t === 'photos' ? mediaGrid(S.myPosts, 'image') : (vgridHTML(S.myVideos) + mediaGrid(S.myPosts, 'video'));
+  return ptabs(t) + body;
+}
+
 /* ---------- settings + theme ---------- */
 function applyTheme() {
   const dark = S.mode === 'dark' || (S.mode === 'system' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
@@ -1994,47 +2068,90 @@ async function clearCache() {
   toast(tr('cleared') + (freed > 51200 ? ' · ' + (freed / 1048576).toFixed(1) + ' MB freed' : ''));
   showUsage();
 }
-function openSettings() {
-  const scroll = document.querySelector('.setbody') ? document.querySelector('.setbody').scrollTop : 0;
-  const sw = (on, a) => `<button class="switch ${on ? 'on' : ''}" role="switch" aria-checked="${on}" data-a="${a}"><i></i></button>`;
-  const AC = { teal: '#0e6b6b', saffron: '#f0a800', violet: '#6b46c9', rose: '#d6336c' };
-  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button><b class="ttl">${tr('settings')}</b></header>
-  <div class="setbody">
-    <h3 class="sub">${tr('appearance')}</h3>
-    <div class="srow col"><div class="lbl">${tr('mode')}</div><div class="seg">${['light', 'dark'].map(m => `<button class="${S.mode === m ? 'on' : ''}" data-a="mode" data-id="${m}">${tr(m)}</button>`).join('')}</div></div>
-    <div class="srow col"><div class="lbl">${tr('accent')}</div><div class="dots">
-      <button class="chip ${S.accent === 'auto' ? 'on' : ''}" data-a="accent" data-id="auto">${tr('auto')}</button>
-      ${Object.entries(AC).map(([k, c]) => `<button class="dotb ${S.accent === k ? 'on' : ''}" style="background:${c}" data-a="accent" data-id="${k}" aria-label="${k}"></button>`).join('')}</div></div>
-    <h3 class="sub">${tr('data')}</h3>
-    <div class="srow"><div><div class="lbl">${tr('saver')}</div><div class="ls">${tr('saverDesc')}</div></div>${sw(S.saver, 'togglesaver')}</div>
-    <div class="srow"><div><div class="lbl">${tr('storage')}</div><div class="ls" id="usage">...</div></div><button class="btn sm" data-a="clearcache">${tr('clear')}</button></div>
-    <h3 class="sub">${tr('language')}</h3>
-    <div class="srow col"><select id="lang" aria-label="${tr('language')}">${Object.entries(LANGS).map(([k, v]) => `<option value="${k}" ${S.lang === k ? 'selected' : ''}>${v.name}</option>`).join('')}</select></div>
-    <h3 class="sub">Privacy and search</h3>
-    <div class="srow"><div><div class="lbl">Find me by email</div><div class="ls">Only people who type your exact email can find you</div></div>${sw(S.pc.allow_email_search, 'tglemail')}</div>
-    <div class="srow col"><div class="lbl">Phone number</div><input id="phone" type="tel" inputmode="tel" placeholder="+251912345678" value="${esc(S.pc.phone || '')}" maxlength="20" autocomplete="tel"><div class="ls">Include your country code. Only you can see it.</div><button class="btn alt" data-a="savephone">Save phone</button></div>
-    <div class="srow"><div><div class="lbl">Find me by phone</div><div class="ls">Only people who type your exact number can find you</div></div>${sw(S.pc.allow_phone_search, 'tglphone')}</div>
-    ${isStandalone() ? '' : `<h3 class="sub">App</h3>
-    <div class="srow"><button class="lbl" data-a="install" style="flex:1">Install KiHelp on this device</button></div>`}
-    <h3 class="sub">Notifications</h3>
-    <div id="pushrow"><div class="srow"><div class="ls">Checking...</div></div></div>
-    <h3 class="sub">People</h3>
-    <div class="srow"><button class="lbl" data-a="invite" style="flex:1">Invite friends</button></div>
-    <div class="srow"><button class="lbl" data-a="blocked" style="flex:1">Blocked users</button></div>
-    <h3 class="sub">${tr('account')}</h3>
-    <div class="srow"><div class="ls">${esc(S.user ? S.user.email : '')}</div></div>
-    <div class="srow"><button class="lbl" data-a="accounts" style="flex:1">Switch or add account</button></div>
-    <div class="srow"><button class="lbl" data-a="logout" style="color:var(--coral)">${tr('logout')}</button></div>
-    <div class="srow"><button class="lbl" data-a="delacct" style="color:var(--coral)">Delete my account</button></div>
-    <h3 class="sub">About</h3>
-    <div class="srow"><button class="lbl" data-a="legal" data-id="terms" style="flex:1">Terms of Use</button></div>
-    <div class="srow"><button class="lbl" data-a="legal" data-id="privacy" style="flex:1">Privacy Policy</button></div>
-    <div class="srow"><button class="lbl" data-a="legal" data-id="rules" style="flex:1">Community rules</button></div>
-    ${CONTACT_EMAIL ? `<div class="srow"><a class="lbl" href="mailto:${esc(CONTACT_EMAIL)}">Contact us</a></div>` : ''}
-    <div class="ls" style="padding:16px">KiHelp 0.14</div>
-  </div></div>`;
-  document.querySelector('.setbody').scrollTop = scroll;
-  showUsage(); paintPushRow();
+let setPageKey = null;
+const sw2 = (on, a, v) => `<button class="switch ${on ? 'on' : ''}" role="switch" aria-checked="${on}" data-a="${a}"${v ? ` data-v="${v}"` : ''}><i></i></button>`;
+const SET_SECTIONS = [
+  { title: 'How you use KiHelp', rows: [['saved', '🔖', 'Saved', 'Posts you saved'], ['notifs', '🔔', 'Notifications', 'Alerts for messages, calls and more'], ['invite', '📨', 'Invite friends', 'Share KiHelp']] },
+  { title: 'Subscription', rows: [['sub', '⭐', 'Subscriptions', 'Verified badge and premium (coming soon)']] },
+  { title: 'Creator tools', rows: [['dash', '📈', 'Dashboard', 'Your numbers at a glance'], ['pro', '💼', 'Professional dashboard', 'Reach, audience and earnings'], ['lives', '🔴', 'My lives', 'Watch, share or delete saved lives'], ['wallet', '🪙', 'Wallet and gifts', 'Coins and creator earnings']] },
+  { title: 'Who can see you', rows: [['privacy', '🔒', 'Privacy and search', 'Find me by email or phone'], ['defvis', '🌍', 'Default post audience', 'Who sees your new posts'], ['blocked', '⛔', 'Blocked accounts', 'People you blocked']] },
+  { title: 'How others can interact with you', rows: [['comments', '💬', 'Comments', 'Turn comments on or off for new posts'], ['react', '❤️', 'Reactions', 'Choose reactions allowed on new posts'], ['mentions', '@', 'Mentions', 'Who can mention you']] },
+  { title: 'What you see', rows: [['lang', '🌐', 'App language', 'Language of menus and buttons'], ['tlang', '🈯', 'Translation', 'Language to translate posts into'], ['content', '👀', 'Content and data', 'Data saver and media']] },
+  { title: 'Your app and media', rows: [['appearance', '🌗', 'Appearance', 'Light or dark, accent colour'], ['media', '🖼️', 'Media, storage and cache', 'Data saver, clear cache'], ['install', '📲', 'Install KiHelp', 'Add it to your home screen']] },
+  { title: 'Family center', rows: [['family', '👪', 'Family center', 'Supervision tools (coming soon)']] },
+  { title: 'Your orders and funds', rows: [['orders', '🧾', 'Orders', 'Purchases and sales (coming soon)'], ['funds', '💰', 'Funds and payouts', 'Wallet balance']] },
+  { title: 'Help and support', rows: [['help', '❓', 'Help and support', 'Contact us or report a problem'], ['privacypol', '📄', 'Privacy Policy', ''], ['terms', '📜', 'Terms of Use', ''], ['rules', '🤝', 'Community rules', '']] },
+  { title: 'Account', rows: [['accounts', '👤', 'Switch or add account', ''], ['logout', '↩️', 'Log out', ''], ['delete', '🗑️', 'Delete my account', '']] }
+];
+function settingsListHTML() {
+  const q = (S.setq || '').trim().toLowerCase();
+  const secs = SET_SECTIONS.map(s => ({ title: s.title, rows: s.rows.filter(r => !q || (r[2] + ' ' + r[3] + ' ' + s.title).toLowerCase().includes(q)) })).filter(s => s.rows.length);
+  return secs.length ? secs.map(s => `<h3 class="sub setsec">${s.title}</h3>` + s.rows.map(r => `<button class="setrow" data-a="setgo" data-id="${r[0]}"><span class="si">${r[1]}</span><span class="tx"><b>${r[2]}</b>${r[3] ? `<small>${r[3]}</small>` : ''}</span><span class="chev">›</span></button>`).join('')).join('') : '<div class="empty" style="padding:40px 24px">No settings match.</div>';
+}
+function openSettingsHub() {
+  setPageKey = null; const p = S.profile || {};
+  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button><b class="ttl">Settings and activity</b></header><div class="setbody" id="setbody">
+    <div style="padding:12px 16px 4px"><input id="setq" type="search" placeholder="Search settings" value="${esc(S.setq || '')}"></div>
+    <button class="setacct" data-a="setprof">${avOf(S.user.id, 52)}<span class="tx"><b>${esc(p.display_name || 'Member')}</b><span class="ls" style="display:block">${p.username ? '@' + esc(p.username) + ' · ' : ''}View profile</span></span><span class="chev">›</span></button>
+    <div id="setlist">${settingsListHTML()}</div><div class="ls" style="padding:16px">KiHelp</div></div></div>`;
+}
+function setPage(title, body) {
+  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button><b class="ttl">${title}</b></header><div class="setbody" id="spbody">${body}</div></div>`;
+}
+const infoPage = (title, text) => setPage(title, `<div style="padding:20px 16px"><p>${text}</p></div>`);
+function openSetPage(key) {
+  setPageKey = key; const pc = S.pc || {}; const AC = { teal: '#0e6b6b', saffron: '#f0a800', violet: '#6b46c9', rose: '#d6336c' };
+  if (key === 'notifs') { setPage('Notifications', '<div id="pushrow"><div class="srow"><div class="ls">Checking...</div></div></div>'); paintPushRow(); }
+  else if (key === 'privacy') setPage('Privacy and search', `<div class="srow"><div><div class="lbl">Find me by email</div><div class="ls">Only people who type your exact email can find you</div></div>${sw2(pc.allow_email_search, 'tglemail')}</div>
+    <div class="srow col"><div class="lbl">Phone number</div><input id="phone" type="tel" inputmode="tel" placeholder="+251912345678" value="${esc(pc.phone || '')}" maxlength="20" autocomplete="tel"><div class="ls">Include your country code. Only you can see it.</div><button class="btn alt" data-a="savephone">Save phone</button></div>
+    <div class="srow"><div><div class="lbl">Find me by phone</div><div class="ls">Only people who type your exact number can find you</div></div>${sw2(pc.allow_phone_search, 'tglphone')}</div>`);
+  else if (key === 'defvis') setPage('Default post audience', `<div class="srow col"><div class="lbl">New posts are seen by</div><div class="seg c3">${[['public', 'Public'], ['friends', 'Friends'], ['private', 'Only me']].map(([k, l]) => `<button class="${(S.defVis || 'public') === k ? 'on' : ''}" data-a="defvis" data-id="${k}">${l}</button>`).join('')}</div><div class="ls">You can still change it for each post.</div></div>`);
+  else if (key === 'comments') setPage('Comments', `<div class="srow"><div><div class="lbl">Allow comments on new posts</div><div class="ls">Turn this off to start new posts with comments closed. You can change any post later from its menu.</div></div>${sw2(S.defComments !== false, 'tgldefcm')}</div>`);
+  else if (key === 'react') setPage('Reactions', `<div style="padding:12px 16px"><p class="ls" style="margin-bottom:8px">Reactions people may use on your new posts.</p><div class="rxpick">${RXLIST.map(e => `<button class="${!S.defRx || S.defRx.includes(e) ? 'on' : ''}" data-a="defrxsel" data-e="${e}">${e}</button>`).join('')}</div><div class="dots" style="margin-top:12px"><button class="chip" data-a="defrxall">All</button><button class="chip" data-a="defrxnone">None</button></div></div>`);
+  else if (key === 'mentions') infoPage('Mentions', 'Anyone on KiHelp can mention you with @' + esc((S.profile && S.profile.username) || 'username') + '. If someone bothers you, block or report them from their profile.');
+  else if (key === 'lang') setPage('App language', `<div class="srow col"><select id="lang" aria-label="Language">${Object.entries(LANGS).map(([k, v]) => `<option value="${k}" ${S.lang === k ? 'selected' : ''}>${v.name}</option>`).join('')}</select></div>`);
+  else if (key === 'tlang') setPage('Translation', `<div class="srow col"><div class="lbl">Translate posts and messages into</div><select id="tlang" aria-label="Translation language"><option value="">Ask me each time</option>${TLANGS.map(([c, n]) => `<option value="${c}" ${S.tlang === c ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select><div class="ls">Tap Translate under any post, comment or message.</div></div>`);
+  else if (key === 'content') setPage('Content and data', `<div class="srow"><div><div class="lbl">${tr('saver')}</div><div class="ls">${tr('saverDesc')}</div></div>${sw2(S.saver, 'togglesaver')}</div>`);
+  else if (key === 'appearance') setPage('Appearance', `<div class="srow col"><div class="lbl">${tr('mode')}</div><div class="seg">${['light', 'dark'].map(m => `<button class="${S.mode === m ? 'on' : ''}" data-a="mode" data-id="${m}">${tr(m)}</button>`).join('')}</div></div>
+    <div class="srow col"><div class="lbl">${tr('accent')}</div><div class="dots"><button class="chip ${S.accent === 'auto' ? 'on' : ''}" data-a="accent" data-id="auto">${tr('auto')}</button>${Object.entries(AC).map(([k, c]) => `<button class="dotb ${S.accent === k ? 'on' : ''}" style="background:${c}" data-a="accent" data-id="${k}" aria-label="${k}"></button>`).join('')}</div></div>`);
+  else if (key === 'media') { setPage('Media, storage and cache', `<div class="srow"><div><div class="lbl">${tr('saver')}</div><div class="ls">${tr('saverDesc')}</div></div>${sw2(S.saver, 'togglesaver')}</div>
+    <div class="srow"><div><div class="lbl">${tr('storage')}</div><div class="ls" id="usage">...</div></div><button class="btn sm" data-a="clearcache">${tr('clear')}</button></div>`); showUsage(); }
+  else if (key === 'sub') infoPage('Subscriptions', 'KiHelp Verified and creator subscriptions are coming once payments are connected.');
+  else if (key === 'family') infoPage('Family center', 'Tools for parents and guardians to supervise teen accounts are coming soon.');
+  else if (key === 'orders') infoPage('Orders', 'Your purchases and sales will appear here once checkout and delivery are connected.');
+  else if (key === 'help') setPage('Help and support', `<div class="srow"><a class="lbl" href="mailto:${esc(CONTACT_EMAIL)}" style="flex:1">Contact us</a></div><div class="srow"><a class="lbl" href="mailto:${esc(CONTACT_EMAIL)}?subject=Problem%20with%20KiHelp" style="flex:1">Report a problem</a></div><div class="srow"><button class="lbl" data-a="setgo" data-id="privacypol" style="flex:1">Privacy Policy</button></div><div class="srow"><button class="lbl" data-a="setgo" data-id="terms" style="flex:1">Terms of Use</button></div><div class="srow"><button class="lbl" data-a="setgo" data-id="rules" style="flex:1">Community rules</button></div>`);
+}
+function openSettings() { if (setPageKey) openSetPage(setPageKey); else openSettingsHub(); }
+async function openDashboard(pro) {
+  setPage(pro ? 'Professional dashboard' : 'Dashboard', '<div class="empty" style="padding:40px">Loading...</div>');
+  try {
+    const me = S.user.id, cnt = q => q.then(r => r.count || 0);
+    const pr = (await sb.from('posts').select('id,content,created_at').eq('user_id', me).order('created_at', { ascending: false }).limit(200)).data || [], pids = pr.map(x => x.id);
+    const [fol, fing, rx, cm, vv, lv, gw] = await Promise.all([
+      cnt(sb.from('follows').select('follower_id', { count: 'exact', head: true }).eq('following_id', me)),
+      cnt(sb.from('follows').select('follower_id', { count: 'exact', head: true }).eq('follower_id', me)),
+      pids.length ? sb.from('post_likes').select('post_id').in('post_id', pids).limit(5000) : Promise.resolve({ data: [] }),
+      pids.length ? cnt(sb.from('comments').select('id', { count: 'exact', head: true }).in('post_id', pids)) : Promise.resolve(0),
+      sb.from('videos').select('views').eq('user_id', me).limit(500),
+      sb.from('live_streams').select('peak_viewers').eq('host_id', me).limit(200),
+      loadGiftData().then(() => S.wallet).catch(() => null)
+    ]);
+    const rxs = rx.data || [], views = (vv.data || []).reduce((a, x) => a + (Number(x.views) || 0), 0), peak = (lv.data || []).reduce((a, x) => Math.max(a, x.peak_viewers || 0), 0);
+    const card = (n, l) => `<div class="dcard"><b>${coinFmt(n)}</b><small>${l}</small></div>`;
+    let extra = '';
+    if (pro) {
+      const by = {}; rxs.forEach(x => { by[x.post_id] = (by[x.post_id] || 0) + 1; });
+      const top = pr.map(x => ({ x, n: by[x.id] || 0 })).sort((a, b) => b.n - a.n).slice(0, 5).filter(t => t.n > 0);
+      const fl = (await sb.from('follows').select('follower_id').eq('following_id', me).limit(300)).data || [];
+      await loadProfiles(fl.map(x => x.follower_id)); const cc = {}; fl.forEach(x => { const c = (S.pf[x.follower_id] || {}).country; if (c) cc[c] = (cc[c] || 0) + 1; });
+      const tc = Object.entries(cc).sort((a, b) => b[1] - a[1]).slice(0, 5);
+      extra = `<h3 class="sub">Top posts</h3>${top.length ? top.map(t => `<div class="item"><p>${esc((t.x.content || 'Photo or video post').slice(0, 70))}<small>${t.n} reactions</small></p></div>`).join('') : '<div class="empty" style="padding:16px">No reactions yet.</div>'}
+        <h3 class="sub">Where your followers are</h3>${tc.length ? tc.map(([c, n]) => `<div class="item"><p>${esc(c)}<small>${n} follower${n === 1 ? '' : 's'}</small></p></div>`).join('') : '<div class="empty" style="padding:16px">Followers have not shared a country yet.</div>'}
+        <h3 class="sub">Earnings</h3><div class="dgrid">${card(gw ? gw.earnings : 0, 'Creator earnings')}${card(gw ? gw.coins : 0, 'Coins in wallet')}</div><p class="ls" style="padding:0 16px 16px">Test mode: earnings have no cash value yet.</p>`;
+    }
+    const b = $('#spbody'); if (!b) return;
+    b.innerHTML = `<div class="dgrid">${card(fol, 'Followers')}${card(fing, 'Following')}${card(pr.length, 'Posts')}${card(rxs.length, 'Reactions received')}${card(cm, 'Comments received')}${card(views, 'Video views')}${card(peak, 'Best live audience')}${card((S.videos || []).length ? S.myVideos.length : S.myVideos.length, 'Videos posted')}</div>${extra}`;
+  } catch (e) { const b = $('#spbody'); if (b) b.innerHTML = '<div class="empty" style="padding:40px">Could not load your numbers.</div>'; }
 }
 
 /* ---------- actions ---------- */
@@ -2043,7 +2160,17 @@ const ACT = {
   tab: id => { S.tab = id; render(); refresh(); },
   retry: () => { S.ready[S.tab] = 0; render(true); refresh(); },
   amode: id => { S.authMode = id; showAuth(); },
-  settings: () => openSettings(),
+  settings: () => openSettingsHub(),
+  setprof: () => { setPageKey = null; S.ovStack.length = 0; $('#over').innerHTML = ''; S.tab = 'me'; render(); refresh(); },
+  setgo: id => {
+    const m = { saved: () => openSaved(), wallet: () => openWallet(), funds: () => openWallet(), lives: () => openMyLives(), blocked: () => openBlocked(), dash: () => openDashboard(false), pro: () => openDashboard(true), privacypol: () => openLegal('privacy'), terms: () => openLegal('terms'), rules: () => openLegal('rules'), accounts: () => ACT.accounts(), logout: () => ACT.logout(), delete: () => ACT.delacct(), install: () => ACT.install(), invite: () => ACT.invite() };
+    if (m[id]) m[id](); else openSetPage(id);
+  },
+  defvis: id => { S.defVis = id; saveSettings(); openSettings(); },
+  tgldefcm: () => { S.defComments = S.defComments === false; saveSettings(); openSettings(); },
+  defrxsel: (id, el) => { const e = el.dataset.e, cur = new Set(S.defRx || RXLIST); cur.has(e) ? cur.delete(e) : cur.add(e); S.defRx = cur.size === RXLIST.length ? null : [...cur]; saveSettings(); openSettings(); },
+  defrxall: () => { S.defRx = null; saveSettings(); openSettings(); },
+  defrxnone: () => { S.defRx = []; saveSettings(); openSettings(); },
   mode: id => { S.mode = id; saveSettings(); applyTheme(); openSettings(); },
   accent: id => { S.accent = id; saveSettings(); applyTheme(); openSettings(); },
   togglesaver: () => { S.saver = !S.saver; S.loaded.clear(); saveSettings(); applyTheme(); openSettings(); },
@@ -2099,17 +2226,55 @@ const ACT = {
     p.adl = v; p.dl = true; closeSheet(); toast(v ? 'People can now save this' : 'Saving turned off');
   },
   search: () => openSearch(),
+  gview: (id, el) => { const p = findPost(id); if (p) openViewer(p.media, +el.dataset.i || 0, p.dl); },
+  ptab: id => { if ($('#pposts') && S.prof) { S.prof.tab = id; paintProfile(); } else { S.mtab = id; render(true); } },
+  editprofile: () => {
+    const p = S.profile || {}, L = Array.isArray(p.links) ? p.links : []; S.bannerDraft = null;
+    sheet(`<h2>Edit profile</h2>
+      <div class="fld"><label>Banner</label><label class="up"><input type="file" id="bfile" accept="image/*" hidden><span id="bprev">${I.plus}</span>Change banner</label></div>
+      <div class="fld">${uploadField('image/*', 'Change profile photo')}</div>
+      <div class="fld"><label for="pn">Name</label><input id="pn" maxlength="50" value="${esc(p.display_name || '')}"></div>
+      <div class="fld"><label for="pu">Username</label><div style="display:flex;align-items:center;gap:6px"><span class="lbl">@</span><input id="pu" maxlength="20" autocapitalize="none" autocomplete="off" value="${esc(p.username || '')}" placeholder="yourname"></div><div class="ls" style="margin-top:4px">3 to 20 letters, numbers or underscores</div></div>
+      <div class="fld"><label for="pc">Country</label><input id="pc" maxlength="50" value="${esc(p.country || '')}"></div>
+      <div class="fld"><label for="pb">About you</label><textarea id="pb" maxlength="300">${esc(p.bio || '')}</textarea></div>
+      <div class="fld"><label>Links in your bio (up to 3)</label>${[0, 1, 2].map(i => `<div class="lkrow"><input id="lk${i}l" maxlength="30" placeholder="Label" value="${esc((L[i] && L[i].label) || '')}"><input id="lk${i}u" maxlength="200" inputmode="url" placeholder="https://" value="${esc((L[i] && L[i].url) || '')}"></div>`).join('')}</div>
+      <button class="btn" id="profbtn" data-a="saveprofile">Save</button>`);
+    bindUpload({ edit: true, ratio: '1:1' });
+    const bf = $('#bfile');
+    if (bf) bf.onchange = async () => {
+      let f = bf.files[0]; if (!f) return; f = (await editImage(f, { ratio: '3:1' })) || f;
+      S.bannerDraft = { file: f, prev: URL.createObjectURL(f) }; const bp = $('#bprev'); if (bp) bp.innerHTML = `<img src="${S.bannerDraft.prev}" alt="" style="width:56px;height:56px;border-radius:10px;object-fit:cover">`;
+    };
+  },
+  saveprofile: async () => {
+    const uname = $('#pu').value.trim().toLowerCase().replace(/^@/, '');
+    if (uname && !/^[a-z0-9_]{3,20}$/.test(uname)) return toast('Username: 3 to 20 letters, numbers or _');
+    const links = [];
+    for (let i = 0; i < 3; i++) {
+      const l = $('#lk' + i + 'l').value.trim().slice(0, 30); let u = $('#lk' + i + 'u').value.trim(); if (!u) continue;
+      if (!/^https?:\/\//i.test(u)) u = 'https://' + u; u = u.replace(/^http:\/\//i, 'https://');
+      if (!/^https:\/\/[^\s.]+\.[^\s]{2,}$/i.test(u)) return toast('Link ' + (i + 1) + ' does not look right');
+      links.push({ label: l, url: u.slice(0, 200) });
+    }
+    busy('#profbtn', true, (S.draft || S.bannerDraft) ? 'Uploading...' : '...');
+    const row = { username: uname || null, display_name: $('#pn').value.trim().slice(0, 50) || 'Member', country: $('#pc').value.trim().slice(0, 50) || null, bio: $('#pb').value.trim().slice(0, 300) || null, links };
+    try {
+      if (S.draft) row.avatar_url = (await uploadMedia(S.draft.file)).url;
+      if (S.bannerDraft) row.banner_url = (await uploadMedia(S.bannerDraft.file)).url;
+    } catch (e) { busy('#profbtn', false, 'Save'); return toast(upErr(e)); }
+    const { error } = await sb.from('profiles').update(row).eq('id', S.user.id);
+    if (error) { busy('#profbtn', false, 'Save'); return toast(error.code === '23505' ? 'That username is taken' : error.code === '23514' ? 'That username or link is not allowed' : 'Could not save'); }
+    S.profile = { ...S.profile, ...row }; S.pf[S.user.id] = S.profile; closeSheet(); render(true); toast('Saved');
+  },
   create: () => sheet(`<h2>Create</h2><div class="cgrid">
-    <button class="ccard" data-a="cnew" data-id="post"><span>📝</span><b>Post</b><small>Text and photos</small></button>
+    <button class="ccard" data-a="cnew" data-id="live"><span>🔴</span><b>Live streaming</b><small>Broadcast now</small></button>
     <button class="ccard" data-a="cnew" data-id="video"><span>🎬</span><b>Video</b><small>Short video</small></button>
-    <button class="ccard" data-a="cnew" data-id="story"><span>📖</span><b>Story</b><small>Gone in 24 hours</small></button>
-    <button class="ccard" data-a="cnew" data-id="live"><span>🔴</span><b>Go live</b><small>Broadcast now</small></button>
-    <button class="ccard" data-a="cnew" data-id="sell"><span>🛍️</span><b>Sell</b><small>List an item</small></button>
     <button class="ccard" data-a="cnew" data-id="event"><span>📅</span><b>Event</b><small>Plan a meetup</small></button>
-    <button class="ccard" data-a="cnew" data-id="group"><span>👥</span><b>Group</b><small>Public or private</small></button></div>`),
-  cnew: id => { closeSheet(); setTimeout(() => { const f = { post: ACT.newpost, video: ACT.vupload, story: ACT.snew, live: ACT.golive, sell: ACT.sell, event: ACT.enew, group: ACT.gnew }[id]; if (f) f(); }, 60); },
+    <button class="ccard" data-a="cnew" data-id="sell"><span>🛍️</span><b>Sell</b><small>List an item</small></button></div>
+    <p class="ls" style="margin-top:12px">To write a post, use "What's on your mind?" on Home.</p>`),
+  cnew: id => { closeSheet(); setTimeout(() => { const f = { video: ACT.vupload, live: ACT.golive, sell: ACT.sell, event: ACT.enew }[id]; if (f) f(); }, 60); },
   avview: id => { const p = S.pf[id], url = safeUrl(p && p.avatar_url); if (url) openViewer([{ type: 'image', url }], 0, false); else toast('No profile photo yet'); },
-  xpand: (id, el) => { const t = el.previousElementSibling; if (t) { t.classList.add('open'); if (t.dataset.xk) S.xp.add(t.dataset.xk); } el.remove(); },
+  xpand: (id, el) => { const t = el.previousElementSibling; if (!t) return; if (t.classList.contains('open')) { t.classList.remove('open'); if (t.dataset.xk) S.xp.delete(t.dataset.xk); el.textContent = 'See more'; } else { t.classList.add('open'); if (t.dataset.xk) S.xp.add(t.dataset.xk); el.textContent = 'See less'; } },
   sgdismiss: id => { S.suggest = (S.suggest || []).filter(p => p.id !== id); render(true); },
   sgall: () => openSearch(),
   tglsave: () => { S.liveSave = !S.liveSave; const b = $('#lvsave'); if (b) { b.classList.toggle('on', S.liveSave); b.setAttribute('aria-checked', String(S.liveSave)); } },
@@ -2517,6 +2682,8 @@ const ACT = {
     if (p.uid === S.user.id) {
       sheet(`<h2>Your post</h2>
         <button class="optrow" data-a="pedit" data-id="${p.id}">Edit post</button>
+        <button class="optrow" data-a="pcm" data-id="${p.id}">${p.cmOn === false ? '💬 Turn on comments' : '🚫 Turn off comments'}</button>
+        <button class="optrow" data-a="prx" data-id="${p.id}">☺ Choose allowed reactions</button>
         <button class="optrow" data-a="ppin" data-id="${p.id}">${p.pin ? 'Unpin from your profile' : 'Pin to your profile'}</button>
         ${p.media.length ? `<button class="optrow" data-a="pdl" data-id="${p.id}">${p.adl ? 'Saving is allowed. Tap to turn off' : 'Saving is off. Tap to allow'}</button>` : ''}
         <div class="lbl" style="padding:14px 4px 6px">Who can see this post</div>
@@ -2625,11 +2792,46 @@ const ACT = {
     if (await savePrivate({ phone: raw || null, allow_phone_search: raw ? S.pc.allow_phone_search : false })) { toast('Saved'); openSettings(); }
   },
 
-  like: id => { const p = findPost(id); if (p) setReaction(p, p.react ? null : 'love'); },
-  react: (id, el) => {
-    const bar = $('#rxbar'); if (bar) bar.remove();
-    const p = findPost(id), r = el.dataset.r; if (p && RX[r]) setReaction(p, p.react === r ? null : r);
+  like: id => {
+    const p = findPost(id); if (!p) return;
+    if (p.allowed && !p.allowed.length) return toast('Reactions are turned off for this post');
+    const heart = (p.allowed && !p.allowed.includes('❤️')) ? p.allowed[0] : '❤️';
+    setReaction(p, p.react ? null : heart);
   },
+  react: (id, el) => { const bar = $('#rxbar'); if (bar) bar.remove(); const p = findPost(id), r = el.dataset.r; if (p && r) setReaction(p, p.react === r ? null : r); },
+  rxtap: (id, el) => { const p = findPost(id), r = el.dataset.e; if (p && r) setReaction(p, p.react === r ? null : r); },
+  rxadd: (id, el) => showReactBar(el),
+  pcm: async id => {
+    const p = findPost(id); if (!p) return; const on = p.cmOn === false;
+    const { error } = await sb.from('posts').update({ comments_enabled: on }).eq('id', p.id).eq('user_id', S.user.id);
+    if (error) return toast('Could not update'); p.cmOn = on; closeSheet(); repaint(); toast(on ? 'Comments are on' : 'Comments are off');
+  },
+  prx: id => { const p = findPost(id); if (!p) return; S.rxEdit = { id: p.id, sel: new Set(p.allowed || RXLIST) }; paintRxEdit(); },
+  rxsel: (id, el) => { const E = S.rxEdit; if (!E) return; const e = el.dataset.e; E.sel.has(e) ? E.sel.delete(e) : E.sel.add(e); paintRxEdit(); },
+  rxall: () => { if (S.rxEdit) { S.rxEdit.sel = new Set(RXLIST); paintRxEdit(); } },
+  rxnone: () => { if (S.rxEdit) { S.rxEdit.sel = new Set(); paintRxEdit(); } },
+  rxsave: async () => {
+    const E = S.rxEdit; if (!E) return; const p = findPost(E.id); if (!p) return;
+    const allowed = E.sel.size === RXLIST.length ? null : [...E.sel];
+    const { error } = await sb.from('posts').update({ allowed_reactions: allowed }).eq('id', p.id).eq('user_id', S.user.id);
+    if (error) return toast('Could not save'); p.allowed = allowed; closeSheet(); repaint(); toast('Saved');
+  },
+  repost: id => {
+    closeSheet(); const p = findPost(id); if (!p) return;
+    const base = p.repostOf ? p.orig : p; if (!base) return toast('This post is not available');
+    if (!p.repostOf && p.vis !== 'public') return toast('Only public posts can be reposted');
+    S.repostId = p.repostOf || p.id;
+    setTimeout(() => sheet(`<h2>Repost</h2><div class="fld"><textarea id="rpt" maxlength="500" placeholder="Add a comment (optional)"></textarea></div><button class="btn" id="rpb" data-a="repostgo">Repost to my profile</button>`), 60);
+  },
+  repostgo: async () => {
+    const id = S.repostId; if (!id) return; busy('#rpb', true, '...');
+    const { error } = await sb.from('posts').insert({ user_id: S.user.id, content: ($('#rpt').value || '').trim(), repost_of: id, visibility: 'public' });
+    if (error) { busy('#rpb', false, 'Repost to my profile'); return toast('Could not repost'); }
+    closeSheet(); toast('Reposted to your profile'); try { await loadFeed(); } catch (e) {} render(true);
+  },
+  txt: async (id, el) => { const k = el.dataset.k; if (S.txon.has(k)) { S.txon.delete(k); return txRepaint(); } if (!S.tlang) { S.txPending = k; return openTxLang(); } doTranslate(k); },
+  txchg: () => openTxLang(),
+  txlang: id => { setTlang(id); closeSheet(); if (S.txPending) { const k = S.txPending; S.txPending = null; doTranslate(k); } else txRepaint(); },
   qfollow: async id => {
     const was = S.following.has(id);
     was ? S.following.delete(id) : S.following.add(id); syncFollowUI(id);
@@ -2800,11 +3002,11 @@ const ACT = {
   },
 
   newpost: () => {
-    S.postVis = 'public'; S.allowDl = false; S.drafts = [];
+    S.postVis = S.defVis || 'public'; S.allowDl = false; S.drafts = [];
     sheet(`<h2>New post</h2>
       <div class="fld"><textarea id="pt" data-mention maxlength="3000" placeholder="What's on your mind? Type @ to mention someone"></textarea><button class="chip" type="button" style="margin-top:8px" data-a="emo" data-t="#pt" data-p="#emop2">😊 Emoji</button><div id="emop2" class="emop" hidden></div></div>
       <div class="fld"><label class="up"><input type="file" id="files" accept="image/*,video/mp4,video/webm,video/quicktime" multiple hidden><span id="prev">${I.plus}</span><span id="addtxt">Add photos or videos</span></label><div class="thumbs" id="thumbs"></div></div>
-      <div class="fld"><label>Who can see this post?</label><div class="seg c3" id="pvs">${[['public', 'Public'], ['friends', 'Friends'], ['private', 'Only me']].map(([k, l]) => `<button data-a="pvsel" data-id="${k}" class="${k === 'public' ? 'on' : ''}">${l}</button>`).join('')}</div></div>
+      <div class="fld"><label>Who can see this post?</label><div class="seg c3" id="pvs">${[['public', 'Public'], ['friends', 'Friends'], ['private', 'Only me']].map(([k, l]) => `<button data-a="pvsel" data-id="${k}" class="${k === S.postVis ? 'on' : ''}">${l}</button>`).join('')}</div></div>
       <div class="srow" style="padding:6px 0 14px;border:0"><div><div class="lbl">Allow saving</div><div class="ls">Let people save your photos and videos to their phone</div></div><button class="switch" id="dlsw" role="switch" aria-checked="false" data-a="tgldl"><i></i></button></div>
       <button class="btn" id="postbtn" data-a="publishpost">${tr('post')}</button>`);
     bindMulti();
@@ -2816,7 +3018,7 @@ const ACT = {
     const media = [];
     try { for (let i = 0; i < files.length; i++) { busy('#postbtn', true, 'Uploading ' + (i + 1) + ' of ' + files.length + '...'); media.push(await uploadMedia(files[i].file)); } }
     catch (e) { busy('#postbtn', false, tr('post')); return toast(upErr(e)); }
-    const row = { user_id: S.user.id, content: text, visibility: S.postVis, allow_download: !!S.allowDl, media_url: media[0] ? media[0].url : null, media_type: media[0] ? media[0].type : null };
+    const row = { user_id: S.user.id, content: text, visibility: S.postVis, allow_download: !!S.allowDl, comments_enabled: S.defComments !== false, allowed_reactions: S.defRx || null, media_url: media[0] ? media[0].url : null, media_type: media[0] ? media[0].type : null };
     const { data: post, error } = await sb.from('posts').insert(row).select('id').single();
     if (error || !post) { busy('#postbtn', false, tr('post')); return toast('Could not post'); }
     if (media.length) {
@@ -2827,7 +3029,7 @@ const ACT = {
     closeSheet(); try { await loadFeed(); } catch (e) {} render(); toast('Posted');
   },
 
-  editprofile: () => {
+  editprofile_old: () => {
     const p = S.profile || {};
     sheet(`<h2>Edit profile</h2>
       <div class="fld">${uploadField('image/*', 'Change profile photo')}</div>
@@ -2838,7 +3040,7 @@ const ACT = {
       <button class="btn" id="profbtn" data-a="saveprofile">Save</button>`);
     bindUpload({ edit: true, ratio: '1:1' });
   },
-  saveprofile: async () => {
+  saveprofile_old: async () => {
     const uname = $('#pu').value.trim().toLowerCase().replace(/^@/, '');
     if (uname && !/^[a-z0-9_]{3,20}$/.test(uname)) return toast('Username: 3 to 20 letters, numbers or _');
     const row = { username: uname || null, display_name: $('#pn').value.trim().slice(0, 50) || 'Member', country: $('#pc').value.trim().slice(0, 50) || null, bio: $('#pb').value.trim().slice(0, 300) || null };
@@ -2855,7 +3057,7 @@ document.addEventListener('click', e => {
   const rb = $('#rxbar'); if (rb && !e.target.closest('#rxbar')) rb.remove();
   const a = e.target.closest('[data-a]'); if (!a) return;
   if (a.classList.contains('bd') && e.target !== a) return;
-  if (a.dataset.a === 'like' && S.lpFired) { S.lpFired = false; return; }
+  if ((a.dataset.a === 'like' || a.dataset.a === 'rxtap') && S.lpFired) { S.lpFired = false; return; }
   if (a.dataset.a === 'mmenu' && e.target.closest('audio,video')) return;
   if ((a.dataset.a === 'sprev' || a.dataset.a === 'snext') && S.sv && S.sv.held) { S.sv.held = false; return; }
   const f = ACT[a.dataset.a]; if (f) f(a.dataset.id, a);
@@ -3010,7 +3212,7 @@ function layers() {
 }
 function legacyBack() {
   clearInterval(S.gpoll); S.g = null; stopRecCancel(); S.reply = null; S.editM = null; clearInterval(S.poll); S.openThread = null; S.prof = null;
-  S.ovStack.length = 0; $('#over').innerHTML = ''; render(true); if (S.tab === 'chat') refresh();
+  S.ovStack.length = 0; setPageKey = null; $('#over').innerHTML = ''; render(true); if (S.tab === 'chat') refresh();
 }
 function closeTop(name) {
   if (name === 'call') { if (S.incoming && !S.call) { declineCall(); return true; } toast('End the call first'); return false; }
@@ -3022,7 +3224,7 @@ function closeTop(name) {
   if (name === 'over') {
     clearInterval(S.gpoll); clearInterval(S.poll); S.openThread = null; stopRecCancel(); S.reply = null; S.editM = null;
     if (S.ovStack.length > 1) {
-      S.ovStack.pop(); const top = S.ovStack[S.ovStack.length - 1]; S.g = null; S.prof = null; S.navBack = true;
+      S.ovStack.pop(); const top = S.ovStack[S.ovStack.length - 1]; S.g = null; S.prof = null; S.navBack = true; setPageKey = null;
       try { top.fn(); } catch (e) {} finally { S.navBack = false; }
       return true;
     }
@@ -3033,7 +3235,7 @@ function closeTop(name) {
 }
 function syncHist() {
   if (!S.user) return;
-  if (!$('#over').innerHTML.trim()) S.ovStack.length = 0;
+  if (!$('#over').innerHTML.trim()) { S.ovStack.length = 0; setPageKey = null; }
   const d = layers().length;
   if (d > H.n) { for (let i = H.n; i < d; i++) history.pushState({ k: 'l' }, ''); H.n = d; }
   else if (d < H.n) { const diff = H.n - d; H.n = d; H.ignore++; history.go(-diff); }
@@ -3060,7 +3262,7 @@ window.addEventListener('popstate', () => {
   ['sheet', 'viewer', 'story', 'call', 'live'].forEach(id => { const e = document.getElementById(id); if (e) new MutationObserver(hq).observe(e, { attributes: true, attributeFilter: ['class'] }); });
   new MutationObserver(hq).observe(document.getElementById('over'), { childList: true });
   new MutationObserver(hq).observe(document.getElementById('app'), { childList: true });
-  ['openThread', 'openUser', 'openPost', 'openGroup', 'openGroups', 'openEvents', 'openSaved', 'openBlocked', 'openWallet', 'openSearch', 'openSettings', 'openFollowList', 'openStoryComposer', 'openMyLives'].forEach(name => {
+  ['openThread', 'openUser', 'openPost', 'openGroup', 'openGroups', 'openEvents', 'openSaved', 'openBlocked', 'openWallet', 'openSearch', 'openSettingsHub', 'openSetPage', 'openDashboard', 'openFollowList', 'openStoryComposer', 'openMyLives'].forEach(name => {
     const f = window[name]; if (typeof f !== 'function') return;
     window[name] = function () {
       const args = [].slice.call(arguments), sig = name + JSON.stringify(args.filter(a => typeof a !== 'object'));
@@ -3086,12 +3288,17 @@ window.addEventListener('popstate', () => {
 /* ---------- see more, post frame, suggested people ---------- */
 let clampQ = 0;
 function fitClamps() {
-  document.querySelectorAll('.clamp:not(.open)').forEach(el => {
-    if (el.nextElementSibling && el.nextElementSibling.classList.contains('seemore')) return;
-    if (el.scrollHeight > el.clientHeight + 2) { const b = document.createElement('button'); b.className = 'seemore'; b.setAttribute('data-a', 'xpand'); b.textContent = 'See more'; el.insertAdjacentElement('afterend', b); }
+  document.querySelectorAll('.clamp').forEach(el => {
+    const nx = el.nextElementSibling;
+    if (nx && nx.classList.contains('seemore')) return;
+    const lh = parseFloat(getComputedStyle(el).lineHeight) || 20, lines = el.classList.contains('bt') ? 4 : 3;
+    if (!el.classList.contains('open')) {
+      if (el.scrollHeight > el.clientHeight + 2) { const b = document.createElement('button'); b.className = 'seemore'; b.setAttribute('data-a', 'xpand'); b.textContent = 'See more'; el.insertAdjacentElement('afterend', b); }
+    } else if (el.scrollHeight > lh * lines + 6) {
+      const b = document.createElement('button'); b.className = 'seemore'; b.setAttribute('data-a', 'xpand'); b.textContent = 'See less'; el.insertAdjacentElement('afterend', b);
+    }
   });
 }
-new MutationObserver(() => { cancelAnimationFrame(clampQ); clampQ = requestAnimationFrame(fitClamps); }).observe(document.getElementById('app'), { childList: true, subtree: true });
 function setPostRatio(t) {
   const car = t.closest && t.closest('.pcar'); if (!car || car.dataset.ar) return;
   const first = car.querySelector('.pit'); if (!first || !first.contains(t)) return;
