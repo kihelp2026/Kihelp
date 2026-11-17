@@ -1,6 +1,6 @@
 /* KiHelp service worker: makes the app installable and fast, never touches Supabase data */
-var VER = 'kihelp-24';
-var CORE = ['./', './index.html', './style.css?v=23', './app.js?v=23', './logo-320.png', './manifest.json', './icon-192.png', './icon-512.png'];
+var VER = 'kihelp-27';
+var CORE = ['./', './index.html', './style.css?v=26', './app.js?v=26', './logo-320.png', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', function (e) {
   e.waitUntil(
