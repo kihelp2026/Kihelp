@@ -91,7 +91,7 @@ const smedia = (m, cls, key) => (S.saver && !S.loaded.has(key))
 async function loadProfiles(ids) {
   ids = [...new Set(ids)].filter(i => i && !S.pf[i]);
   if (!ids.length) return;
-  const { data } = await sb.from('profiles').select('id,display_name,username,country,bio,avatar_url,banner_url,links,is_locked').in('id', ids);
+  const { data } = await sb.from('profiles').select('id,display_name,username,country,bio,avatar_url,banner_url,links,is_locked,shop_policy,shop_location').in('id', ids);
   (data || []).forEach(p => S.pf[p.id] = p);
 }
 const RX = { love: '❤️', like: '👍', haha: '😂', wow: '😮', sad: '😢', angry: '😡' };
@@ -102,14 +102,14 @@ function rxOf(list) {
   list.forEach(l => { const e = RXLEG[l.reaction] || l.reaction || '❤️'; rxs[e] = (rxs[e] || 0) + 1; if (l.user_id === S.user.id) mine = e; });
   return { rxs, react: mine, liked: !!mine, likes: list.length };
 }
-const POSTCOLS = 'id,user_id,content,created_at,media_url,media_type,visibility,pinned_at,allow_download,edited_at,allowed_reactions,comments_enabled,repost_of,product_id,is_paid_promo';
+const POSTCOLS = 'id,user_id,content,created_at,media_url,media_type,visibility,pinned_at,allow_download,edited_at,allowed_reactions,comments_enabled,repost_of,product_id,is_paid_promo,place';
 async function hydratePosts(posts) {
   const ids = posts.map(p => p.id);
   let likes = [], cms = [], pm = [];
   if (ids.length) {
     const [l, c, m] = await Promise.all([
       sb.from('post_likes').select('post_id,user_id,reaction').in('post_id', ids),
-      sb.from('comments').select('id,post_id,user_id,content,created_at,parent_id,edited_at').in('post_id', ids).order('created_at', { ascending: true }),
+      sb.from('comments').select('id,post_id,user_id,content,created_at,parent_id,edited_at,media_url,media_type').in('post_id', ids).order('created_at', { ascending: true }),
       sb.from('post_media').select('post_id,url,type,position').in('post_id', ids).order('position', { ascending: true })
     ]);
     likes = l.data || []; cms = c.data || []; pm = m.data || [];
@@ -123,10 +123,10 @@ async function hydratePosts(posts) {
   const out = posts.map(p => ({
     id: p.id, uid: p.user_id, t: ago(p.created_at), text: p.content, media: mediaOf(p, pm),
     adl: !!p.allow_download, dl: !!p.allow_download || p.user_id === S.user.id, ed: !!p.edited_at,
-    allowed: p.allowed_reactions || null, cmOn: p.comments_enabled !== false, repostOf: p.repost_of || null, productId: p.product_id || null, promo: !!p.is_paid_promo,
+    allowed: p.allowed_reactions || null, cmOn: p.comments_enabled !== false, repostOf: p.repost_of || null, productId: p.product_id || null, promo: !!p.is_paid_promo, place: p.place || null,
     vis: p.visibility || 'public', pin: !!p.pinned_at,
     ...rxOf(likes.filter(l => l.post_id === p.id)),
-    cm: cms.filter(c => c.post_id === p.id).map(c => ({ id: c.id, uid: c.user_id, w: nameOf(c.user_id), t: c.content, pid: c.parent_id, ed: !!c.edited_at, at: c.created_at }))
+    cm: cms.filter(c => c.post_id === p.id).map(c => ({ id: c.id, uid: c.user_id, w: nameOf(c.user_id), t: c.content, pid: c.parent_id, ed: !!c.edited_at, at: c.created_at, mu: c.media_url, mt: c.media_type }))
   }));
   const rids = [...new Set(posts.map(p => p.repost_of).filter(Boolean))];
   if (rids.length) {
@@ -138,6 +138,10 @@ async function hydratePosts(posts) {
       out.forEach(p => { if (p.repostOf) p.orig = map[p.repostOf] || null; });
     } catch (e) {}
   }
+  try {
+    const { data: tg } = await sb.from('post_tags').select('id,post_id,tagged_id,media_index,x,y,status').in('post_id', ids);
+    await loadProfiles((tg || []).map(t => t.tagged_id)); out.forEach(p => { p.tags = (tg || []).filter(t => t.post_id === p.id && t.status === 'approved'); });
+  } catch (e) {}
   const pids = [...new Set(out.map(p => p.productId).filter(Boolean))];
   if (pids.length) {
     try {
@@ -409,7 +413,7 @@ function mediaBlock(p) {
     if (S.saver && !S.loaded.has(key)) return `<div class="pit"><button class="ph saverph" style="--h:200;width:100%;height:100%;min-height:200px" data-a="load" data-id="${key}">Tap to load ${it.type}<br><small>Data saver is on</small></button></div>`;
     return it.type === 'video'
       ? `<div class="pit"><video src="${esc(it.url)}" controls playsinline preload="metadata"></video><button class="pexp" data-a="vopen" data-id="${p.id}" data-i="${i}" aria-label="Full screen">${I.expand}</button></div>`
-      : `<div class="pit"><img src="${esc(it.url)}" alt="" loading="lazy" data-dt="p" data-id="${p.id}" data-i="${i}"></div>`;
+      : `<div class="pit"><img src="${esc(it.url)}" alt="" loading="lazy" data-dt="p" data-id="${p.id}" data-i="${i}">${tagChips(p, i)}</div>`;
   };
   return `<div class="pcar ${single ? 'single' : ''}"><div class="rail">${m.map(item).join('')}</div>${single ? '' : `<span class="pcount">1 / ${m.length}</span>`}</div>${single ? '' : `<div class="pdots">${m.map((_, i) => `<i class="${i === 0 ? 'on' : ''}"></i>`).join('')}</div>`}`;
 }
@@ -417,7 +421,7 @@ function commentsHTML(p) {
   const top = p.cm.filter(c => !c.pid), kids = c => p.cm.filter(x => x.pid === c.id);
   const row = (c, sub) => (S.editC && S.editC.id === c.id)
     ? `<div class="cmt${sub ? ' sub' : ''}"><input id="ec${c.id}" value="${esc(c.t)}" maxlength="1000"><div class="crow"><button class="btn sm2" data-a="csave" data-id="${c.id}" data-p="${p.id}">Save</button><button class="btn alt sm2" data-a="ccancel">Cancel</button></div></div>`
-    : `<div class="cmt${sub ? ' sub' : ''}"><b>${esc(c.w)}</b>${fmtText(txShow('c' + c.id, c.t))}${txLink('c' + c.id, c.t)}${c.ed ? ' <small class="ls">(edited)</small>' : ''}
+    : `<div class="cmt${sub ? ' sub' : ''}"><b>${esc(c.w)}</b>${fmtText(txShow('c' + c.id, c.t))}${txLink('c' + c.id, c.t)}${c.ed ? ' <small class="ls">(edited)</small>' : ''}${cmMedia(c)}
       <div class="cact"><span class="ls">${ago(c.at)}</span><button data-a="creply" data-id="${c.id}" data-p="${p.id}">Reply</button>${c.uid === S.user.id ? `<button data-a="cedit" data-id="${c.id}">Edit</button><button data-a="cdel" data-id="${c.id}" data-p="${p.id}">Delete</button>` : `<button data-a="rep" data-t="comment" data-id="${c.id}" data-o="${c.uid}">Report</button>`}</div></div>`;
   return top.map(c => row(c, false) + kids(c).map(k => row(k, true)).join('')).join('');
 }
@@ -435,7 +439,7 @@ function postCard(p) {
   const chips = rxs.map(([e, n]) => `<button class="rxchip ${p.react === e ? 'on' : ''}" data-a="rxtap" data-id="${p.id}" data-e="${e}">${e}<span>${n}</span></button>`).join('');
   const canReact = !p.allowed || p.allowed.length > 0, cmOn = p.cmOn !== false;
   return `<article class="post">
-    <div class="prow"><button class="ph-row" data-a="user" data-id="${p.uid}">${avOf(p.uid)}<div><b>${esc(nameOf(p.uid))}</b><small>${p.t}${p.ed ? ' · edited' : ''} · ${visIcon(p.vis)}${p.repostOf ? ' · 🔁 reposted' : ''}${p.promo ? ' · Paid promotion' : ''}</small></div></button>${fChip(p.uid)}${p.pin ? '<span class="pbadge">Pinned</span>' : ''}<span style="flex:1"></span><button class="ibtn" data-a="pmenu" data-id="${p.id}" aria-label="More options">${I.more}</button></div>
+    <div class="prow"><button class="ph-row" data-a="user" data-id="${p.uid}">${avOf(p.uid)}<div><b>${esc(nameOf(p.uid))}</b><small>${p.t}${p.ed ? ' · edited' : ''} · ${visIcon(p.vis)}${p.repostOf ? ' · 🔁 reposted' : ''}${p.promo ? ' · Paid promotion' : ''}${p.place ? ' · 📍 ' + esc(p.place) : ''}</small></div></button>${fChip(p.uid)}${p.pin ? '<span class="pbadge">Pinned</span>' : ''}<span style="flex:1"></span><button class="ibtn" data-a="pmenu" data-id="${p.id}" aria-label="More options">${I.more}</button></div>
     ${p.text ? `<p class="ptext clamp${S.xp.has('p' + p.id) ? ' open' : ''}" data-xk="p${p.id}" data-dt="pt" data-id="${p.id}">${fmtText(txShow('p' + p.id, p.text))}</p>${txLink('p' + p.id, p.text)}` : ''}
     ${repostCard(p)}
     ${mediaBlock(p)}
@@ -447,7 +451,7 @@ function postCard(p) {
       <button class="sp ${S.savedPosts.has(p.id) ? 'on' : ''}" data-a="psave" data-id="${p.id}" aria-label="Save post">${I.save}</button>
     </div>
     ${chips || canReact ? `<div class="rxrow">${chips}${canReact ? `<button class="rxchip add" data-a="rxadd" data-id="${p.id}" aria-label="Add a reaction">☺<span>+</span></button>` : ''}</div>` : ''}
-    ${!cmOn ? '<div class="ls" style="padding:2px 16px 8px">Comments are turned off.</div>' : S.open.has(p.id) ? `<div class="cmts">${commentsHTML(p)}\n      ${replyChip(p)}\n      <div class="cin"><input id="ci${p.id}" data-mention placeholder="Write a comment" maxlength="1000"><button class="send" data-a="addcmt" data-id="${p.id}" aria-label="Send comment">${I.send}</button></div></div>` : ''}
+    ${!cmOn ? '<div class="ls" style="padding:2px 16px 8px">Comments are turned off.</div>' : S.open.has(p.id) ? `<div class="cmts">${commentsHTML(p)}\n      ${replyChip(p)}\n      ${cmPrev(p.id)}<div class="cin"><label class="cattach" aria-label="Attach a photo or video"><input type="file" data-cf="${p.id}" accept="image/*,video/*" hidden>📎</label><button class="cattach ${S.crec && S.crec.id == p.id ? 'rec' : ''}" data-a="crec" data-id="${p.id}" aria-label="Record a voice message">🎤</button><input id="ci${p.id}" data-mention placeholder="Write a comment" maxlength="1000" value="${esc((S.cdraft && S.cdraft[p.id]) || '')}"><button class="send" data-a="addcmt" data-id="${p.id}" aria-label="Send comment">${I.send}</button></div></div>` : ''}
   </article>`;
 }
 function viewHome() {
@@ -1478,7 +1482,7 @@ function paintGroup() {
   if (G.loading || !G.row) { b.innerHTML = '<div class="empty" style="padding:50px">Loading...</div>'; return; }
   const g = G.row, me = G.me, active = !!(me && me.status === 'active'), pend = !!(me && me.status === 'pending'), admin = active && (me.role === 'owner' || me.role === 'admin');
   const seeMore = active || g.privacy === 'public';
-  const action = active ? '<button class="btn alt sm2" data-a="gmenu">Joined</button>' : pend ? '<button class="btn alt sm2" data-a="gcancel">Request sent</button>' : `<button class="btn sm2" data-a="gjoin">${g.privacy === 'public' ? 'Join' : 'Request to join'}</button>`;
+  const action = active ? '<button class="btn sm2" data-a="gcallbtn" aria-label="Group call">📞 Call</button> <button class="btn alt sm2" data-a="gmenu">Joined</button>' : pend ? '<button class="btn alt sm2" data-a="gcancel">Request sent</button>' : `<button class="btn sm2" data-a="gjoin">${g.privacy === 'public' ? 'Join' : 'Request to join'}</button>`;
   const tabs = [['chat', 'Chat', active], ['members', 'Members', seeMore], ['events', 'Events', seeMore], ['about', 'About', true]].filter(t => t[2]);
   if (!tabs.some(t => t[0] === G.tab)) G.tab = tabs[0][0];
   b.innerHTML = `<div class="ghead"><div class="grow">${gav(g, 52)}<div class="tx"><b>${esc(g.name)}</b><div class="ls">${privIcon(g.privacy)} ${g.privacy === 'private' ? 'Private' : 'Public'} group${seeMore ? ' · ' + G.members.length + ' member' + (G.members.length === 1 ? '' : 's') : ''}</div></div>${action}</div>
@@ -2072,7 +2076,7 @@ function meTabs() {
 const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
 const ST = { placed: 'Placed', confirmed: 'Confirmed', shipped: 'Shipped', delivered: 'Delivered', completed: 'Completed', canceled: 'Canceled' };
 function mkBar() {
-  return `<div class="chips mkbar">${[['all', 'All'], ['retail', 'Retail'], ['wholesale', 'Wholesale'], ['custom', 'Custom-made']].map(([k, l]) => `<button class="chip ${(S.mmode || 'all') === k ? 'on' : ''}" data-a="mmode" data-id="${k}">${l}</button>`).join('')}<button class="chip hl" data-a="openorders">🧾 Orders</button><button class="chip hl" data-a="rfqhub">📨 Quotes</button><button class="chip hl" data-a="listshub">💝 Lists</button><button class="chip hl" data-a="deliverhub">🚚 Delivery</button></div>`;
+  return `<div class="chips mkbar">${[['all', 'All'], ['retail', 'Retail'], ['wholesale', 'Wholesale'], ['custom', 'Custom-made']].map(([k, l]) => `<button class="chip ${(S.mmode || 'all') === k ? 'on' : ''}" data-a="mmode" data-id="${k}">${l}</button>`).join('')}<button class="chip hl" data-a="openorders">🧾 Orders</button><button class="chip hl" data-a="rfqhub">📨 Quotes</button><button class="chip hl" data-a="listshub">💝 Lists</button><button class="chip hl" data-a="deliverhub">🚚 Delivery</button><button class="chip hl" data-a="cartopen">🛒 Cart${S.cart.length ? ' (' + S.cart.length + ')' : ''}</button></div>`;
 }
 function sellExtras() {
   const v = id => { const e = $('#' + id); return e ? e.value.trim() : ''; };
@@ -2110,6 +2114,7 @@ async function openOrders() {
   if (error) { box.innerHTML = '<div class="empty" style="padding:40px">Could not load orders.</div>'; return; }
   S.orders = data || []; await loadProfiles(S.orders.map(o => tab === 'buy' ? o.seller_id : o.buyer_id));
   box.innerHTML = S.orders.length ? S.orders.map(o => { const other = tab === 'buy' ? o.seller_id : o.buyer_id; return `<button class="ordrow" data-a="ord" data-id="${o.id}"><span class="tx"><b>${esc(o.title)}</b><span class="ls" style="display:block">x${o.qty} · ${fmt(o.total, o.currency)} · ${esc(nameOf(other))}</span><span class="ls" style="display:block">${new Date(o.created_at).toLocaleDateString()}</span></span><span class="pbadge st-${o.status}">${ST[o.status] || o.status}</span></button>`; }).join('') : `<div class="empty" style="padding:50px 24px">${tab === 'buy' ? 'You have not bought anything yet.<br>Open Market and tap Buy now.' : 'No orders yet.<br>When someone buys your item it appears here.'}</div>`;
+  if (tab === 'sell' && S.orders.length) box.insertAdjacentHTML('afterbegin', salesCard());
 }
 async function openRfqHub() {
   const tab = S.rtab || 'mine';
@@ -2186,6 +2191,7 @@ async function loadFx() {
     }
   } catch (e) {}
 }
+document.addEventListener('change', async e => { if (e.target.id === 'callfrom') { const v = e.target.value; const { error } = await sb.from('profiles').update({ call_from: v }).eq('id', S.user.id); if (error) return toast('Could not save'); S.profile.call_from = v; toast('Saved'); } });
 document.addEventListener('change', e => { if (e.target.id === 'dcur') { S.dcur = e.target.value || ''; saveSettings(); render(true); toast('Saved'); } });
 
 /* delivery */
@@ -2318,6 +2324,7 @@ async function openOrder(id) {
     ${!active && (o.status === 'placed' || o.status === 'confirmed' || o.status === 'shipped') ? '<button class="btn alt" data-a="dpick">🚚 Arrange delivery</button>' : ''}
     ${buyer && o.status === 'completed' && !reviewed ? '<button class="btn" data-a="review">★ Leave a review</button>' : ''}${reviewed ? '<div class="note">Thanks, your review is saved.</div>' : ''}
     ${dis ? `<button class="btn alt" data-a="dcase" data-id="${dis.id}">⚠️ View case (${DS[dis.status]})</button>` : (buyer && (o.status === 'shipped' || o.status === 'delivered' || o.status === 'completed') ? '<button class="btn alt" data-a="dopen">⚠️ Report a problem or ask for a return</button>' : '')}
+    ${buyer && o.product_id && (o.status === 'completed' || o.status === 'canceled') ? '<button class="btn alt" data-a="reorder">🔁 Order again</button>' : ''}
     <button class="btn alt" data-a="msgu" data-id="${other}">Message ${esc(nameOf(other))}</button>`);
 }
 
@@ -2421,6 +2428,7 @@ async function loadSocial() {
     S.reqIn = (rq.data || []).filter(r => r.target_id === S.user.id).map(r => r.requester_id);
     S.notInt = new Set((pf.data || []).filter(x => !x.interested).map(x => x.post_id));
     S.intr = new Set((pf.data || []).filter(x => x.interested).map(x => x.post_id));
+    try { const w = await sb.from('product_alerts').select('product_id'); S.watch = new Set((w.data || []).map(x => x.product_id)); } catch (e) {}
     if (S.ready.home) render(true);
   } catch (e) {}
 }
@@ -2474,6 +2482,7 @@ async function openStore(uid) {
   b.innerHTML = `<div class="pcenter" style="padding-top:16px">${avOf(uid, 72)}<div class="big" style="margin-top:8px">${esc(nameOf(uid))}</div><div class="ls">${s && s.reviews > 0 ? '★ ' + s.avg_rating + ' · ' + s.reviews + ' review' + (s.reviews === 1 ? '' : 's') : 'No reviews yet'}${p0.country ? ' · ' + esc(p0.country) : ''}</div>
     <div class="dots" style="justify-content:center;margin-top:8px">${modes.map(m => `<span class="pbadge">${({ retail: 'Retail', wholesale: 'Wholesale', custom: 'Custom-made' })[m] || ''}</span>`).join('')}</div>
     <div class="row2" style="padding:10px 16px 0"><button class="btn ${S.following.has(uid) ? 'alt' : ''}" data-a="qfollow" data-id="${uid}">${S.following.has(uid) ? 'Following' : (S.requested.has(uid) ? 'Requested' : 'Follow store')}</button><button class="btn alt" data-a="dm" data-id="${uid}">Contact</button></div></div>
+    ${p0.shop_location ? `<p class="ls" style="text-align:center">📍 Ships from ${esc(p0.shop_location)}</p>` : ''}${p0.shop_policy ? `<div class="note" style="margin:8px 16px"><b>Shop policies</b><br>${esc(p0.shop_policy)}</div>` : ''}
     <h3 class="sub">Products (${prods.length})</h3>${prods.length ? `<div class="grid">${prods.map(listingCard).join('')}</div>` : '<div class="empty" style="padding:30px">No items for sale right now.</div>'}
     <h3 class="sub">Verified reviews</h3>${(rv.data || []).length ? rv.data.map(r => `<div class="item"><p>${'★'.repeat(r.rating)}${'☆'.repeat(5 - r.rating)} · ${esc(nameOf(r.reviewer_id))}<small>${esc(r.body || '')}</small></p></div>`).join('') : '<div class="empty" style="padding:20px">Reviews appear after completed orders.</div>'}`;
 }
@@ -2506,6 +2515,127 @@ async function fillProdSelect() {
   } catch (e) {}
 }
 
+/* ---------- v0.23: cart, comment media, tags, group calls, alerts ---------- */
+S.cart = (() => { try { return JSON.parse(localStorage.getItem('kihelp.cart') || '[]'); } catch (e) { return []; } })();
+S.cmedia = {}; S.cdraft = {}; S.watch = new Set(); S.gc = null;
+const cartSave = () => { try { localStorage.setItem('kihelp.cart', JSON.stringify(S.cart)); } catch (e) {} };
+document.addEventListener('input', e => { const t = e.target; if (t && t.id && t.id.indexOf('ci') === 0 && /^ci\d+$/.test(t.id)) S.cdraft[t.id.slice(2)] = t.value; });
+document.addEventListener('change', e => {
+  const t = e.target; if (!t || !t.dataset || !t.dataset.cf) return; const f = t.files && t.files[0]; if (!f) return;
+  const type = f.type.indexOf('video') === 0 ? 'video' : f.type.indexOf('image') === 0 ? 'image' : null;
+  if (!type) return toast('Choose a photo or video'); if (f.size > 25 * 1048576) return toast('That file is too large (max 25 MB)');
+  const id = t.dataset.cf, el = $('#ci' + id); if (el) S.cdraft[id] = el.value; S.cmedia[id] = { file: f, type }; repaint();
+});
+function cmPrev(id) { const M = S.cmedia[id]; return M ? `<div class="cprev">${M.type === 'audio' ? '🎤 Voice message ready' : M.type === 'video' ? '🎬 ' + esc(M.file.name) : '📷 ' + esc(M.file.name)}<button data-a="cmx" data-id="${id}" aria-label="Remove attachment">${I.x}</button></div>` : ''; }
+function cmMedia(c) {
+  if (!c.mu || !safeUrl(c.mu)) return '';
+  return c.mt === 'image' ? `<img class="cmimg" src="${esc(c.mu)}" alt="Photo in comment" loading="lazy">` : c.mt === 'video' ? `<video class="cmimg" src="${esc(c.mu)}" controls playsinline preload="metadata"></video>` : `<audio class="cmaud" src="${esc(c.mu)}" controls preload="none"></audio>`;
+}
+async function uploadAudio(file) {
+  const base = (file.type || 'audio/webm').split(';')[0], ext = base.indexOf('mp4') >= 0 || base.indexOf('m4a') >= 0 ? 'm4a' : base.indexOf('ogg') >= 0 ? 'ogg' : 'webm';
+  const path = S.user.id + '/voice-' + Date.now() + '.' + ext;
+  const { error } = await sb.storage.from('media').upload(path, file, { contentType: base, cacheControl: '31536000' }); if (error) throw error;
+  return { url: sb.storage.from('media').getPublicUrl(path).data.publicUrl, type: 'audio' };
+}
+const tagChips = (p, i) => (p.tags || []).filter(t => t.media_index === i).map(t => `<button class="ptag" style="left:${Math.round(t.x * 100)}%;top:${Math.round(t.y * 100)}%" data-a="user" data-id="${t.tagged_id}">${esc(nameOf(t.tagged_id))}</button>`).join('');
+function salesCard() {
+  const by = {}; let n = 0; S.orders.forEach(o => { if (o.status === 'canceled') return; n++; if (o.status === 'delivered' || o.status === 'completed') by[o.currency] = (by[o.currency] || 0) + Number(o.total); });
+  const open = S.orders.filter(o => o.status === 'placed' || o.status === 'confirmed' || o.status === 'shipped').length;
+  return `<div class="dgrid"><div class="dcard"><b>${n}</b><small>Orders (not canceled)</small></div><div class="dcard"><b>${open}</b><small>In progress</small></div>${Object.entries(by).map(([c, v]) => `<div class="dcard"><b>${fmt(v, c)}</b><small>Delivered sales</small></div>`).join('')}</div>`;
+}
+async function openCart() {
+  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button><b class="ttl">Cart</b></header><div class="setbody" id="cartb"><div class="empty" style="padding:40px">Loading...</div></div></div>`;
+  const miss = S.cart.map(x => x.id).filter(id => !S.products.find(p => p.id === id));
+  if (miss.length) { const { data } = await sb.from('products').select('*').in('id', miss).eq('status', 'active'); await loadProfiles((data || []).map(p => p.seller_id)); (data || []).forEach(p => S.products.push(mapProd(p))); }
+  S.cart = S.cart.filter(x => S.products.find(p => p.id === x.id)); cartSave(); paintCart();
+}
+function paintCart() {
+  const b = $('#cartb'); if (!b) return; const keep = ['#cad', '#cco'].map(s => $(s) ? $(s).value : '');
+  if (!S.cart.length) { b.innerHTML = '<div class="empty" style="padding:50px 24px">Your cart is empty.<br>Open an item and tap Add to cart.</div>'; return; }
+  const totals = {};
+  const rows = S.cart.map(it => { const l = S.products.find(p => p.id === it.id), u = unitFor(l, it.qty); totals[l.cur] = (totals[l.cur] || 0) + u * it.qty; return `<div class="ordrow cartrow"><span class="tx"><b>${esc(l.title)}</b><span class="ls" style="display:block">${fmt(u, l.cur)} each · ${esc(l.who)}${(l.moq || 1) > 1 ? ' · min ' + l.moq : ''}</span></span><span class="qty sm"><button data-a="cartqty" data-id="${l.id}" data-d="-1" aria-label="Fewer">−</button><b>${it.qty}</b><button data-a="cartqty" data-id="${l.id}" data-d="1" aria-label="More">+</button></span><button class="ibtn" data-a="cartdel" data-id="${l.id}" aria-label="Remove">${I.x}</button></div>`; }).join('');
+  b.innerHTML = rows + `<div class="note" style="margin:12px 16px">${Object.entries(totals).map(([c, v]) => 'Total <b>' + fmt(v, c) + '</b>').join(' · ')}<br>Each item becomes its own order with its seller. Payment and delivery are arranged with each seller.</div>
+    <div style="padding:0 16px 24px"><div class="fld"><label for="cad">Delivery address</label><textarea id="cad" maxlength="300">${esc(keep[0])}</textarea></div><div class="fld"><label for="cco">Country</label><input id="cco" maxlength="60" value="${esc(keep[1])}"></div><button class="btn" id="cgo" data-a="cartgo">Place ${S.cart.length} order${S.cart.length === 1 ? '' : 's'}</button></div>`;
+}
+/* tags */
+function paintTagger() {
+  const T = S.tg, p = T && findPost(T.post); if (!p) return;
+  const imgs = (p.media || []).map((m, i) => ({ m, i })).filter(x => x.m.type === 'image'), cur = (p.media || [])[T.idx];
+  sheet(`<h2>Tag people</h2><p class="ls" style="margin-bottom:6px">Tap the photo where the person is, then search their name. They must approve the tag.</p>
+    ${imgs.length > 1 ? `<div class="dots" style="margin-bottom:6px">${imgs.map(x => `<button class="chip ${x.i === T.idx ? 'on' : ''}" data-a="tgidx" data-id="${x.i}">Photo ${x.i + 1}</button>`).join('')}</div>` : ''}
+    <div class="tagimg"><img src="${esc(cur.url)}" alt="Tap to place a tag"><span id="tgmark" class="tgmark" style="display:${T.x == null ? 'none' : 'block'};left:${(T.x || 0) * 100}%;top:${(T.y || 0) * 100}%"></span></div>
+    <div class="fld" style="margin-top:8px"><input id="tgq" type="search" placeholder="Search by name or @username" maxlength="40" autocomplete="off"></div><div id="tgres"></div>`);
+}
+document.addEventListener('click', e => {
+  const t = e.target.closest && e.target.closest('.tagimg'); if (!t || !S.tg) return;
+  const r = t.getBoundingClientRect(); S.tg.x = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)); S.tg.y = Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
+  const m = $('#tgmark'); if (m) { m.style.display = 'block'; m.style.left = S.tg.x * 100 + '%'; m.style.top = S.tg.y * 100 + '%'; }
+});
+let tgT; document.addEventListener('input', e => {
+  if (e.target.id !== 'tgq') return; clearTimeout(tgT); const q = e.target.value.trim().replace(/[%,()]/g, '');
+  tgT = setTimeout(async () => {
+    const box = $('#tgres'); if (!box) return; if (q.length < 2) { box.innerHTML = ''; return; }
+    const { data } = await sb.from('profiles').select('id,display_name,username').or('display_name.ilike.%' + q + '%,username.ilike.%' + q + '%').neq('id', S.user.id).limit(8);
+    (data || []).forEach(x => { S.pf[x.id] = Object.assign({}, S.pf[x.id], x); });
+    box.innerHTML = (data || []).map(x => `<button class="ordrow" style="padding-inline:0" data-a="tgpick" data-id="${x.id}">${avOf(x.id, 36)}<span class="tx"><b>${esc(x.display_name || 'Member')}</b><span class="ls" style="display:block">${x.username ? '@' + esc(x.username) : ''}</span></span></button>`).join('') || '<div class="ls">No one found.</div>';
+  }, 300);
+});
+async function openTagReqs() {
+  setPage('Tag requests', '<div class="empty" style="padding:40px">Loading...</div>');
+  const { data } = await sb.from('post_tags').select('id,post_id,status,created_at').eq('tagged_id', S.user.id).order('created_at', { ascending: false }).limit(50);
+  const L = data || []; let owners = {};
+  if (L.length) { const r = await sb.from('posts').select('id,user_id').in('id', L.map(x => x.post_id)); (r.data || []).forEach(x => { owners[x.id] = x.user_id; }); await loadProfiles(Object.values(owners)); }
+  const b = $('#spbody'); if (!b) return;
+  b.innerHTML = L.length ? L.map(x => `<div class="reqrow"><div class="tx" style="flex:1"><b>${esc(nameOf(owners[x.post_id]))}</b><span class="ls" style="display:block">${x.status === 'pending' ? 'tagged you in a photo' : 'Approved tag'}</span></div><button class="btn alt sm2" data-a="openpost" data-id="${x.post_id}">View</button>${x.status === 'pending' ? `<button class="btn sm2" data-a="tgok" data-id="${x.id}">Approve</button>` : ''}<button class="btn alt sm2" data-a="tgno" data-id="${x.id}">Remove</button></div>`).join('') : '<div class="empty" style="padding:50px 24px">No tags yet.<br>Tags appear on a photo only after you approve them.</div>';
+}
+/* group calls */
+const curGid = () => S.g && (S.g.id || (S.g.row && S.g.row.id));
+const agoraUid = id => (parseInt(String(id).replace(/-/g, '').slice(0, 8), 16) >>> 0) || 1;
+async function groupToken(gid) {
+  const { data: { session } } = await sb.auth.getSession();
+  const r = await fetch(SUPA_URL + '/functions/v1/agora-token', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (session ? session.access_token : ''), apikey: SUPA_KEY }, body: JSON.stringify({ channel: 'gc-' + gid }) });
+  const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || 'Could not join the call'); return j;
+}
+async function joinGroupCall(gid, kind) {
+  if (S.gc || S.live || S.call) return toast('Finish your current call or live first');
+  toast('Connecting...'); let AR; try { AR = await loadAgora(); } catch (e) { return toast('Could not load the call tool. Check your internet.'); }
+  let tk; try { tk = await groupToken(gid); } catch (e) { return toast(String(e.message || 'Could not join')); }
+  const client = AR.createClient({ mode: 'rtc', codec: 'vp8' });
+  const G = S.gc = { gid, kind, client, tracks: [], remote: {}, uidmap: {}, timers: [], callId: tk.callId, myUid: tk.uid, muted: false, camOff: kind === 'audio', start: Date.now() };
+  try { const { data } = await sb.from('group_members').select('user_id').eq('group_id', gid).eq('status', 'active'); const ids = (data || []).map(x => x.user_id); await loadProfiles(ids); ids.forEach(u => { G.uidmap[agoraUid(u)] = u; }); } catch (e) {}
+  const root = document.createElement('div'); root.id = 'gcall'; root.className = 'gcall'; document.body.appendChild(root);
+  setTimeout(syncHist, 0);
+  try {
+    client.on('user-published', async (user, mt) => { try { await client.subscribe(user, mt); } catch (e) { return; } G.remote[user.uid] = user; if (mt === 'audio' && user.audioTrack) user.audioTrack.play(); paintGroupCall(); });
+    client.on('user-unpublished', () => paintGroupCall());
+    client.on('user-left', user => { delete G.remote[user.uid]; paintGroupCall(); });
+    await client.join(tk.appId, tk.channel, tk.token, tk.uid);
+    G.mic = await AR.createMicrophoneAudioTrack(); G.tracks.push(G.mic);
+    if (kind === 'video') { G.cam = await AR.createCameraVideoTrack({ encoderConfig: S.saver ? { width: 480, height: 360, frameRate: 15 } : { width: 640, height: 480, frameRate: 24 } }); G.tracks.push(G.cam); }
+    await client.publish(G.tracks);
+  } catch (e) { await leaveGroupCall(); return toast('Could not start the microphone or camera. Check permissions.'); }
+  G.timers.push(setInterval(async () => {
+    if (!S.gc) return; try { await sb.rpc('group_call_ping', { p_call: G.callId }); const { data } = await sb.from('group_calls').select('status').eq('id', G.callId).maybeSingle(); if (data && data.status === 'ended') { toast('The call was ended'); leaveGroupCall(); } } catch (e) {}
+  }, 25000));
+  paintGroupCall();
+}
+function paintGroupCall() {
+  const G = S.gc, root = $('#gcall'); if (!G || !root) return;
+  const me = { uid: G.myUid, local: true }, others = Object.values(G.remote), all = [me].concat(others);
+  const nm = u => { const id = G.uidmap[u.uid]; return id ? nameOf(id) : 'Participant'; };
+  root.innerHTML = `<div class="gtop"><b>${G.kind === 'video' ? 'Video call' : 'Voice call'}</b><span>${all.length} in call</span></div>
+    <div class="gtiles n${Math.min(all.length, 6)}">${all.map(u => { const id = u.local ? S.user.id : G.uidmap[u.uid]; return `<div class="gtile" id="gct-${u.uid}"><div class="gav">${id ? avOf(id, 72) : ''}</div><span class="gname">${u.local ? 'You' : esc(nm(u))}</span></div>`; }).join('')}</div>
+    <div class="gbar"><button class="gb ${G.muted ? 'off' : ''}" data-a="gcmic" aria-label="Microphone">${G.muted ? '🔇' : '🎤'}</button>${G.kind === 'video' ? `<button class="gb ${G.camOff ? 'off' : ''}" data-a="gccam" aria-label="Camera">${G.camOff ? '🚫' : '📷'}</button><button class="gb" data-a="gcflip" aria-label="Switch camera">🔄</button>` : ''}<button class="gb end" data-a="gcleave" aria-label="Leave">Leave</button><button class="gb" data-a="gcend" aria-label="End for everyone">End all</button></div>`;
+  try { if (G.cam && !G.camOff) { const el = $('#gct-' + G.myUid); if (el) { el.querySelector('.gav').style.display = 'none'; G.cam.play(el); } } } catch (e) {}
+  others.forEach(u => { try { if (u.videoTrack) { const el = $('#gct-' + u.uid); if (el) { el.querySelector('.gav').style.display = 'none'; u.videoTrack.play(el); } } } catch (e) {} });
+}
+async function leaveGroupCall() {
+  const G = S.gc; if (!G) return; S.gc = null; (G.timers || []).forEach(t => clearInterval(t));
+  try { (G.tracks || []).forEach(t => { t.stop(); t.close(); }); } catch (e) {}
+  try { if (G.client) { G.client.removeAllListeners(); await G.client.leave(); } } catch (e) {}
+  const r = $('#gcall'); if (r) r.remove(); setTimeout(syncHist, 0);
+}
+
 /* ---------- settings + theme ---------- */
 function applyTheme() {
   const dark = S.mode === 'dark' || (S.mode === 'system' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
@@ -2536,7 +2666,7 @@ const SET_SECTIONS = [
   { title: 'How you use KiHelp', rows: [['saved', '🔖', 'Saved', 'Posts you saved'], ['notifs', '🔔', 'Notifications', 'Alerts for messages, calls and more'], ['lists', '💝', 'Wish lists', 'Saved products in named lists'], ['drafts', '📝', 'Drafts and scheduled posts', 'Finish or publish later'], ['qr', '▦', 'My QR code', 'Let people scan your profile'], ['invite', '📨', 'Invite friends', 'Share KiHelp']] },
   { title: 'Subscription', rows: [['sub', '⭐', 'Subscriptions', 'Verified badge and premium (coming soon)']] },
   { title: 'Creator tools', rows: [['dash', '📈', 'Dashboard', 'Your numbers at a glance'], ['pro', '💼', 'Professional dashboard', 'Reach, audience and earnings'], ['lives', '🔴', 'My lives', 'Watch, share or delete saved lives'], ['wallet', '🪙', 'Wallet and gifts', 'Coins and creator earnings']] },
-  { title: 'Who can see you', rows: [['privacy', '🔒', 'Privacy and search', 'Find me by email or phone'], ['defvis', '🌍', 'Default post audience', 'Who sees your new posts'], ['freq', '🔒', 'Follow requests', 'Approve who can follow you'], ['blocked', '⛔', 'Blocked accounts', 'People you blocked']] },
+  { title: 'Who can see you', rows: [['privacy', '🔒', 'Privacy and search', 'Find me by email or phone'], ['defvis', '🌍', 'Default post audience', 'Who sees your new posts'], ['freq', '🔒', 'Follow requests', 'Approve who can follow you'], ['tags', '🏷️', 'Tag requests', 'Approve or remove photo tags'], ['blocked', '⛔', 'Blocked accounts', 'People you blocked']] },
   { title: 'How others can interact with you', rows: [['comments', '💬', 'Comments', 'Turn comments on or off for new posts'], ['react', '❤️', 'Reactions', 'Choose reactions allowed on new posts'], ['mentions', '@', 'Mentions', 'Who can mention you']] },
   { title: 'What you see', rows: [['lang', '🌐', 'App language', 'Language of menus and buttons'], ['tlang', '🈯', 'Translation', 'Language to translate posts into'], ['content', '👀', 'Content and data', 'Data saver and media'], ['currency', '💱', 'Display currency', 'Show prices in the currency you prefer']] },
   { title: 'Your app and media', rows: [['appearance', '🌗', 'Appearance', 'Light or dark, accent colour'], ['media', '🖼️', 'Media, storage and cache', 'Data saver, clear cache'], ['install', '📲', 'Install KiHelp', 'Add it to your home screen']] },
@@ -2565,6 +2695,7 @@ function openSetPage(key) {
   setPageKey = key; const pc = S.pc || {}; const AC = { teal: '#0e6b6b', saffron: '#f0a800', violet: '#6b46c9', rose: '#d6336c' };
   if (key === 'notifs') { setPage('Notifications', '<div id="pushrow"><div class="srow"><div class="ls">Checking...</div></div></div>'); paintPushRow(); }
   else if (key === 'privacy') setPage('Privacy and search', `<div class="srow"><div><div class="lbl">Private account</div><div class="ls">Only approved followers see your posts, videos and stories. Your name, photo and bio stay public.</div></div>${sw2(S.profile && S.profile.is_locked, 'tgllock')}</div>
+    <div class="srow col"><div class="lbl">Who can call you</div><select id="callfrom" aria-label="Who can call you">${[['everyone', 'Everyone'], ['friends', 'Friends only'], ['nobody', 'Nobody']].map(([k, l]) => `<option value="${k}" ${((S.profile && S.profile.call_from) || 'everyone') === k ? 'selected' : ''}>${l}</option>`).join('')}</select><div class="ls">Applies to voice and video calls. Group calls are always your choice to join.</div></div>
     <div class="srow"><div><div class="lbl">Find me by email</div><div class="ls">Only people who type your exact email can find you</div></div>${sw2(pc.allow_email_search, 'tglemail')}</div>
     <div class="srow col"><div class="lbl">Phone number</div><input id="phone" type="tel" inputmode="tel" placeholder="+251912345678" value="${esc(pc.phone || '')}" maxlength="20" autocomplete="tel"><div class="ls">Include your country code. Only you can see it.</div><button class="btn alt" data-a="savephone">Save phone</button></div>
     <div class="srow"><div><div class="lbl">Find me by phone</div><div class="ls">Only people who type your exact number can find you</div></div>${sw2(pc.allow_phone_search, 'tglphone')}</div>`);
@@ -2629,7 +2760,7 @@ const ACT = {
   settings: () => openSettingsHub(),
   setprof: () => { setPageKey = null; S.ovStack.length = 0; $('#over').innerHTML = ''; S.tab = 'me'; render(); refresh(); },
   setgo: id => {
-    const m = { saved: () => openSaved(), wallet: () => openWallet(), funds: () => openWallet(), lives: () => openMyLives(), blocked: () => openBlocked(), dash: () => openDashboard(false), pro: () => openDashboard(true), privacypol: () => openLegal('privacy'), terms: () => openLegal('terms'), rules: () => openLegal('rules'), accounts: () => ACT.accounts(), logout: () => ACT.logout(), delete: () => ACT.delacct(), install: () => ACT.install(), invite: () => ACT.invite(), freq: () => openFollowReqs(), lists: () => openLists(), drafts: () => openDrafts(), qr: () => ACT.qr('me'), deliver: () => { S.dtab = 'find'; openDelivery(); }, orders: () => { S.otab = 'buy'; openOrders(); }, rfq: () => { S.rtab = 'mine'; openRfqHub(); } };
+    const m = { saved: () => openSaved(), wallet: () => openWallet(), funds: () => openWallet(), lives: () => openMyLives(), blocked: () => openBlocked(), dash: () => openDashboard(false), pro: () => openDashboard(true), privacypol: () => openLegal('privacy'), terms: () => openLegal('terms'), rules: () => openLegal('rules'), accounts: () => ACT.accounts(), logout: () => ACT.logout(), delete: () => ACT.delacct(), install: () => ACT.install(), invite: () => ACT.invite(), freq: () => openFollowReqs(), tags: () => openTagReqs(), lists: () => openLists(), drafts: () => openDrafts(), qr: () => ACT.qr('me'), deliver: () => { S.dtab = 'find'; openDelivery(); }, orders: () => { S.otab = 'buy'; openOrders(); }, rfq: () => { S.rtab = 'mine'; openRfqHub(); } };
     if (m[id]) m[id](); else openSetPage(id);
   },
   defvis: id => { S.defVis = id; saveSettings(); openSettings(); },
@@ -2692,6 +2823,80 @@ const ACT = {
     p.adl = v; p.dl = true; closeSheet(); toast(v ? 'People can now save this' : 'Saving turned off');
   },
   search: () => openSearch(),
+  cmx: id => { delete S.cmedia[id]; repaint(); },
+  crec: async id => {
+    if (S.crec) { S.crec.stop(); return; }
+    if (!navigator.mediaDevices || !window.MediaRecorder) return toast('Voice messages are not supported on this browser');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true }), mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'].find(m => MediaRecorder.isTypeSupported(m)) || '';
+      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined), chunks = [];
+      rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+      const R = S.crec = { id, stop: () => { try { rec.stop(); } catch (e) {} } };
+      rec.onstop = () => { stream.getTracks().forEach(x => x.stop()); clearTimeout(R.t); S.crec = null; const type = (rec.mimeType || mime || 'audio/webm'), blob = new Blob(chunks, { type }); const el = $('#ci' + id); if (el) S.cdraft[id] = el.value; if (blob.size > 500) S.cmedia[id] = { file: new File([blob], 'voice.' + (type.indexOf('mp4') >= 0 ? 'm4a' : 'webm'), { type }), type: 'audio' }; repaint(); };
+      const el0 = $('#ci' + id); if (el0) S.cdraft[id] = el0.value;
+      rec.start(); R.t = setTimeout(R.stop, 60000); repaint(); toast('Recording. Tap the microphone again to stop.');
+    } catch (e) { toast('Microphone permission is needed'); }
+  },
+  addcmt: async id => {
+    const el = $('#ci' + id), v = el ? el.value.trim() : '', M = S.cmedia[id];
+    if (!v && !M) return;
+    const parent = S.replyC && S.replyC.p === +id ? S.replyC.id : null; let mu = null, mt = null;
+    if (M) { toast('Uploading...'); try { const up = M.type === 'audio' ? await uploadAudio(M.file) : await uploadMedia(M.file); mu = up.url; mt = M.type; } catch (e) { return toast(typeof upErr === 'function' ? upErr(e) : 'Upload failed'); } }
+    const content = v || (mt === 'audio' ? '🎤 Voice message' : mt === 'video' ? '🎬 Video' : '📷 Photo');
+    const { data, error } = await sb.from('comments').insert({ post_id: +id, user_id: S.user.id, content, parent_id: parent, media_url: mu, media_type: mt }).select('id,created_at').single();
+    if (error) return toast('Could not comment');
+    const p = findPost(id); if (p) p.cm.push({ id: data.id, uid: S.user.id, w: nameOf(S.user.id), t: content, pid: parent, ed: false, at: data.created_at, mu, mt });
+    delete S.cmedia[id]; delete S.cdraft[id]; S.replyC = null; saveMentions(v, +id); hideMbar(); S.open.add(+id); repaint();
+  },
+  useplace: () => {
+    if (!navigator.geolocation) return toast('Location is not available on this device'); toast('Finding your area...');
+    navigator.geolocation.getCurrentPosition(async pos => {
+      try { const r = await fetch('https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=10&lat=' + pos.coords.latitude + '&lon=' + pos.coords.longitude); const j = await r.json(), a = j.address || {}; const name = [a.city || a.town || a.village || a.county || a.state_district, a.state, a.country].filter(Boolean).slice(0, 2).join(', '); if (name && $('#pplace')) $('#pplace').value = name.slice(0, 80); else toast('Could not find a place name'); } catch (e) { toast('Could not find a place name'); }
+    }, () => toast('Location permission was not given'), { enableHighAccuracy: false, timeout: 10000, maximumAge: 600000 });
+  },
+  cartopen: () => openCart(),
+  cartadd: id => { const l = S.products.find(x => x.id == id); if (!l) return; const it = S.cart.find(x => x.id === l.id), max = l.stock != null ? l.stock : 100000; if (it) it.qty = Math.min(it.qty + 1, max); else S.cart.push({ id: l.id, qty: Math.min(Math.max(1, l.moq || 1), max) }); cartSave(); toast('Added to cart'); },
+  cartqty: (id, el) => { const it = S.cart.find(x => x.id == id), l = S.products.find(x => x.id == id); if (!it || !l) return; const min = l.moq || 1, max = l.stock != null ? l.stock : 100000; it.qty = Math.min(max, Math.max(min, it.qty + (+el.dataset.d))); cartSave(); paintCart(); },
+  cartdel: id => { S.cart = S.cart.filter(x => x.id != id); cartSave(); paintCart(); },
+  cartgo: async () => {
+    busy('#cgo', true, '...'); const done = [], fail = [], addr = ($('#cad') || {}).value || '', co = ($('#cco') || {}).value || '';
+    for (const it of S.cart.slice()) { const { error } = await sb.rpc('place_order', { p_product: it.id, p_qty: it.qty, p_address: addr, p_country: co, p_note: '' }); if (error) fail.push(((S.products.find(p => p.id === it.id) || {}).title || 'Item') + ': ' + (error.message || '').replace(/^.*?:\s*/, '')); else done.push(it.id); }
+    S.cart = S.cart.filter(x => done.indexOf(x.id) < 0); cartSave(); try { await loadProducts(); } catch (e) {}
+    if (fail.length) { toast(done.length + ' placed. Problem: ' + fail[0]); paintCart(); } else { toast('All orders placed'); S.otab = 'buy'; openOrders(); }
+  },
+  reorder: async () => {
+    const o = (S.orders || []).find(x => x.id === S.curOrder); if (!o || !o.product_id) return;
+    if (!S.products.find(p => p.id === o.product_id)) { const { data } = await sb.from('products').select('*').eq('id', o.product_id).eq('status', 'active').maybeSingle(); if (!data) return toast('This item is no longer for sale'); await loadProfiles([data.seller_id]); S.products.push(mapProd(data)); }
+    closeSheet(); setTimeout(() => { ACT.buynow(o.product_id); if (S.buy) { S.buy.qty = Math.max(S.buy.qty, o.qty); paintBuy(); } }, 60);
+  },
+  watch: async id => {
+    const pid = +id, on = S.watch.has(pid);
+    if (on) { await sb.from('product_alerts').delete().eq('user_id', S.user.id).eq('product_id', pid); S.watch.delete(pid); toast('You will not be notified'); }
+    else { const { error } = await sb.from('product_alerts').upsert([{ user_id: S.user.id, product_id: pid, kind: 'price' }, { user_id: S.user.id, product_id: pid, kind: 'stock' }]); if (error) return toast('Could not save'); S.watch.add(pid); toast('We will notify you about price drops and restocks. Turn on notifications in Settings if you have not.'); }
+    ACT.listing(id);
+  },
+  ptag: id => { const p = findPost(id); if (!p) return; const imgs = (p.media || []).map((m, i) => ({ m, i })).filter(x => x.m.type === 'image'); if (!imgs.length) return toast('Tags work on photos'); closeSheet(); S.tg = { post: p.id, idx: imgs[0].i, x: null, y: null }; setTimeout(paintTagger, 60); },
+  tgidx: id => { if (S.tg) { S.tg.idx = +id; S.tg.x = null; S.tg.y = null; paintTagger(); } },
+  tgpick: async id => {
+    const T = S.tg; if (!T) return; if (T.x == null) return toast('Tap the photo first to place the tag');
+    const { error } = await sb.rpc('tag_person', { p_post: T.post, p_user: id, p_idx: T.idx, p_x: T.x, p_y: T.y });
+    if (error) return toast((error.message || 'Could not tag').replace(/^.*?:\s*/, '')); closeSheet(); S.tg = null; toast('Tag request sent. It shows after they approve.');
+  },
+  tgok: async id => { const { error } = await sb.rpc('respond_tag', { p_tag: +id, p_approve: true }); if (error) return toast('Could not approve'); toast('Tag approved'); openTagReqs(); },
+  tgno: async id => { const { error } = await sb.rpc('remove_tag', { p_tag: +id }); if (error) return toast('Could not remove'); toast('Tag removed'); openTagReqs(); },
+  gcallbtn: async () => {
+    const gid = curGid(); if (!gid) return; const { data } = await sb.from('group_calls').select('id,kind,started_by').eq('group_id', gid).eq('status', 'active').maybeSingle();
+    if (data) { await loadProfiles([data.started_by]); sheet(`<h2>Call in progress</h2><p>${esc(nameOf(data.started_by))} started a ${data.kind === 'video' ? 'video' : 'voice'} call.</p><button class="btn" data-a="gcalljoin" data-id="${data.kind}">Join call</button>`); }
+    else sheet('<h2>Group call</h2><p class="ls" style="margin-bottom:8px">Members get a message and choose whether to join.</p><button class="btn" data-a="gcallgo" data-id="video">📹 Start video call</button><button class="btn alt" data-a="gcallgo" data-id="audio">📞 Start voice call</button>');
+  },
+  gcallgo: async kind => { const gid = curGid(); if (!gid) return; const { error } = await sb.rpc('start_group_call', { p_group: gid, p_kind: kind }); if (error) return toast((error.message || 'Could not start').replace(/^.*?:\s*/, '')); closeSheet(); joinGroupCall(gid, kind); },
+  gcalljoin: kind => { const gid = curGid(); closeSheet(); if (gid) joinGroupCall(gid, kind); },
+  gcmic: () => { const G = S.gc; if (!G || !G.mic) return; G.muted = !G.muted; try { G.mic.setEnabled(!G.muted); } catch (e) {} paintGroupCall(); },
+  gccam: async () => { const G = S.gc; if (!G || !G.cam) return; G.camOff = !G.camOff; try { await G.cam.setEnabled(!G.camOff); } catch (e) {} paintGroupCall(); },
+  gcflip: async () => { const G = S.gc; if (!G || !G.cam) return; try { const AR = await loadAgora(), cams = await AR.getCameras(); if (cams.length < 2) return toast('No other camera found'); G.camIdx = ((G.camIdx || 0) + 1) % cams.length; await G.cam.setDevice(cams[G.camIdx].deviceId); } catch (e) { toast('Could not switch the camera'); } },
+  gcleave: () => leaveGroupCall(),
+  gcend: async () => { const G = S.gc; if (!G) return; if (!confirm('End the call for everyone?')) return; const { error } = await sb.rpc('end_group_call', { p_call: G.callId }); if (error) return toast((error.message || 'Only the starter or an admin can end it').replace(/^.*?:\s*/, '')); leaveGroupCall(); },
+  gcalldummy: () => {},
   newpost: () => { ACT.newpost_old(); S.promo = false; fillProdSelect(); },
   tglpromo: (id, el) => { S.promo = !S.promo; el.classList.toggle('on', S.promo); el.setAttribute('aria-checked', String(S.promo)); },
   feedtab: id => { S.feedMode = id; S.ready.home = 0; render(true); loadFeed().then(() => render(true)).catch(() => toast('Could not load the feed')); },
@@ -2924,12 +3129,13 @@ const ACT = {
       ${rows.length ? `<div class="specs">${rows.map(([k, v]) => `<div><span>${esc(k)}</span><b>${esc(String(v))}</b></div>`).join('')}</div>` : ''}
       <p style="white-space:pre-wrap">${esc(l.desc)}</p>
       <button class="sel" data-a="store" data-id="${l.sid}" style="display:flex;gap:10px;align-items:center;text-align:start;width:100%">${avOf(l.sid, 36)}<div><b>${esc(l.who)}</b> <small>· Visit store</small><div class="ls" id="selrate">${esc(l.cat)}</div></div></button>
-      ${mine ? `<button class="btn" data-a="sold" data-id="${l.id}">Mark as sold</button>` : `${canBuy ? `<button class="btn" data-a="buynow" data-id="${l.id}">Buy now</button>` : ''}
+      ${mine ? `<button class="btn" data-a="sold" data-id="${l.id}">Mark as sold</button>` : `${canBuy ? `<button class="btn" data-a="buynow" data-id="${l.id}">Buy now</button><button class="btn alt" data-a="cartadd" data-id="${l.id}">🛒 Add to cart</button>` : ''}
         ${l.opt === 'negotiable' ? `<button class="btn alt" data-a="offer" data-id="${l.id}">Make an offer</button>` : ''}${l.opt === 'auction' ? `<button class="btn alt" data-a="bid" data-id="${l.id}">Place bid</button>` : ''}
         ${out ? '<div class="note">Out of stock. You can still message the seller.</div>' : ''}
         <div class="row2"><button class="btn alt" data-a="rfqfor" data-id="${l.id}">Request a quote</button><button class="btn alt" data-a="msgseller" data-id="${l.id}">Contact seller</button></div>
         <button class="btn alt" data-a="save" data-id="${l.id}">${S.saved.has(l.id) ? 'Saved' : 'Save'}</button>
-        <div class="row2"><button class="btn alt" data-a="wladd" data-id="${l.id}">💝 Add to list</button><button class="btn alt" data-a="cmp" data-id="${l.id}">⚖️ Compare similar</button></div>`}`);
+        <div class="row2"><button class="btn alt" data-a="wladd" data-id="${l.id}">💝 Add to list</button><button class="btn alt" data-a="cmp" data-id="${l.id}">⚖️ Compare similar</button></div>
+        <button class="btn alt" data-a="watch" data-id="${l.id}">${S.watch.has(l.id) ? '🔕 Stop watching' : '🔔 Watch price and stock'}</button>`}`);
     if (!mine) sb.rpc('seller_stats', { p_seller: l.sid }).then(({ data }) => { const r = data && data[0], el = $('#selrate'); if (el && r && r.reviews > 0) el.textContent = '★ ' + r.avg_rating + ' · ' + r.reviews + ' review' + (r.reviews === 1 ? '' : 's') + ' · ' + l.cat; });
   },
   buynow: id => { const l = S.products.find(x => x.id == id); if (!l) return; if (l.stock != null && l.stock < (l.moq || 1)) return toast('Not enough stock'); S.buy = { id: l.id, qty: Math.max(1, l.moq || 1) }; paintBuy(); },
@@ -2996,6 +3202,8 @@ const ACT = {
       <div class="fld"><label for="pu">Username</label><div style="display:flex;align-items:center;gap:6px"><span class="lbl">@</span><input id="pu" maxlength="20" autocapitalize="none" autocomplete="off" value="${esc(p.username || '')}" placeholder="yourname"></div><div class="ls" style="margin-top:4px">3 to 20 letters, numbers or underscores</div></div>
       <div class="fld"><label for="pc">Country</label><input id="pc" maxlength="50" value="${esc(p.country || '')}"></div>
       <div class="fld"><label for="pb">About you</label><textarea id="pb" maxlength="300">${esc(p.bio || '')}</textarea></div>
+      <div class="fld"><label for="psl">Shop location (optional)</label><input id="psl" maxlength="80" placeholder="Where you ship from" value="${esc(p.shop_location || '')}"></div>
+      <div class="fld"><label for="psp">Shop policies (optional)</label><textarea id="psp" maxlength="500" placeholder="Returns, delivery times, payment terms">${esc(p.shop_policy || '')}</textarea></div>
       <div class="fld"><label>Links in your bio (up to 3)</label>${[0, 1, 2].map(i => `<div class="lkrow"><input id="lk${i}l" maxlength="30" placeholder="Label" value="${esc((L[i] && L[i].label) || '')}"><input id="lk${i}u" maxlength="200" inputmode="url" placeholder="https://" value="${esc((L[i] && L[i].url) || '')}"></div>`).join('')}</div>
       <button class="btn" id="profbtn" data-a="saveprofile">Save</button>`);
     bindUpload({ edit: true, ratio: '1:1' });
@@ -3016,7 +3224,7 @@ const ACT = {
       links.push({ label: l, url: u.slice(0, 200) });
     }
     busy('#profbtn', true, (S.draft || S.bannerDraft) ? 'Uploading...' : '...');
-    const row = { username: uname || null, display_name: $('#pn').value.trim().slice(0, 50) || 'Member', country: $('#pc').value.trim().slice(0, 50) || null, bio: $('#pb').value.trim().slice(0, 300) || null, links };
+    const row = { username: uname || null, display_name: $('#pn').value.trim().slice(0, 50) || 'Member', country: $('#pc').value.trim().slice(0, 50) || null, bio: $('#pb').value.trim().slice(0, 300) || null, shop_location: $('#psl').value.trim().slice(0, 80) || null, shop_policy: $('#psp').value.trim().slice(0, 500) || null, links };
     try {
       if (S.draft) row.avatar_url = (await uploadMedia(S.draft.file)).url;
       if (S.bannerDraft) row.banner_url = (await uploadMedia(S.bannerDraft.file)).url;
@@ -3444,6 +3652,7 @@ const ACT = {
         <button class="optrow" data-a="pedit" data-id="${p.id}">Edit post</button>
         <button class="optrow" data-a="pcm" data-id="${p.id}">${p.cmOn === false ? '💬 Turn on comments' : '🚫 Turn off comments'}</button>
         <button class="optrow" data-a="prx" data-id="${p.id}">☺ Choose allowed reactions</button>
+        <button class="optrow" data-a="ptag" data-id="${p.id}">🏷️ Tag people in photos</button>
         <button class="optrow" data-a="ppin" data-id="${p.id}">${p.pin ? 'Unpin from your profile' : 'Pin to your profile'}</button>
         ${p.media.length ? `<button class="optrow" data-a="pdl" data-id="${p.id}">${p.adl ? 'Saving is allowed. Tap to turn off' : 'Saving is off. Tap to allow'}</button>` : ''}
         <div class="lbl" style="padding:14px 4px 6px">Who can see this post</div>
@@ -3604,7 +3813,7 @@ const ACT = {
   },
   flist: (id, el) => openFollowList(id, el.dataset.k),
   cmt: id => { id = +id; S.open.has(id) ? S.open.delete(id) : S.open.add(id); repaint(); },
-  addcmt: async id => {
+  addcmt_old: async id => {
     const el = $('#ci' + id), v = el.value.trim(); if (!v) return;
     const parent = S.replyC && S.replyC.p === +id ? S.replyC.id : null;
     const { data, error } = await sb.from('comments').insert({ post_id: +id, user_id: S.user.id, content: v, parent_id: parent }).select('id,created_at').single();
@@ -3781,6 +3990,7 @@ const ACT = {
       <div class="fld"><label class="up"><input type="file" id="files" accept="image/*,video/mp4,video/webm,video/quicktime" multiple hidden><span id="prev">${I.plus}</span><span id="addtxt">Add photos or videos</span></label><div class="thumbs" id="thumbs"></div></div>
       <div class="fld"><label>Who can see this post?</label><div class="seg c3" id="pvs">${[['public', 'Public'], ['friends', 'Friends'], ['private', 'Only me']].map(([k, l]) => `<button data-a="pvsel" data-id="${k}" class="${k === S.postVis ? 'on' : ''}">${l}</button>`).join('')}</div></div>
       <div class="srow" style="padding:6px 0 14px;border:0"><div><div class="lbl">Allow saving</div><div class="ls">Let people save your photos and videos to their phone</div></div><button class="switch" id="dlsw" role="switch" aria-checked="false" data-a="tgldl"><i></i></button></div>
+      <div class="fld"><label for="pplace">Place (optional)</label><div style="display:flex;gap:8px"><input id="pplace" maxlength="80" placeholder="City or area" style="flex:1"><button class="btn alt sm2" type="button" data-a="useplace">📍 My area</button></div><div class="ls">Never shared automatically. Only the city name is saved, not your exact location.</div></div>
       <div class="fld"><label for="pprod">Attach one of your listings (optional)</label><select id="pprod"><option value="">None</option></select></div>
       <div class="srow" style="padding:4px 0 10px;border:0"><div><div class="lbl">Paid promotion</div><div class="ls">Turn on if you were paid or received free products to post this</div></div><button class="switch" id="ppromo" role="switch" aria-checked="false" data-a="tglpromo"><i></i></button></div>
       <div class="fld"><label for="pwhen">Publish later (optional)</label><input type="datetime-local" id="pwhen"></div>
@@ -3797,7 +4007,7 @@ const ACT = {
     try { for (let i = 0; i < files.length; i++) { busy('#postbtn', true, 'Uploading ' + (i + 1) + ' of ' + files.length + '...'); media.push(await uploadMedia(files[i].file)); } }
     catch (e) { busy('#postbtn', false, tr('post')); return toast(upErr(e)); }
     if (when || S.asDraft) return saveDraftFrom(text, media, S.asDraft ? '' : when);
-    const row = { user_id: S.user.id, content: text, visibility: S.postVis, allow_download: !!S.allowDl, comments_enabled: S.defComments !== false, product_id: ($('#pprod') && $('#pprod').value) ? +$('#pprod').value : null, is_paid_promo: !!S.promo, allowed_reactions: S.defRx || null, media_url: media[0] ? media[0].url : null, media_type: media[0] ? media[0].type : null };
+    const row = { user_id: S.user.id, content: text, visibility: S.postVis, allow_download: !!S.allowDl, comments_enabled: S.defComments !== false, product_id: ($('#pprod') && $('#pprod').value) ? +$('#pprod').value : null, is_paid_promo: !!S.promo, place: (($('#pplace') || {}).value || '').trim().slice(0, 80) || null, allowed_reactions: S.defRx || null, media_url: media[0] ? media[0].url : null, media_type: media[0] ? media[0].type : null };
     const { data: post, error } = await sb.from('posts').insert(row).select('id').single();
     if (error || !post) { busy('#postbtn', false, tr('post')); return toast('Could not post'); }
     if (media.length) {
@@ -3983,6 +4193,7 @@ function layers() {
   if (on('sheet')) L.push('sheet');
   if (on('story')) L.push('story');
   if (on('live')) L.push('live');
+  if (S.gc) L.push('gcall');
   if (on('viewer')) L.push('viewer');
   const ov = $('#over') && $('#over').innerHTML.trim() ? Math.max(1, S.ovStack.length) : 0;
   for (let i = 0; i < ov; i++) L.push('over');
@@ -3999,6 +4210,7 @@ function closeTop(name) {
   if (name === 'sheet') { closeSheet(); return true; }
   if (name === 'story') { closeStory(); return true; }
   if (name === 'live') { if (S.live && S.live.role === 'viewer') { leaveLive(); return true; } toast('Tap End to finish your live'); return false; }
+  if (name === 'gcall') { toast('Tap Leave to leave the call'); return false; }
   if (name === 'viewer') { closeViewer(); return true; }
   if (name === 'over') {
     clearInterval(S.gpoll); clearInterval(S.poll); S.openThread = null; stopRecCancel(); S.reply = null; S.editM = null;
@@ -4041,7 +4253,7 @@ window.addEventListener('popstate', () => {
   ['sheet', 'viewer', 'story', 'call', 'live'].forEach(id => { const e = document.getElementById(id); if (e) new MutationObserver(hq).observe(e, { attributes: true, attributeFilter: ['class'] }); });
   new MutationObserver(hq).observe(document.getElementById('over'), { childList: true });
   new MutationObserver(hq).observe(document.getElementById('app'), { childList: true });
-  ['openThread', 'openUser', 'openPost', 'openGroup', 'openGroups', 'openEvents', 'openSaved', 'openBlocked', 'openWallet', 'openSearch', 'openSettingsHub', 'openSetPage', 'openDashboard', 'openOrders', 'openRfqHub', 'openLists', 'openWishlist', 'openPostSearch', 'openStore', 'openFollowReqs', 'openDelivery', 'openDrafts', 'openFollowList', 'openStoryComposer', 'openMyLives'].forEach(name => {
+  ['openThread', 'openUser', 'openPost', 'openGroup', 'openGroups', 'openEvents', 'openSaved', 'openBlocked', 'openWallet', 'openSearch', 'openSettingsHub', 'openSetPage', 'openDashboard', 'openOrders', 'openRfqHub', 'openLists', 'openWishlist', 'openCart', 'openTagReqs', 'openPostSearch', 'openStore', 'openFollowReqs', 'openDelivery', 'openDrafts', 'openFollowList', 'openStoryComposer', 'openMyLives'].forEach(name => {
     const f = window[name]; if (typeof f !== 'function') return;
     window[name] = function () {
       const args = [].slice.call(arguments), sig = name + JSON.stringify(args.filter(a => typeof a !== 'object'));
