@@ -41,7 +41,12 @@ const I = {
 const OPT = { fixed: 'Fixed price', negotiable: 'Negotiable', auction: 'Auction', bulk: 'Bulk discount' };
 const CATS = ['All', 'Fashion', 'Phones', 'Home', 'Food', 'Electronics', 'Other'];
 const CURS = ['ETB', 'USD', 'EUR', 'GBP', 'KES', 'NGN', 'ZAR', 'AED', 'INR', 'CNY'];
-const fmt = (n, c) => Number(n).toLocaleString('en-US') + ' ' + ((c || 'ETB') === 'ETB' ? 'Birr' : c);
+const fmt = (n, c) => { const cur = c || 'ETB', base = Number(n).toLocaleString('en-US') + ' ' + (cur === 'ETB' ? 'Birr' : cur), x = fxConv(n, cur); return x == null ? base : base + ' (≈ ' + x + ')'; };
+function fxConv(n, cur) {
+  const d = S.dcur; if (!d || d === cur || !S.fx || !S.fx[cur] || !S.fx[d]) return null;
+  const v = Number(n) / S.fx[cur] * S.fx[d]; if (!isFinite(v)) return null;
+  return v.toLocaleString('en-US', { maximumFractionDigits: v < 10 ? 2 : 0 }) + ' ' + d;
+}
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const hue = s => { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
 const ago = iso => { const m = Math.floor((Date.now() - new Date(iso)) / 60000); if (m < 1) return 'now'; if (m < 60) return m + 'm'; const h = Math.floor(m / 60); if (h < 24) return h + 'h'; return Math.floor(h / 24) + 'd'; };
@@ -58,7 +63,7 @@ const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { ret
 try { Object.assign(S, JSON.parse(store.get('kihelp.settings') || '{}')); } catch (e) {}
 if (S.mode !== 'light' && S.mode !== 'dark') S.mode = (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
 S.xp = new Set(); S.ovStack = []; S.suggest = null; S.navBack = false;
-const saveSettings = () => store.set('kihelp.settings', JSON.stringify({ mode: S.mode, accent: S.accent, saver: S.saver, lang: S.lang, tlang: S.tlang, defVis: S.defVis, defComments: S.defComments, defRx: S.defRx }));
+const saveSettings = () => store.set('kihelp.settings', JSON.stringify({ mode: S.mode, accent: S.accent, saver: S.saver, lang: S.lang, tlang: S.tlang, defVis: S.defVis, defComments: S.defComments, defRx: S.defRx, dcur: S.dcur }));
 S.txon = new Set(); S.txout = {}; S.txsrc = {};
 
 const LANGS = {
@@ -86,7 +91,7 @@ const smedia = (m, cls, key) => (S.saver && !S.loaded.has(key))
 async function loadProfiles(ids) {
   ids = [...new Set(ids)].filter(i => i && !S.pf[i]);
   if (!ids.length) return;
-  const { data } = await sb.from('profiles').select('id,display_name,username,country,bio,avatar_url,banner_url,links').in('id', ids);
+  const { data } = await sb.from('profiles').select('id,display_name,username,country,bio,avatar_url,banner_url,links,is_locked').in('id', ids);
   (data || []).forEach(p => S.pf[p.id] = p);
 }
 const RX = { love: '❤️', like: '👍', haha: '😂', wow: '😮', sad: '😢', angry: '😡' };
@@ -97,7 +102,7 @@ function rxOf(list) {
   list.forEach(l => { const e = RXLEG[l.reaction] || l.reaction || '❤️'; rxs[e] = (rxs[e] || 0) + 1; if (l.user_id === S.user.id) mine = e; });
   return { rxs, react: mine, liked: !!mine, likes: list.length };
 }
-const POSTCOLS = 'id,user_id,content,created_at,media_url,media_type,visibility,pinned_at,allow_download,edited_at,allowed_reactions,comments_enabled,repost_of';
+const POSTCOLS = 'id,user_id,content,created_at,media_url,media_type,visibility,pinned_at,allow_download,edited_at,allowed_reactions,comments_enabled,repost_of,product_id,is_paid_promo';
 async function hydratePosts(posts) {
   const ids = posts.map(p => p.id);
   let likes = [], cms = [], pm = [];
@@ -118,7 +123,7 @@ async function hydratePosts(posts) {
   const out = posts.map(p => ({
     id: p.id, uid: p.user_id, t: ago(p.created_at), text: p.content, media: mediaOf(p, pm),
     adl: !!p.allow_download, dl: !!p.allow_download || p.user_id === S.user.id, ed: !!p.edited_at,
-    allowed: p.allowed_reactions || null, cmOn: p.comments_enabled !== false, repostOf: p.repost_of || null,
+    allowed: p.allowed_reactions || null, cmOn: p.comments_enabled !== false, repostOf: p.repost_of || null, productId: p.product_id || null, promo: !!p.is_paid_promo,
     vis: p.visibility || 'public', pin: !!p.pinned_at,
     ...rxOf(likes.filter(l => l.post_id === p.id)),
     cm: cms.filter(c => c.post_id === p.id).map(c => ({ id: c.id, uid: c.user_id, w: nameOf(c.user_id), t: c.content, pid: c.parent_id, ed: !!c.edited_at, at: c.created_at }))
@@ -133,10 +138,20 @@ async function hydratePosts(posts) {
       out.forEach(p => { if (p.repostOf) p.orig = map[p.repostOf] || null; });
     } catch (e) {}
   }
+  const pids = [...new Set(out.map(p => p.productId).filter(Boolean))];
+  if (pids.length) {
+    try {
+      const { data: pd } = await sb.from('products').select('*').in('id', pids).eq('status', 'active'); const m = {};
+      await loadProfiles((pd || []).map(x => x.seller_id)); (pd || []).forEach(x => { m[x.id] = mapProd(x); });
+      out.forEach(p => { if (p.productId && m[p.productId]) { p.prod = m[p.productId]; if (!S.products.find(x => x.id === p.prod.id)) S.products.push(p.prod); } });
+    } catch (e) {}
+  }
   return out;
 }
 async function loadFeed() {
-  const { data, error } = await sb.from('posts').select(POSTCOLS).order('created_at', { ascending: false }).limit(40);
+  let q = sb.from('posts').select(POSTCOLS).order('created_at', { ascending: false }).limit(40);
+  if (S.feedMode === 'following') q = q.in('user_id', [...S.following, S.user.id]);
+  const { data, error } = await q;
   if (error) throw error;
   S.posts = await hydratePosts(data); S.ready.home = 1;
 }
@@ -157,7 +172,10 @@ async function loadProducts() {
   S.products = data.map(p => ({
     id: p.id, title: p.title, price: p.price, cur: p.currency, opt: p.price_type, cat: p.category,
     sid: p.seller_id, who: nameOf(p.seller_id), desc: p.description || '', h: hue(p.id + p.title),
-    media: safeUrl(p.image_url) ? { type: 'image', url: p.image_url } : null
+    media: safeUrl(p.image_url) ? { type: 'image', url: p.image_url } : null,
+    cond: p.condition, brand: p.brand, model: p.model, origin: p.origin_country, modes: p.sale_modes || ['retail'],
+    pmin: p.min_price, pmax: p.max_price, moq: p.moq || 1, stock: p.stock, tiers: Array.isArray(p.price_tiers) ? p.price_tiers : [],
+    sample: p.sample_price, prep: p.prep_days, attrs: p.item_attributes || {}
   }));
   S.saved = new Set((sv.data || []).map(x => x.product_id));
   S.ready.market = 1;
@@ -341,7 +359,8 @@ async function enter(user) {
   computePushOffer(); loadPrefs().catch(() => {}); subscribeCalls(); checkRinging().catch(() => {});
   clearInterval(S.liveT); S.liveT = setInterval(() => { if (S.user && S.tab === 'home' && !$('#over').innerHTML && !S.live && document.visibilityState === 'visible') loadLive().then(afterBg).catch(() => {}); }, 30000);
   if (!store.get('kihelp.tipReact')) { store.set('kihelp.tipReact', '1'); setTimeout(() => toast('Tip: press and hold the heart to pick a reaction'), 3000); }
-  hideAuth(); S.tab = S.focusVideo ? 'video' : (S.restoreTab || 'home'); S.restoreTab = null; render(); refresh();
+  hideAuth(); S.tab = S.focusVideo ? 'video' : (S.restoreTab || 'home'); S.restoreTab = null;
+  loadFx(); loadSocial(); setTimeout(checkDeletion, 900); try { sb.rpc('publish_my_due_drafts').then(() => {}, () => {}); } catch (e) {} render(); refresh();
   if (S.focusPost) { const pid = S.focusPost; S.focusPost = null; openPost(pid); }
   if (S.pendingRoute) { const h = S.pendingRoute; S.pendingRoute = null; setTimeout(() => routeHash(h), 400); }
   if (S.focusGroup) { const gid = S.focusGroup; S.focusGroup = null; openGroup(gid); }
@@ -381,7 +400,7 @@ function repaint() { if ($('#onep')) paintOne(); else if ($('#pposts')) paintPro
 const visIcon = v => v === 'friends' ? `<span class="vis" title="Friends">${I.users}</span>` : v === 'private' ? `<span class="vis" title="Only me">${I.lock}</span>` : `<span class="vis" title="Public">${I.globe}</span>`;
 const SHARE_RE = /^kihelp:\/\/(post|video|group)\/([0-9a-f-]+)(?:\n([\s\S]*))?$/i;
 const shareLabel = k => ({ video: 'Shared a video', group: 'Group invite' }[String(k).toLowerCase()] || 'Shared a post');
-const fmtText = t => esc(t).replace(/(^|\s)@([a-z0-9_]{3,20})(?![a-z0-9_])/gi, (m, sp, u) => `${sp}<button class="mention" data-a="umention" data-id="${u.toLowerCase()}">@${u}</button>`);
+const fmtText0 = t => esc(t).replace(/(^|\s)@([a-z0-9_]{3,20})(?![a-z0-9_])/gi, (m, sp, u) => `${sp}<button class="mention" data-a="umention" data-id="${u.toLowerCase()}">@${u}</button>`);
 function mediaBlock(p) {
   const m = p.media; if (!m || !m.length) return '';
   const single = m.length === 1;
@@ -403,7 +422,7 @@ function commentsHTML(p) {
   return top.map(c => row(c, false) + kids(c).map(k => row(k, true)).join('')).join('');
 }
 const replyChip = p => S.replyC && S.replyC.p === p.id ? `<div class="rchip">Replying to <b>${esc(S.replyC.name)}</b><button data-a="creplyx" aria-label="Cancel reply">${I.x}</button></div>` : '';
-const fChip = id => (id !== S.user.id && !S.following.has(id)) ? `<button class="fchip" data-a="qfollow" data-id="${id}">Follow</button>` : '';
+const fChip = id => (id !== S.user.id && !S.following.has(id)) ? `<button class="fchip" data-a="qfollow" data-id="${id}">${S.requested.has(id) ? 'Requested' : 'Follow'}</button>` : '';
 function repostCard(p) {
   if (!p.repostOf) return '';
   const o = p.orig;
@@ -416,10 +435,11 @@ function postCard(p) {
   const chips = rxs.map(([e, n]) => `<button class="rxchip ${p.react === e ? 'on' : ''}" data-a="rxtap" data-id="${p.id}" data-e="${e}">${e}<span>${n}</span></button>`).join('');
   const canReact = !p.allowed || p.allowed.length > 0, cmOn = p.cmOn !== false;
   return `<article class="post">
-    <div class="prow"><button class="ph-row" data-a="user" data-id="${p.uid}">${avOf(p.uid)}<div><b>${esc(nameOf(p.uid))}</b><small>${p.t}${p.ed ? ' · edited' : ''} · ${visIcon(p.vis)}${p.repostOf ? ' · 🔁 reposted' : ''}</small></div></button>${fChip(p.uid)}${p.pin ? '<span class="pbadge">Pinned</span>' : ''}<span style="flex:1"></span><button class="ibtn" data-a="pmenu" data-id="${p.id}" aria-label="More options">${I.more}</button></div>
+    <div class="prow"><button class="ph-row" data-a="user" data-id="${p.uid}">${avOf(p.uid)}<div><b>${esc(nameOf(p.uid))}</b><small>${p.t}${p.ed ? ' · edited' : ''} · ${visIcon(p.vis)}${p.repostOf ? ' · 🔁 reposted' : ''}${p.promo ? ' · Paid promotion' : ''}</small></div></button>${fChip(p.uid)}${p.pin ? '<span class="pbadge">Pinned</span>' : ''}<span style="flex:1"></span><button class="ibtn" data-a="pmenu" data-id="${p.id}" aria-label="More options">${I.more}</button></div>
     ${p.text ? `<p class="ptext clamp${S.xp.has('p' + p.id) ? ' open' : ''}" data-xk="p${p.id}" data-dt="pt" data-id="${p.id}">${fmtText(txShow('p' + p.id, p.text))}</p>${txLink('p' + p.id, p.text)}` : ''}
     ${repostCard(p)}
     ${mediaBlock(p)}
+    ${prodCard(p)}
     <div class="acts">
       <button class="${p.react === '❤️' ? 'on' : ''}" data-a="like" data-id="${p.id}" aria-label="Love">${I.heart}</button>
       ${cmOn ? `<button data-a="cmt" data-id="${p.id}" aria-label="Comments">${I.cmt}${p.cm.length}</button>` : ''}
@@ -433,9 +453,9 @@ function postCard(p) {
 function viewHome() {
   if (gate()) return gate();
   const row = installBar() + notifBar() + composerBox() + quickRow() + storiesRow();
-  if (!S.posts.length) return row + `<div class="empty" style="padding:60px 24px">No posts yet.<br>Be the first. Share something in the box above.</div>` + videoStrip();
+  if (!S.posts.length) return row + feedTabs() + `<div class="empty" style="padding:60px 24px">${S.feedMode === 'following' ? 'Nobody you follow has posted yet.<br>Follow people to fill this feed.' : 'No posts yet.<br>Be the first. Share something in the box above.'}</div>` + videoStrip();
   const at = Math.min(2, S.posts.length - 1);
-  return row + S.posts.map((p, i) => postCard(p) + (i === 0 ? suggestStrip() : '') + (i === at ? videoStrip() : '')).join('');
+  return row + feedTabs() + feedList().map((p, i) => postCard(p) + (i === 0 ? suggestStrip() : '') + (i === at ? videoStrip() : '')).join('');
 }
 const vgridHTML = list => list.length ? `<div class="vgrid">${list.map(v => `<button data-a="watch" data-id="${v.id}" aria-label="Watch video">${S.saver ? `<div class="ph" style="--h:${hue(v.id)};width:100%;height:100%"></div>` : `<video src="${esc(v.video_url)}#t=0.1" muted playsinline preload="metadata"></video>`}<span>${Number(v.views) || 0} views</span></button>`).join('')}</div>` : '';
 function viewVideo() {
@@ -455,7 +475,7 @@ function viewVideo() {
         <button class="va" data-a="user" data-id="${v.uid}" aria-label="Creator">${avOf(v.uid, 46)}</button>
         <button class="va ${v.liked ? 'on' : ''}" data-lk="${v.id}" data-a="vlike" data-id="${v.id}" aria-label="Like"><span class="c">${I.heart}</span><span class="n">${v.likes}</span></button>
         <button class="va" data-a="vcmt" data-id="${v.id}" aria-label="Comments"><span class="c">${I.cmt}</span><span data-cc="${v.id}">${v.cc}</span></button>
-        <button class="va" data-a="vshare" data-id="${v.id}" aria-label="Share"><span class="c">${I.share}</span>Share</button>
+        <button class="vcc" data-a="vcc" data-id="${v.id}" aria-label="Captions">CC</button><button class="va" data-a="vshare" data-id="${v.id}" aria-label="Share"><span class="c">${I.share}</span>Share</button>
         ${v.uid !== S.user.id ? `<button class="va" data-a="gift" data-id="${v.uid}" data-t="video" data-i="${v.id}" aria-label="Send a gift"><span class="c">🎁</span>Gift</button>` : ''}
         ${v.uid !== S.user.id ? `<button class="va" data-a="vmore" data-id="${v.id}" aria-label="More options"><span class="c">${I.more}</span></button>` : ''}
         ${v.dl ? `<button class="va" data-a="vdl2" data-id="${v.id}" aria-label="Save video"><span class="c">${I.download}</span>Save</button>` : ''}
@@ -471,17 +491,19 @@ function viewChat() {
   }).join('');
 }
 function listingCard(l) {
-  const price = (l.opt === 'auction' ? 'From ' : '') + fmt(l.price, l.cur) + (l.opt === 'bulk' ? ' / unit' : '');
+  const range = l.pmin != null && l.pmax != null;
+  const price = range ? fmt(l.pmin, l.cur) + ' – ' + fmt(l.pmax, l.cur) : (l.opt === 'auction' ? 'From ' : '') + fmt(l.price, l.cur) + (l.opt === 'bulk' ? ' / unit' : '');
+  const out = l.stock != null && l.stock <= 0, wh = (l.modes || []).indexOf('wholesale') >= 0;
   return `<div class="lc"><div class="lm" data-a="listing" data-id="${l.id}" role="button" tabindex="0">
       ${l.media ? smedia(l.media, '', 'l' + l.id) : `<div class="ph" style="--h:${l.h}"></div>`}
-      <span class="tag">${OPT[l.opt] || l.opt}</span></div>
+      <span class="tag">${out ? 'Out of stock' : (wh ? 'Wholesale' : (OPT[l.opt] || l.opt))}</span></div>
     <button class="sv ${S.saved.has(l.id) ? 'on' : ''}" data-a="save" data-id="${l.id}" aria-label="Save item">${I.save}</button>
     <button class="lt" data-a="listing" data-id="${l.id}" style="display:block;width:100%">${esc(l.title)}</button>
-    <div class="lp">${price}</div><div class="ls">${esc(l.who)} · ${esc(l.cat)}</div></div>`;
+    <div class="lp">${price}</div>${(l.moq || 1) > 1 ? `<div class="ls">Min. order ${l.moq}</div>` : ''}<div class="ls">${esc(l.who)} · ${l.cond ? esc(cap(l.cond)) + ' · ' : ''}${esc(l.cat)}</div></div>`;
 }
 function gridHTML() {
   const q = S.q.trim().toLowerCase();
-  const items = S.products.filter(l => (S.cat === 'All' || l.cat === S.cat) && (S.opt === 'all' || l.opt === S.opt) && (!q || l.title.toLowerCase().includes(q)));
+  const items = S.products.filter(l => (S.cat === 'All' || l.cat === S.cat) && (S.opt === 'all' || l.opt === S.opt) && (!S.mmode || S.mmode === 'all' || (l.modes || ['retail']).indexOf(S.mmode) >= 0) && (!q || l.title.toLowerCase().includes(q)));
   if (!items.length) return `<div class="empty">${S.products.length ? 'No items match. Clear the filters.' : 'No items for sale yet. Tap + below to sell the first item.'}</div>`;
   return items.map(listingCard).join('');
 }
@@ -490,7 +512,7 @@ const catChips = () => CATS.map(c => `<button class="chip ${S.cat === c ? 'on' :
 function viewMarket() {
   if (gate()) return gate();
   return `<div class="msearch"><input id="q" type="search" placeholder="${tr('search')}" value="${esc(S.q)}" aria-label="${tr('search')}"></div>
-    <div class="chips" id="cats">${catChips()}</div><div class="chips" id="opts">${optChips()}</div>
+    ${mkBar()}<div class="chips" id="cats">${catChips()}</div><div class="chips" id="opts">${optChips()}</div>
     <div class="grid" id="grid">${gridHTML()}</div>`;
 }
 function viewAlerts() {
@@ -505,7 +527,7 @@ function viewMe() {
   if (gate()) return gate();
   const p = S.profile || {}, mine = S.products.filter(l => l.sid === S.user.id);
   return `${bannerHTML(p)}<div class="prof"><button class="avbtn" data-a="avview" data-id="${S.user.id}" aria-label="View profile photo">${avOf(S.user.id)}</button><div><div class="big">${esc(p.display_name || 'Member')} <span class="vis" title="Public profile">${I.globe}</span></div><div class="ls">${p.username ? '@' + esc(p.username) + ' · ' : ''}${esc(p.country || '')}</div>${p.username ? '' : '<div class="ls">Add a username in Edit profile</div>'}</div></div>
-    ${p.bio ? `<p style="padding:0 16px 10px;white-space:pre-wrap">${esc(p.bio)}</p>` : ''}${linksHTML(p)}
+    ${p.bio ? `<p style="padding:0 16px 10px;white-space:pre-wrap">${esc(p.bio)}</p>` : ''}${linksHTML(p)}${hlStrip(S.user.id)}<div style="padding:0 16px 8px"><button class="chip" data-a="qr" data-id="me">▦ My QR code</button></div>
     <div class="stats"><div><b>${S.me.videos}</b><span>Videos</span></div><button data-a="flist" data-id="${S.user.id}" data-k="followers"><b>${S.me.followers}</b><span>Followers</span></button><button data-a="flist" data-id="${S.user.id}" data-k="following"><b>${S.me.following}</b><span>Following</span></button><div><b>${S.me.posts}</b><span>Posts</span></div></div>
     <div style="padding:0 16px 8px;display:grid;grid-template-columns:1fr 1fr;gap:10px"><button class="btn alt" data-a="editprofile">Edit profile</button><button class="btn alt" data-a="opensaved">Saved posts</button></div>
     <div style="padding:0 16px 8px;display:grid;grid-template-columns:1fr 1fr;gap:10px"><button class="btn alt" data-a="invite">Invite friends</button><button class="btn alt" data-a="accounts">Switch account</button></div>
@@ -774,7 +796,7 @@ async function savePrivate(patch) {
 function openSearch() {
   $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button>
     <input id="ps" type="search" placeholder="Name, @username, email or phone" aria-label="Search people" maxlength="60" style="flex:1" autocomplete="off"></header>
-    <div class="setbody" id="pres"><div class="empty" style="padding:40px 24px">Search people by name or @username.<br><br>You can also find someone by their exact email or phone number, if they allowed it in their privacy settings.</div></div></div>`;
+    <div class="setbody" id="pres"><div class="empty" style="padding:40px 24px">Search people by name or @username.<br><br>You can also find someone by their exact email or phone number, if they allowed it in their privacy settings.</div><div style="padding:6px 16px"><button class="chip" data-a="psearch">Search posts and #hashtags</button></div></div></div>`;
   setTimeout(() => $('#ps') && $('#ps').focus(), 50); paintSuggestList();
 }
 async function runSearch(q) {
@@ -839,15 +861,16 @@ function paintProfile() {
     else {
       const fr = { none: ['fadd', 'Add friend', ''], sent: ['fcancel', 'Request sent', 'alt'], received: ['fyes', 'Accept request', ''], friends: ['funf', 'Friends', 'alt'] }[P.rel];
       acts = `<div style="padding:0 16px 12px"><div class="row2" style="grid-template-columns:1fr 1fr;margin-top:0">
-        <button class="btn ${P.following ? 'alt' : ''}" data-a="pfollow" data-id="${id}">${P.following ? 'Following' : 'Follow'}</button>
+        <button class="btn ${P.following ? 'alt' : ''}" data-a="pfollow" data-id="${id}">${P.following ? 'Following' : (S.requested.has(id) ? 'Requested' : 'Follow')}</button>
         <button class="btn ${fr[2]}" data-a="${fr[0]}" data-id="${id}">${fr[1]}</button></div>
         <div style="display:grid;grid-template-columns:${P.rel === 'received' ? '1fr 1fr' : '1fr'};gap:10px;margin-top:10px"><button class="btn alt" data-a="dm" data-id="${id}">Message</button>${P.rel === 'received' ? `<button class="btn alt" data-a="fno" data-id="${id}">Decline</button>` : ''}</div><button class="btn alt" data-a="gift" data-id="${id}" data-t="profile" style="margin-top:10px">🎁 Send a gift</button></div>`;
     }
   }
+  if (pr.is_locked && !P.following && id !== S.user.id && !P.loading && !P.blocked) acts += '<div style="padding:0 16px 12px"><div class="note">🔒 This account is private. Name, photo and bio are public. Send a follow request to see posts, videos and stories.</div></div>';
   const all = [...P.pinned, ...P.posts];
   b.innerHTML = `${bannerHTML(pr)}<div class="pcenter"><button class="avbtn" data-a="avview" data-id="${id}" aria-label="View profile photo">${avOf(id, 88)}</button><div class="big" style="margin-top:10px">${esc(pr.display_name || 'Member')} <span class="vis" title="Public profile">${I.globe}</span></div>
       <div class="ls">${pr.username ? '@' + esc(pr.username) : ''}${pr.country ? (pr.username ? ' · ' : '') + esc(pr.country) : ''}</div>
-      ${pr.bio ? `<p style="margin-top:10px;white-space:pre-wrap">${esc(pr.bio)}</p>` : ''}${linksHTML(pr)}</div>
+      ${pr.bio ? `<p style="margin-top:10px;white-space:pre-wrap">${esc(pr.bio)}</p>` : ''}${linksHTML(pr)}</div><div style="text-align:center;padding-bottom:6px"><button class="chip" data-a="store" data-id="${id}">🏪 Shop</button></div>${hlStrip(id)}
     <div class="stats" style="justify-content:center"><div><b>${P.postsN}</b><span>Posts</span></div><button data-a="flist" data-id="${id}" data-k="followers"><b>${P.followers}</b><span>Followers</span></button><button data-a="flist" data-id="${id}" data-k="following"><b>${P.followingN}</b><span>Following</span></button></div>
     ${acts}
     ${ptabs(P.tab || 'posts')}
@@ -1714,6 +1737,7 @@ function routeHash(h) {
   else if ((m = h.match(/^#g=([0-9a-f-]{36})$/i))) openGroup(m[1]);
   else if ((m = h.match(/^#c=([0-9a-f-]{36})$/i))) openThread(m[1]);
   else if ((m = h.match(/^#u=([0-9a-f-]{36})$/i))) openUser(m[1]);
+  else if ((m = h.match(/^#w=([0-9a-f-]{36})$/i))) openWishlist(m[1]);
   else if ((m = h.match(/^#call=([0-9a-f-]{36})$/i))) checkCall(m[1]);
   else if (h === '#n=alerts') { $('#over').innerHTML = ''; closeSheet(); S.tab = 'alerts'; render(); refresh(); }
 }
@@ -2044,6 +2068,444 @@ function meTabs() {
   return ptabs(t) + body;
 }
 
+/* ---------- marketplace: retail + wholesale, orders, quotations, reviews ---------- */
+const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+const ST = { placed: 'Placed', confirmed: 'Confirmed', shipped: 'Shipped', delivered: 'Delivered', completed: 'Completed', canceled: 'Canceled' };
+function mkBar() {
+  return `<div class="chips mkbar">${[['all', 'All'], ['retail', 'Retail'], ['wholesale', 'Wholesale'], ['custom', 'Custom-made']].map(([k, l]) => `<button class="chip ${(S.mmode || 'all') === k ? 'on' : ''}" data-a="mmode" data-id="${k}">${l}</button>`).join('')}<button class="chip hl" data-a="openorders">🧾 Orders</button><button class="chip hl" data-a="rfqhub">📨 Quotes</button><button class="chip hl" data-a="listshub">💝 Lists</button><button class="chip hl" data-a="deliverhub">🚚 Delivery</button></div>`;
+}
+function sellExtras() {
+  const v = id => { const e = $('#' + id); return e ? e.value.trim() : ''; };
+  const num = id => { const x = parseFloat(v(id)); return isFinite(x) && x >= 0 ? x : null; };
+  const tiers = [];
+  for (let i = 0; i < 3; i++) { const q = parseInt(v('stq' + i), 10), p = num('stp' + i); if (q >= 2 && p != null) tiers.push({ min_qty: q, price: p }); }
+  tiers.sort((a, b) => a.min_qty - b.min_qty);
+  const attrs = {}; for (let i = 0; i < 4; i++) { const k = v('sak' + i), val = v('sav' + i); if (k && val) attrs[k.slice(0, 30)] = val.slice(0, 60); }
+  const moq = parseInt(v('smoq'), 10), stock = parseInt(v('sstock'), 10), prep = parseInt(v('sprep'), 10);
+  const o = { sale_modes: S.sellModes && S.sellModes.size ? [...S.sellModes] : ['retail'], price_tiers: tiers, item_attributes: attrs };
+  if (v('scond')) o.condition = v('scond'); if (v('sbrand')) o.brand = v('sbrand'); if (v('smodel')) o.model = v('smodel'); if (v('sorig')) o.origin_country = v('sorig');
+  if (moq >= 1) o.moq = moq; if (stock >= 0) o.stock = stock; if (prep >= 0 && prep <= 120) o.prep_days = prep;
+  const pmin = num('spmin'), pmax = num('spmax'); if (pmin != null && pmax != null && pmax >= pmin) { o.min_price = pmin; o.max_price = pmax; }
+  const sp = num('ssamp'); if (sp != null) o.sample_price = sp;
+  return o;
+}
+function unitFor(l, q) { let u = l.price, best = 0; (l.tiers || []).forEach(t => { if (t.min_qty <= q && t.min_qty >= best) { best = t.min_qty; u = t.price; } }); return u; }
+function paintBuy() {
+  const B = S.buy, l = B && S.products.find(x => x.id == B.id); if (!l) return;
+  const u = unitFor(l, B.qty), keep = ['#bad', '#bco', '#bno'].map(s => $(s) ? $(s).value : '');
+  sheet(`<h2>Buy now</h2><p><b>${esc(l.title)}</b></p>
+    <div class="qty"><button data-a="bqty" data-id="-1" aria-label="Fewer">−</button><b>${B.qty}</b><button data-a="bqty" data-id="1" aria-label="More">+</button></div>
+    ${(l.moq || 1) > 1 ? `<div class="ls">Minimum order ${l.moq}</div>` : ''}${l.stock != null ? `<div class="ls">${l.stock} in stock</div>` : ''}
+    <div class="note"><b>${fmt(u, l.cur)} each</b> · Total <b>${fmt(u * B.qty, l.cur)}</b><br>Delivery cost is agreed with the seller. Online payment is not connected yet, so you arrange payment with the seller.</div>
+    <div class="fld"><label for="bad">Delivery address</label><textarea id="bad" maxlength="300" placeholder="Area, city, landmark">${esc(keep[0])}</textarea></div>
+    <div class="fld"><label for="bco">Country</label><input id="bco" maxlength="60" value="${esc(keep[1])}"></div>
+    <div class="fld"><label for="bno">Note to seller (optional)</label><input id="bno" maxlength="500" value="${esc(keep[2])}"></div>
+    <button class="btn" id="bgo" data-a="bgo">Place order</button>`);
+}
+async function openOrders() {
+  const tab = S.otab || 'buy';
+  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button><b class="ttl">Orders</b></header><div class="setbody"><div class="seg" style="margin:12px 16px">${[['buy', 'Buying'], ['sell', 'Selling']].map(([k, l]) => `<button class="${tab === k ? 'on' : ''}" data-a="otab" data-id="${k}">${l}</button>`).join('')}</div><div id="olist"><div class="empty" style="padding:40px">Loading...</div></div></div></div>`;
+  const { data, error } = await sb.from('orders').select('*').eq(tab === 'buy' ? 'buyer_id' : 'seller_id', S.user.id).order('created_at', { ascending: false }).limit(100);
+  const box = $('#olist'); if (!box) return;
+  if (error) { box.innerHTML = '<div class="empty" style="padding:40px">Could not load orders.</div>'; return; }
+  S.orders = data || []; await loadProfiles(S.orders.map(o => tab === 'buy' ? o.seller_id : o.buyer_id));
+  box.innerHTML = S.orders.length ? S.orders.map(o => { const other = tab === 'buy' ? o.seller_id : o.buyer_id; return `<button class="ordrow" data-a="ord" data-id="${o.id}"><span class="tx"><b>${esc(o.title)}</b><span class="ls" style="display:block">x${o.qty} · ${fmt(o.total, o.currency)} · ${esc(nameOf(other))}</span><span class="ls" style="display:block">${new Date(o.created_at).toLocaleDateString()}</span></span><span class="pbadge st-${o.status}">${ST[o.status] || o.status}</span></button>`; }).join('') : `<div class="empty" style="padding:50px 24px">${tab === 'buy' ? 'You have not bought anything yet.<br>Open Market and tap Buy now.' : 'No orders yet.<br>When someone buys your item it appears here.'}</div>`;
+}
+async function openRfqHub() {
+  const tab = S.rtab || 'mine';
+  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button><b class="ttl">Quotes</b><span style="flex:1"></span><button class="hbtn" data-a="rfqnew">${I.plus}Request</button></header><div class="setbody"><div class="seg" style="margin:12px 16px">${[['mine', 'My requests'], ['open', 'Open requests']].map(([k, l]) => `<button class="${tab === k ? 'on' : ''}" data-a="rtab" data-id="${k}">${l}</button>`).join('')}</div><div id="rlist"><div class="empty" style="padding:40px">Loading...</div></div></div></div>`;
+  let q = sb.from('rfqs').select('*').order('created_at', { ascending: false }).limit(60);
+  q = tab === 'mine' ? q.eq('buyer_id', S.user.id) : q.eq('status', 'open').neq('buyer_id', S.user.id);
+  const { data, error } = await q; const box = $('#rlist'); if (!box) return;
+  if (error) { box.innerHTML = '<div class="empty" style="padding:40px">Could not load requests.</div>'; return; }
+  S.rfqs = data || [];
+  box.innerHTML = S.rfqs.length ? S.rfqs.map(r => `<button class="ordrow" data-a="rfq" data-id="${r.id}"><span class="tx"><b>${esc(r.title)}</b><span class="ls" style="display:block">${r.qty} wanted${r.dest_country ? ' · ' + esc(r.dest_country) : ''}${r.needed_by ? ' · by ' + esc(r.needed_by) : ''}</span></span><span class="pbadge">${r.status === 'open' ? 'Open' : r.status === 'awarded' ? 'Awarded' : 'Closed'}</span></button>`).join('') : `<div class="empty" style="padding:50px 24px">${tab === 'mine' ? 'You have no requests.<br>Tap Request to ask suppliers for a price.' : 'No open requests right now.'}</div>`;
+}
+function rfqForm(pre) {
+  pre = pre || {};
+  sheet(`<h2>Request a quote</h2><p class="ls" style="margin-bottom:8px">Describe what you need. Suppliers send you offers, and you choose one.</p>
+    <div class="fld"><label for="rt">What do you need?</label><input id="rt" maxlength="100" value="${esc(pre.title || '')}" placeholder="e.g. 500 school notebooks"></div>
+    <div class="fld"><label>Quantity and category</label><div class="lkrow"><input id="rq" type="number" inputmode="numeric" min="1" placeholder="Quantity" value="${pre.qty || ''}"><select id="rc">${CATS.slice(1).map(c => `<option ${pre.cat === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div></div>
+    <div class="fld"><label for="rd">Details and specifications</label><textarea id="rd" maxlength="1000" placeholder="Size, colour, material, branding, packaging">${esc(pre.desc || '')}</textarea></div>
+    <div class="fld"><label>Deliver to</label><div class="lkrow"><input id="rco" maxlength="60" placeholder="Country"><input id="rci" maxlength="60" placeholder="City"></div></div>
+    <div class="fld"><label for="rn">Needed by (optional)</label><input id="rn" type="date"></div>
+    <button class="btn" id="rgo" data-a="rfqsave">Send request</button>`);
+}
+async function openRfq(id) {
+  const r = (S.rfqs || []).find(x => x.id === id); if (!r) return; const mine = r.buyer_id === S.user.id;
+  const head = `<h2>${esc(r.title)}</h2><p class="ls">${r.qty} wanted${r.dest_country ? ' · ' + esc(r.dest_country) + (r.dest_city ? ', ' + esc(r.dest_city) : '') : ''}${r.needed_by ? ' · needed by ' + esc(r.needed_by) : ''}</p>${r.description ? `<p style="white-space:pre-wrap">${esc(r.description)}</p>` : ''}`;
+  if (mine) {
+    sheet(head + '<div class="ls" id="ofl">Loading offers...</div>');
+    const { data } = await sb.from('rfq_offers').select('*').eq('rfq_id', id).order('unit_price', { ascending: true });
+    const offers = data || []; await loadProfiles(offers.map(o => o.seller_id)); S.offers = offers; const el = $('#ofl'); if (!el) return;
+    el.outerHTML = `<h3 class="sub" style="padding:0">Offers (${offers.length})</h3>${offers.length ? offers.map(o => `<div class="offer"><div class="orow"><b>${esc(nameOf(o.seller_id))}</b><b>${fmt(o.unit_price, o.currency)} each</b></div><div class="ls">Total ${fmt(o.unit_price * o.qty, o.currency)} for ${o.qty} · ready in ${o.lead_days} day${o.lead_days === 1 ? '' : 's'}${o.valid_until ? ' · valid until ' + esc(o.valid_until) : ''}</div>${o.note ? `<p class="ls">${esc(o.note)}</p>` : ''}${r.status === 'open' ? `<div class="row2"><button class="btn sm2" data-a="ofacc" data-id="${o.id}">Accept offer</button><button class="btn alt sm2" data-a="msgu" data-id="${o.seller_id}">Message</button></div>` : `<span class="pbadge">${o.status === 'accepted' ? 'Accepted' : o.status === 'declined' ? 'Not chosen' : 'Sent'}</span>`}</div>`).join('') : '<div class="empty" style="padding:16px">No offers yet. Suppliers will answer here.</div>'}${r.status === 'open' ? `<button class="btn alt" data-a="rfqclose" data-id="${r.id}">Close this request</button>` : ''}`;
+  } else {
+    const { data } = await sb.from('rfq_offers').select('*').eq('rfq_id', id).eq('seller_id', S.user.id).maybeSingle(); const o = data || {};
+    sheet(head + `<h3 class="sub" style="padding:0">Your offer</h3>
+      <div class="fld"><label>Price each and currency</label><div class="lkrow"><input id="op" type="number" inputmode="decimal" min="0" placeholder="Price each" value="${o.unit_price != null ? o.unit_price : ''}"><select id="ocu">${CURS.map(c => `<option ${o.currency === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div></div>
+      <div class="fld"><label>Quantity and days to prepare</label><div class="lkrow"><input id="oq" type="number" inputmode="numeric" min="1" value="${o.qty || r.qty}"><input id="ol" type="number" inputmode="numeric" min="0" placeholder="Days" value="${o.lead_days != null ? o.lead_days : ''}"></div></div>
+      <div class="fld"><label for="ov">Offer valid until</label><input id="ov" type="date" value="${esc(o.valid_until || '')}"></div>
+      <div class="fld"><label for="on">Note (customisation, shipping, terms)</label><textarea id="on" maxlength="500">${esc(o.note || '')}</textarea></div>
+      <button class="btn" id="ogo" data-a="offsub" data-id="${r.id}">${o.id ? 'Update offer' : 'Send offer'}</button>`);
+  }
+}
+async function openOrder(id) {
+  const o = (S.orders || []).find(x => x.id === id); if (!o) return;
+  const buyer = o.buyer_id === S.user.id, other = buyer ? o.seller_id : o.buyer_id; S.curOrder = o.id;
+  const acts = [];
+  if (!buyer) { if (o.status === 'placed') acts.push(['confirmed', 'Confirm order', 1], ['canceled', 'Decline order', 0]); else if (o.status === 'confirmed') acts.push(['shipped', 'Mark as shipped', 1], ['canceled', 'Cancel order', 0]); else if (o.status === 'shipped') acts.push(['delivered', 'Mark as delivered', 1]); }
+  else { if (o.status === 'placed' || o.status === 'confirmed') acts.push(['canceled', 'Cancel order', 0]); if (o.status === 'delivered') acts.push(['completed', 'Confirm I received it', 1]); }
+  let reviewed = false;
+  if (buyer && o.status === 'completed') { const { data } = await sb.from('seller_reviews').select('id').eq('order_id', o.id).maybeSingle(); reviewed = !!data; }
+  const steps = ['placed', 'confirmed', 'shipped', 'delivered', 'completed'], at = steps.indexOf(o.status);
+  sheet(`<h2>${esc(o.title)}</h2>
+    <div class="steps">${o.status === 'canceled' ? '<span class="pbadge st-canceled">Canceled</span>' : steps.map((s, i) => `<span class="${i <= at ? 'on' : ''}">${ST[s]}</span>`).join('')}</div>
+    <div class="specs"><div><span>Quantity</span><b>${o.qty}</b></div><div><span>Price each</span><b>${fmt(o.unit_price, o.currency)}</b></div><div><span>Total</span><b>${fmt(o.total, o.currency)}</b></div><div><span>${buyer ? 'Seller' : 'Buyer'}</span><b>${esc(nameOf(other))}</b></div>${o.dest_address ? `<div><span>Deliver to</span><b>${esc(o.dest_address)}${o.dest_country ? ', ' + esc(o.dest_country) : ''}</b></div>` : ''}${o.note ? `<div><span>Note</span><b>${esc(o.note)}</b></div>` : ''}<div><span>Ordered</span><b>${new Date(o.created_at).toLocaleString()}</b></div><div><span>Source</span><b>${o.source === 'quote' ? 'Accepted quotation' : 'Listing'}</b></div></div>
+    <p class="ls">Payment is arranged between you and the ${buyer ? 'seller' : 'buyer'} for now. Delivery estimates are not guarantees.</p>
+    ${acts.map(([s, l, pri]) => `<button class="btn ${pri ? '' : 'alt'}" data-a="ordset" data-s="${s}">${l}</button>`).join('')}
+    ${buyer && o.status === 'completed' && !reviewed ? '<button class="btn" data-a="review">★ Leave a review</button>' : ''}${reviewed ? '<div class="note">Thanks, your review is saved.</div>' : ''}
+    <button class="btn alt" data-a="msgu" data-id="${other}">Message ${esc(nameOf(other))}</button>`);
+}
+
+function paintReview() {
+  const n = S.stars || 5;
+  sheet(`<h2>Review the seller</h2><div class="stars">${[1, 2, 3, 4, 5].map(i => `<button class="${i <= n ? 'on' : ''}" data-a="rstar" data-id="${i}" aria-label="${i} star${i === 1 ? '' : 's'}">★</button>`).join('')}</div>
+    <div class="fld"><label for="rvb">Your feedback (optional)</label><textarea id="rvb" maxlength="500" placeholder="How was the item and the service?">${esc(($('#rvb') || {}).value || '')}</textarea></div><button class="btn" data-a="rsub">Submit review</button><p class="ls">Only buyers with a completed order can review.</p>`);
+}
+
+/* ---------- v0.21: currency, delivery, cases, wish lists, compare, QR, highlights, drafts, account safeguard ---------- */
+const DCURS = ['USD', 'EUR', 'GBP', 'ETB', 'KES', 'UGX', 'TZS', 'RWF', 'NGN', 'GHS', 'ZAR', 'EGP', 'AED', 'SAR', 'CNY', 'INR', 'TRY', 'CAD', 'AUD'];
+async function loadFx() {
+  const fill = rows => { S.fx = {}; (rows || []).forEach(x => { S.fx[x.code] = +x.per_usd; }); S.fx.USD = 1; };
+  try {
+    const { data } = await sb.from('fx_rates').select('code,per_usd,updated_at'); fill(data);
+    const age = data && data.length ? Date.now() - Math.max.apply(null, data.map(r => +new Date(r.updated_at))) : Infinity;
+    if (age > 24 * 3600e3) {
+      fetch(SUPA_URL + '/functions/v1/fx-update', { method: 'POST', headers: { apikey: SUPA_KEY, 'Content-Type': 'application/json' }, body: '{}' })
+        .then(() => sb.from('fx_rates').select('code,per_usd')).then(r => { if (r && r.data && r.data.length) { fill(r.data); if (S.dcur) render(true); } }).catch(() => {});
+    }
+  } catch (e) {}
+}
+document.addEventListener('change', e => { if (e.target.id === 'dcur') { S.dcur = e.target.value || ''; saveSettings(); render(true); toast('Saved'); } });
+
+/* delivery */
+const DMETH = { motorbike: '🏍️ Motorbike', bicycle: '🚲 Bicycle', car: '🚗 Car', van: '🚐 Van', truck: '🚚 Truck', air: '✈️ Air', sea: '🚢 Sea', rail: '🚆 Rail', walking: '🚶 On foot' };
+const DJ = { requested: 'Requested', accepted: 'Accepted', picked_up: 'Picked up', delivered: 'Delivered', declined: 'Declined', canceled: 'Canceled' };
+const DPCOLS = 'user_id,name,country,areas,scope,methods,max_weight_kg,capacity_note,base_fee,fee_currency,per_km_fee,hours,limits,available';
+const DSCOPE = { local: 'Local', international: 'International', both: 'Local and international' };
+function fmtWindow(a, b, intl) {
+  const d0 = new Date(a), d1 = new Date(b), same = d0.toDateString() === d1.toDateString(), today = d0.toDateString() === new Date().toDateString();
+  const tm = d => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), dm = d => d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  if (!intl && same) return (today ? 'Estimated arrival today, ' : 'Estimated arrival ' + dm(d0) + ', ') + tm(d0) + ' – ' + tm(d1);
+  return 'Estimated delivery, ' + dm(d0) + ' – ' + dm(d1);
+}
+function estimate(o, pr, tier) {
+  const prod = (S.products || []).find(x => x.id === o.product_id), prep = prod && prod.prep ? prod.prep : 0, H = 3600e3, now = Date.now();
+  const same = (a, b) => a && b && a.trim().toLowerCase() === b.trim().toLowerCase();
+  const intl = !!(o.dest_country && pr.country && !same(o.dest_country, pr.country));
+  const t0 = now + ((tier === 'express' ? 1 : 3) + prep * 24) * H;
+  const a = intl ? 120 + 48 : (tier === 'express' ? 1 : 2), b = intl ? 240 + 96 : (tier === 'express' ? 3 : 6);
+  return { intl, prep, pickup: new Date(t0), from: new Date(t0 + a * H), to: new Date(t0 + b * H) };
+}
+const delFee = (pr, tier) => Math.round(Number(pr.base_fee || 0) * (tier === 'express' ? 1.5 : 1));
+function providerList() {
+  const q = (S.dq || '').trim().toLowerCase();
+  const L = (S.dprov || []).filter(p => !q || (p.name + ' ' + (p.country || '') + ' ' + (p.areas || []).join(' ')).toLowerCase().includes(q));
+  return L.length ? L.map(p => `<button class="ordrow" data-a="dprov" data-id="${p.user_id}"><span class="tx"><b>${esc(p.name)}</b><span class="ls" style="display:block">${(p.methods || []).map(m => DMETH[m] || m).join(' ')} · ${esc((p.areas || []).slice(0, 3).join(', ') || p.country || '')}</span><span class="ls" style="display:block">From ${fmt(p.base_fee, p.fee_currency)} · ${DSCOPE[p.scope] || p.scope}</span></span><span class="pbadge">View</span></button>`).join('') : '<div class="empty" style="padding:40px 24px">No couriers found. Try another area.</div>';
+}
+document.addEventListener('input', e => { if (e.target.id === 'dq') { S.dq = e.target.value; const l = $('#dlist'); if (l) l.innerHTML = providerList(); } });
+async function openDelivery() {
+  const tab = S.dtab || 'find', me = S.user.id;
+  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button><b class="ttl">Delivery</b></header><div class="setbody"><div class="seg" style="margin:12px 16px">${[['find', 'Find a courier'], ['jobs', 'Deliveries'], ['me', 'Be a courier']].map(([k, l]) => `<button class="${tab === k ? 'on' : ''}" data-a="dtab" data-id="${k}">${l}</button>`).join('')}</div><div id="dbody"><div class="empty" style="padding:40px">Loading...</div></div></div></div>`;
+  if (tab === 'find') {
+    const { data, error } = await sb.from('delivery_providers').select(DPCOLS).eq('available', true).neq('user_id', me).limit(80);
+    const b = $('#dbody'); if (!b) return; if (error) { b.innerHTML = '<div class="empty" style="padding:40px">Could not load couriers.</div>'; return; }
+    S.dprov = data || [];
+    b.innerHTML = `<div style="padding:0 16px 8px"><input id="dq" type="search" placeholder="Search by area or country" value="${esc(S.dq || '')}"></div><div id="dlist">${providerList()}</div>`;
+  } else if (tab === 'jobs') {
+    const { data, error } = await sb.from('delivery_jobs').select('*').or('provider_id.eq.' + me + ',requested_by.eq.' + me).order('created_at', { ascending: false }).limit(60);
+    const b = $('#dbody'); if (!b) return; if (error) { b.innerHTML = '<div class="empty" style="padding:40px">Could not load deliveries.</div>'; return; }
+    S.djobs = data || []; await loadProfiles(S.djobs.map(j => j.provider_id === me ? j.requested_by : j.provider_id));
+    b.innerHTML = S.djobs.length ? S.djobs.map(j => { const asC = j.provider_id === me; return `<button class="ordrow" data-a="djob" data-id="${j.id}"><span class="tx"><b>${asC ? 'Job for ' + esc(nameOf(j.requested_by)) : 'Courier: ' + esc(nameOf(j.provider_id))}</b><span class="ls" style="display:block">${esc((j.dest_address || 'Destination not set').slice(0, 60))}</span><span class="ls" style="display:block">${fmt(j.fee, j.currency)}${j.eta_from ? ' · ' + esc(fmtWindow(j.eta_from, j.eta_to, false)) : ''}</span></span><span class="pbadge st-${j.status === 'delivered' ? 'completed' : j.status === 'declined' || j.status === 'canceled' ? 'canceled' : 'shipped'}">${DJ[j.status]}</span></button>`; }).join('') : '<div class="empty" style="padding:50px 24px">No deliveries yet.<br>Open an order and tap Arrange delivery.</div>';
+  } else {
+    const { data: m } = await sb.from('delivery_providers').select(DPCOLS).eq('user_id', me).maybeSingle();
+    let phone = ''; if (m) { const r = await sb.rpc('get_provider_phone', { p_provider: me }); phone = r.data || ''; }
+    S.dmeth = new Set((m && m.methods) || ['motorbike']); S.dscope = (m && m.scope) || 'local'; S.davail = m ? m.available : true; S.hasProv = !!m;
+    const b = $('#dbody'); if (!b) return; const v = m || {};
+    b.innerHTML = `<div style="padding:0 16px 24px"><p class="ls" style="margin-bottom:8px">Register to receive delivery jobs from buyers and sellers. Your phone number is only shown to people who book you.</p>
+      <div class="fld"><label for="dn">Name or business name</label><input id="dn" maxlength="60" value="${esc(v.name || '')}"></div>
+      <div class="fld"><label for="dph">Phone</label><input id="dph" type="tel" inputmode="tel" maxlength="25" placeholder="+251912345678" value="${esc(phone)}"></div>
+      <div class="fld"><label for="dco">Country</label><input id="dco" maxlength="60" value="${esc(v.country || '')}"></div>
+      <div class="fld"><label for="dar">Areas you serve (separate with commas)</label><input id="dar" maxlength="300" value="${esc((v.areas || []).join(', '))}" placeholder="Bole, Piassa, Merkato"></div>
+      <div class="fld"><label>Service</label><div class="seg c3" id="dsc">${Object.entries(DSCOPE).map(([k, l]) => `<button class="${S.dscope === k ? 'on' : ''}" data-a="dscope" data-id="${k}">${k === 'both' ? 'Both' : l}</button>`).join('')}</div></div>
+      <div class="fld"><label>Vehicle or method</label><div class="dots" id="dmt">${Object.entries(DMETH).map(([k, l]) => `<button class="chip ${S.dmeth.has(k) ? 'on' : ''}" data-a="dmeth" data-id="${k}">${l}</button>`).join('')}</div></div>
+      <div class="fld"><label>Package capacity</label><div class="lkrow"><input id="dkg" type="number" inputmode="decimal" min="0" placeholder="Max kg" value="${v.max_weight_kg || ''}"><input id="dcn" maxlength="200" placeholder="Capacity notes" value="${esc(v.capacity_note || '')}"></div></div>
+      <div class="fld"><label>Prices</label><div class="lkrow"><input id="dfee" type="number" inputmode="decimal" min="0" placeholder="Base fee" value="${v.base_fee != null ? v.base_fee : ''}"><select id="dfc">${CURS.map(c => `<option ${((v.fee_currency || 'ETB') === c) ? 'selected' : ''}>${c}</option>`).join('')}</select></div><input id="dkm" type="number" inputmode="decimal" min="0" placeholder="Extra fee per km (optional)" value="${v.per_km_fee != null ? v.per_km_fee : ''}" style="margin-top:8px"></div>
+      <div class="fld"><label for="dhr">Working hours</label><input id="dhr" maxlength="100" placeholder="Mon to Sat, 8 AM to 6 PM" value="${esc(v.hours || '')}"></div>
+      <div class="fld"><label for="dlm">Limits (what you do not carry)</label><input id="dlm" maxlength="200" value="${esc(v.limits || '')}"></div>
+      <div class="srow" style="border:0;padding:6px 0 14px"><div><div class="lbl">Available for jobs</div></div>${sw2(S.davail, 'davail')}</div>
+      <button class="btn" id="dsv" data-a="dsave">${m ? 'Save changes' : 'Register as a courier'}</button>${m ? '<button class="btn alt" data-a="ddel" style="margin-top:8px">Stop being a courier</button>' : ''}</div>`;
+  }
+}
+async function pickProvider(orderId) {
+  S.dreqOrder = orderId; sheet('<h2>Choose a courier</h2><div class="empty" style="padding:20px">Loading...</div>');
+  const { data } = await sb.from('delivery_providers').select(DPCOLS).eq('available', true).neq('user_id', S.user.id).limit(30); S.dprov = data || [];
+  const o = await getOrder(orderId); if (!o) return;
+  sheet(`<h2>Choose a courier</h2>${S.dprov.length ? S.dprov.map(p => { const e = estimate(o, p, 'standard'); return `<button class="ordrow" style="padding-inline:0" data-a="dsel" data-id="${p.user_id}"><span class="tx"><b>${esc(p.name)}</b><span class="ls" style="display:block">${(p.methods || []).map(m => DMETH[m] || m).join(' ')} · ${DSCOPE[p.scope]}</span><span class="ls" style="display:block">${fmt(delFee(p, 'standard'), p.fee_currency)} · ${esc(fmtWindow(e.from, e.to, e.intl))}</span></span></button>`; }).join('') : '<div class="empty" style="padding:20px">No couriers are available yet.</div>'}`);
+}
+async function getOrder(id) {
+  let o = (S.orders || []).find(x => x.id === id);
+  if (!o) { const { data } = await sb.from('orders').select('*').eq('id', id).maybeSingle(); o = data; }
+  return o || null;
+}
+async function paintDelReq() {
+  const R = S.dreq; if (!R) return; const o = await getOrder(R.orderId), pr = (S.dprov || []).find(p => p.user_id === R.provider); if (!o || !pr) return;
+  const e = estimate(o, pr, R.tier), keep = ['#dpu', '#ddt', '#dhn'].map(s => $(s) ? $(s).value : null);
+  sheet(`<h2>Request ${esc(pr.name)}</h2>
+    <div class="seg" style="margin-bottom:10px">${[['standard', 'Standard'], ['express', 'Express']].map(([k, l]) => `<button class="${R.tier === k ? 'on' : ''}" data-a="dtier" data-id="${k}">${l}</button>`).join('')}</div>
+    <div class="note"><b>${esc(fmtWindow(e.from, e.to, e.intl))}</b><br>Fee: <b>${fmt(delFee(pr, R.tier), pr.fee_currency)}</b>${pr.per_km_fee ? ' plus ' + fmt(pr.per_km_fee, pr.fee_currency) + ' per km' : ''}<br>
+    Preparation ${e.prep} day${e.prep === 1 ? '' : 's'} · pickup by ${e.pickup.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} · transit ${e.intl ? '5 to 10 days' : R.tier === 'express' ? '1 to 3 hours' : '2 to 6 hours'}${e.intl ? ' · includes about 2 to 4 days for customs' : ''}.<br><small>Estimates are not guarantees. They can change with traffic, availability and customs.</small></div>
+    <div class="fld"><label for="dpu">Pickup address</label><textarea id="dpu" maxlength="300" placeholder="Where the courier collects the package">${esc(keep[0] != null ? keep[0] : '')}</textarea></div>
+    <div class="fld"><label for="ddt">Delivery address</label><textarea id="ddt" maxlength="300">${esc(keep[1] != null ? keep[1] : (o.dest_address || ''))}</textarea></div>
+    <div class="fld"><label for="dhn">Handling instructions (optional)</label><input id="dhn" maxlength="200" placeholder="Fragile, keep dry..." value="${esc(keep[2] || '')}"></div>
+    <button class="btn" id="dgo" data-a="dgo">Send request</button>`);
+}
+function openJob(id) {
+  const j = (S.djobs || []).find(x => x.id === id); if (!j) return; const me = S.user.id, asC = j.provider_id === me; S.curJob = j;
+  const acts = asC ? (j.status === 'requested' ? [['accepted', 'Accept job', 1], ['declined', 'Decline', 0]] : j.status === 'accepted' ? [['picked_up', 'Mark as picked up', 1]] : j.status === 'picked_up' ? [['delivered', 'Mark as delivered', 1]] : []) : (j.status === 'requested' || j.status === 'accepted' ? [['canceled', 'Cancel request', 0]] : []);
+  sheet(`<h2>Delivery ${esc(DJ[j.status])}</h2><div class="specs"><div><span>${asC ? 'Requested by' : 'Courier'}</span><b>${esc(nameOf(asC ? j.requested_by : j.provider_id))}</b></div><div><span>Pickup</span><b>${esc(j.pickup_address || 'Not set')}</b></div><div><span>Deliver to</span><b>${esc(j.dest_address || 'Not set')}</b></div>${j.handling ? `<div><span>Package</span><b>${esc(j.handling)}</b></div>` : ''}<div><span>Fee (${j.tier})</span><b>${fmt(j.fee, j.currency)}</b></div>${j.eta_from ? `<div><span>Estimate</span><b>${esc(fmtWindow(j.eta_from, j.eta_to, false))}</b></div>` : ''}${j.proof_url && safeUrl(j.proof_url) ? `<div><span>Proof</span><b><a href="${esc(j.proof_url)}" target="_blank" rel="noopener">Open photo</a></b></div>` : ''}</div>
+    ${!asC ? '<div class="ls" id="jph">Loading courier phone...</div>' : ''}
+    ${asC && j.status === 'picked_up' ? `<label class="up"><input type="file" id="dproof" accept="image/*" hidden><span>${I.plus}</span>Add a photo as proof of delivery</label>` : ''}
+    ${acts.map(([s, l, pri]) => `<button class="btn ${pri ? '' : 'alt'}" data-a="djset" data-s="${s}">${l}</button>`).join('')}
+    <button class="btn alt" data-a="msgu" data-id="${asC ? j.requested_by : j.provider_id}">Message</button>`);
+  if (!asC) sb.rpc('get_provider_phone', { p_provider: j.provider_id }).then(r => { const el = $('#jph'); if (el) el.innerHTML = r.data ? 'Courier phone: <a href="tel:' + esc(r.data) + '">' + esc(r.data) + '</a>' : ''; });
+}
+
+/* returns, refunds and disputes */
+const DK = { return: 'Return the item', refund: 'Ask for a refund', not_received: 'Not received', not_as_described: 'Not as described', damaged: 'Damaged', other: 'Other problem' };
+const DS = { open: 'Open', seller_replied: 'Seller replied', resolved: 'Resolved', closed: 'Withdrawn' };
+async function openCase(id) {
+  const [dq, mq] = await Promise.all([sb.from('disputes').select('*').eq('id', id).maybeSingle(), sb.from('dispute_messages').select('*').eq('dispute_id', id).order('created_at', { ascending: true })]);
+  const d = dq.data; if (!d) return toast('Case not found'); const ms = mq.data || []; await loadProfiles(ms.map(m => m.sender_id)); S.curCase = d;
+  const open = d.status === 'open' || d.status === 'seller_replied';
+  sheet(`<h2>Case: ${esc(DK[d.kind] || d.kind)}</h2><span class="pbadge">${DS[d.status]}</span>${d.resolution ? `<div class="note">${esc(d.resolution)}</div>` : ''}
+    <div class="thread">${ms.map(m => `<div class="dmsg ${m.sender_id === S.user.id ? 'me' : ''}"><b>${esc(nameOf(m.sender_id))}</b> <small>${esc(new Date(m.created_at).toLocaleString())}</small><p>${esc(m.body)}</p>${m.media_url && safeUrl(m.media_url) ? `<img src="${esc(m.media_url)}" alt="Evidence" loading="lazy">` : ''}</div>`).join('')}</div>
+    ${open ? `<div class="fld"><textarea id="dmsg" maxlength="1000" placeholder="Write a message"></textarea></div><label class="up"><input type="file" id="dfile" accept="image/*" hidden><span>${I.plus}</span>Add a photo as evidence</label><button class="btn" id="dsend" data-a="dsend">Send</button><div class="row2"><button class="btn alt" data-a="dres">Mark as resolved</button>${d.opened_by === S.user.id ? '<button class="btn alt" data-a="dwith">Withdraw</button>' : ''}</div>` : ''}
+    <p class="ls">KiHelp does not hold payments yet, so returns and refunds are agreed between buyer and seller. Keep messages polite and share clear evidence.</p>`);
+}
+
+/* order detail with delivery and cases */
+async function openOrder(id) {
+  const o = (S.orders || []).find(x => x.id === id); if (!o) return;
+  const buyer = o.buyer_id === S.user.id, other = buyer ? o.seller_id : o.buyer_id; S.curOrder = o.id;
+  const [rv, jb, dp] = await Promise.all([
+    buyer && o.status === 'completed' ? sb.from('seller_reviews').select('id').eq('order_id', o.id).maybeSingle() : Promise.resolve({ data: null }),
+    sb.from('delivery_jobs').select('*').eq('order_id', o.id).order('created_at', { ascending: false }).limit(1),
+    sb.from('disputes').select('id,status,kind').eq('order_id', o.id).order('created_at', { ascending: false }).limit(1)
+  ]);
+  const reviewed = !!rv.data, job = (jb.data || [])[0], dis = (dp.data || [])[0];
+  const acts = [];
+  if (!buyer) { if (o.status === 'placed') acts.push(['confirmed', 'Confirm order', 1], ['canceled', 'Decline order', 0]); else if (o.status === 'confirmed') acts.push(['shipped', 'Mark as shipped', 1], ['canceled', 'Cancel order', 0]); else if (o.status === 'shipped') acts.push(['delivered', 'Mark as delivered', 1]); }
+  else { if (o.status === 'placed' || o.status === 'confirmed') acts.push(['canceled', 'Cancel order', 0]); if (o.status === 'delivered') acts.push(['completed', 'Confirm I received it', 1]); }
+  const steps = ['placed', 'confirmed', 'shipped', 'delivered', 'completed'], at = steps.indexOf(o.status);
+  const active = job && (job.status === 'requested' || job.status === 'accepted' || job.status === 'picked_up');
+  sheet(`<h2>${esc(o.title)}</h2>
+    <div class="steps">${o.status === 'canceled' ? '<span class="pbadge st-canceled">Canceled</span>' : steps.map((s, i) => `<span class="${i <= at ? 'on' : ''}">${ST[s]}</span>`).join('')}</div>
+    <div class="specs"><div><span>Quantity</span><b>${o.qty}</b></div><div><span>Price each</span><b>${fmt(o.unit_price, o.currency)}</b></div><div><span>Total</span><b>${fmt(o.total, o.currency)}</b></div><div><span>${buyer ? 'Seller' : 'Buyer'}</span><b>${esc(nameOf(other))}</b></div>${o.dest_address ? `<div><span>Deliver to</span><b>${esc(o.dest_address)}${o.dest_country ? ', ' + esc(o.dest_country) : ''}</b></div>` : ''}${o.note ? `<div><span>Note</span><b>${esc(o.note)}</b></div>` : ''}<div><span>Ordered</span><b>${esc(new Date(o.created_at).toLocaleString())}</b></div><div><span>Source</span><b>${o.source === 'quote' ? 'Accepted quotation' : 'Listing'}</b></div></div>
+    <p class="ls">Payment is arranged between you and the ${buyer ? 'seller' : 'buyer'} for now. Delivery estimates are not guarantees.</p>
+    ${acts.map(([s, l, pri]) => `<button class="btn ${pri ? '' : 'alt'}" data-a="ordset" data-s="${s}">${l}</button>`).join('')}
+    ${job ? `<div class="note"><b>🚚 Delivery: ${DJ[job.status]}</b>${job.eta_from ? '<br>' + esc(fmtWindow(job.eta_from, job.eta_to, false)) : ''}<br>Fee ${fmt(job.fee, job.currency)}</div>${(job.status === 'requested' || job.status === 'accepted') ? `<button class="btn alt" data-a="djcancel" data-id="${job.id}">Cancel delivery</button>` : ''}` : ''}
+    ${!active && (o.status === 'placed' || o.status === 'confirmed' || o.status === 'shipped') ? '<button class="btn alt" data-a="dpick">🚚 Arrange delivery</button>' : ''}
+    ${buyer && o.status === 'completed' && !reviewed ? '<button class="btn" data-a="review">★ Leave a review</button>' : ''}${reviewed ? '<div class="note">Thanks, your review is saved.</div>' : ''}
+    ${dis ? `<button class="btn alt" data-a="dcase" data-id="${dis.id}">⚠️ View case (${DS[dis.status]})</button>` : (buyer && (o.status === 'shipped' || o.status === 'delivered' || o.status === 'completed') ? '<button class="btn alt" data-a="dopen">⚠️ Report a problem or ask for a return</button>' : '')}
+    <button class="btn alt" data-a="msgu" data-id="${other}">Message ${esc(nameOf(other))}</button>`);
+}
+
+/* wish lists and comparing */
+const mapProd = p => ({ id: p.id, title: p.title, price: Number(p.price), cur: p.currency || 'ETB', opt: p.price_type || 'fixed', cat: p.category || 'Other', sid: p.seller_id, who: nameOf(p.seller_id), desc: p.description || '', h: 100 + (p.id % 5) * 20,
+  media: safeUrl(p.image_url) ? { type: 'image', url: p.image_url } : null, cond: p.condition, brand: p.brand, model: p.model, origin: p.origin_country, modes: p.sale_modes || ['retail'], pmin: p.min_price, pmax: p.max_price, moq: p.moq || 1, stock: p.stock, tiers: Array.isArray(p.price_tiers) ? p.price_tiers : [], sample: p.sample_price, prep: p.prep_days, attrs: p.item_attributes || {} });
+async function openLists() {
+  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button><b class="ttl">Wish lists</b><span style="flex:1"></span><button class="hbtn" data-a="wlnew">${I.plus}New list</button></header><div class="setbody" id="wlb"><div class="empty" style="padding:40px">Loading...</div></div></div>`;
+  const { data, error } = await sb.from('wishlists').select('id,name,is_shared,wishlist_items(count)').eq('owner_id', S.user.id).order('created_at', { ascending: false });
+  const b = $('#wlb'); if (!b) return; if (error) { b.innerHTML = '<div class="empty" style="padding:40px">Could not load your lists.</div>'; return; }
+  S.wlists = data || [];
+  b.innerHTML = S.wlists.length ? S.wlists.map(l => `<button class="ordrow" data-a="wlopen" data-id="${l.id}"><span class="tx"><b>${esc(l.name)}</b><span class="ls" style="display:block">${(l.wishlist_items && l.wishlist_items[0] ? l.wishlist_items[0].count : 0)} item(s)</span></span><span class="pbadge">${l.is_shared ? 'Shared' : 'Private'}</span></button>`).join('') : '<div class="empty" style="padding:50px 24px">No lists yet.<br>Open an item and tap Add to list.</div>';
+}
+async function openWishlist(id) {
+  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button><b class="ttl" id="wlt">List</b></header><div class="setbody" id="wlb"><div class="empty" style="padding:40px">Loading...</div></div></div>`;
+  const { data: L } = await sb.from('wishlists').select('id,owner_id,name,is_shared').eq('id', id).maybeSingle(); const b = $('#wlb'); if (!b) return;
+  if (!L) { b.innerHTML = '<div class="empty" style="padding:40px">This list is private or does not exist.</div>'; return; }
+  const { data: it } = await sb.from('wishlist_items').select('product_id').eq('list_id', id); const ids = (it || []).map(x => x.product_id);
+  let prods = []; if (ids.length) { const r = await sb.from('products').select('*').in('id', ids).eq('status', 'active'); prods = (r.data || []).map(mapProd); }
+  await loadProfiles(prods.map(p => p.sid)); prods.forEach(p => { p.who = nameOf(p.sid); if (!S.products.find(x => x.id === p.id)) S.products.push(p); });
+  S.curList = L; const own = L.owner_id === S.user.id, t = $('#wlt'); if (t) t.textContent = L.name;
+  b.innerHTML = `<div class="dots" style="padding:12px 16px">${own ? `<button class="chip" data-a="wlshare">${L.is_shared ? '🌍 Shared: tap to make private' : '🔒 Private: tap to share'}</button>` : ''}${L.is_shared ? '<button class="chip" data-a="wlcopy">🔗 Copy link</button>' : ''}${own ? '<button class="chip" data-a="wldel">Delete list</button>' : ''}</div>${prods.length ? `<div class="grid">${prods.map(listingCard).join('')}</div>` : '<div class="empty" style="padding:40px 24px">This list is empty.</div>'}`;
+}
+function openCompare(id) {
+  const base = S.products.find(x => x.id == id); if (!base) return;
+  const same = S.products.filter(x => x.id !== base.id && x.cat === base.cat);
+  const score = x => (base.brand && x.brand === base.brand ? 2 : 0) + (base.model && x.model === base.model ? 2 : 0);
+  let items = [base].concat(same.sort((a, b) => score(b) - score(a)).slice(0, 3));
+  const low = x => (x.tiers && x.tiers.length ? Math.min.apply(null, x.tiers.map(t => t.price).concat([x.price])) : x.price);
+  const sort = S.cmpSort || 'price'; const rest = items.slice(1); if (sort === 'price') rest.sort((a, b) => low(a) - low(b)); items = [base].concat(rest);
+  const row = (l, f) => `<tr><th>${l}</th>${items.map(x => `<td>${f(x)}</td>`).join('')}</tr>`;
+  S.cmpId = id;
+  sheet(`<h2>Compare similar items</h2><p class="ls">Matches use category, brand and model, not pictures.</p><div class="dots" style="margin:6px 0">${[['price', 'Lowest price first'], ['none', 'Best match first']].map(([k, l]) => `<button class="chip ${sort === k ? 'on' : ''}" data-a="cmpsort" data-id="${k}">${l}</button>`).join('')}</div>
+    <div class="cmpwrap"><table class="cmp"><tr><th></th>${items.map(x => `<td><button class="lt" data-a="listing" data-id="${x.id}">${esc(x.title)}</button></td>`).join('')}</tr>
+    ${row('Match', x => x.id === base.id ? 'This item' : (base.brand && base.model && x.brand === base.brand && x.model === base.model ? 'Exact model' : 'Similar'))}
+    ${row('Price', x => esc(fmt(x.price, x.cur)))}${row('Lowest bulk price', x => x.tiers && x.tiers.length ? esc(fmt(low(x), x.cur)) : '—')}
+    ${row('Condition', x => esc(cap(x.cond || '') || '—'))}${row('Min. order', x => x.moq || 1)}${row('In stock', x => x.stock != null ? x.stock : '—')}${row('Made in', x => esc(x.origin || '—'))}${row('Prepared in', x => x.prep != null ? x.prep + ' d' : '—')}${row('Seller', x => esc(x.who))}</table></div>`);
+}
+
+/* QR code */
+function loadQR() {
+  return new Promise((res, rej) => {
+    if (window.qrcode) return res();
+    const urls = ['https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js', 'https://unpkg.com/qrcode-generator@1.4.4/qrcode.js']; let i = 0;
+    const next = () => { if (i >= urls.length) return rej(new Error('qr')); const s = document.createElement('script'); s.src = urls[i++]; s.onload = () => res(); s.onerror = next; document.head.appendChild(s); };
+    next();
+  });
+}
+
+/* story highlights */
+S.hls = {};
+async function loadHighlights(uid) {
+  try { const { data } = await sb.from('highlights').select('id,title,cover_url,created_at').eq('owner_id', uid).order('created_at', { ascending: true }); S.hls[uid] = data || []; } catch (e) { S.hls[uid] = []; }
+  if ($('#pposts')) paintProfile(); else if (uid === S.user.id && S.tab === 'me' && !$('#over').innerHTML.trim()) render(true);
+}
+function hlStrip(uid) {
+  const L = S.hls[uid];
+  if (L === undefined) { S.hls[uid] = null; loadHighlights(uid); return ''; }
+  const own = uid === S.user.id; if (!L || (!L.length && !own)) return '';
+  return `<div class="hlrow">${own ? '<button class="hl" data-a="hlnew"><span class="hlc">+</span><small>New</small></button>' : ''}${L.map(h => `<button class="hl" data-a="hlopen" data-id="${h.id}"><span class="hlc">${safeUrl(h.cover_url) ? `<img src="${esc(h.cover_url)}" alt="">` : '★'}</span><small>${esc(h.title)}</small></button>`).join('')}</div>`;
+}
+
+/* drafts and scheduled posts */
+async function saveDraftFrom(text, media, when) {
+  let pub = null;
+  if (when) { const t = new Date(when); if (isNaN(t) || t.getTime() < Date.now() + 60000) { busy('#postbtn', false, tr('post')); S.asDraft = false; return toast('Pick a time at least a minute from now'); } pub = t.toISOString(); }
+  const { error } = await sb.from('post_drafts').insert({ user_id: S.user.id, content: text || null, media: media.map(m => ({ url: m.url, type: m.type })), visibility: S.postVis, allow_download: !!S.allowDl, publish_at: pub });
+  S.asDraft = false; if (error) { busy('#postbtn', false, tr('post')); return toast('Could not save'); }
+  closeSheet(); toast(pub ? 'Scheduled for ' + new Date(pub).toLocaleString() : 'Draft saved. Find it in Settings, Drafts.');
+}
+async function openDrafts() {
+  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button><b class="ttl">Drafts and scheduled</b></header><div class="setbody" id="dfb"><div class="empty" style="padding:40px">Loading...</div></div></div>`;
+  const { data, error } = await sb.from('post_drafts').select('*').eq('user_id', S.user.id).order('created_at', { ascending: false }).limit(50);
+  const b = $('#dfb'); if (!b) return; if (error) { b.innerHTML = '<div class="empty" style="padding:40px">Could not load drafts.</div>'; return; }
+  S.dfts = data || [];
+  b.innerHTML = S.dfts.length ? S.dfts.map(d => `<button class="ordrow" data-a="dfrow" data-id="${d.id}"><span class="tx"><b>${esc((d.content || 'Photo or video post').slice(0, 60))}</b><span class="ls" style="display:block">${(d.media || []).length} attachment(s) · ${d.publish_at ? 'Scheduled for ' + esc(new Date(d.publish_at).toLocaleString()) : 'Draft'}</span></span><span class="pbadge">${d.publish_at ? 'Scheduled' : 'Draft'}</span></button>`).join('') : '<div class="empty" style="padding:50px 24px">No drafts.<br>In a new post, choose Save draft or pick a time.</div>';
+}
+
+/* account deletion safeguard */
+function checkDeletion() {
+  const d = S.profile && S.profile.delete_after; if (!d) return;
+  sheet(`<h2>Your account is scheduled for deletion</h2><p>Your profile and posts are hidden. Everything will be deleted on <b>${esc(new Date(d).toLocaleDateString())}</b>.</p><button class="btn" data-a="delcancel">Cancel deletion and keep my account</button><button class="btn alt" data-a="logout">Log out</button>`);
+}
+const lvExp = s => new Date(s.ended_at || s.started_at).getTime() + 30 * 864e5;
+const lvLeft = s => { const d = Math.max(0, Math.ceil((lvExp(s) - Date.now()) / 864e5)); return d + ' day' + (d === 1 ? '' : 's') + ' left'; };
+
+function paintHlPick() {
+  const L = S.hlPool || [], keep = ($('#hlt') || {}).value || '';
+  sheet(`<h2>New highlight</h2><div class="fld"><label for="hlt">Name</label><input id="hlt" maxlength="30" placeholder="Trip, Work, Family" value="${esc(keep)}"></div>
+    <p class="ls"><span id="hlcount">${S.hlSel.size} selected</span> · choose stories to keep on your profile</p>
+    ${L.length ? `<div class="mgrid">${L.map(s => `<button class="${S.hlSel.has(s.id) ? 'on' : ''}" data-a="hlsel" data-id="${s.id}">${safeUrl(s.media_url) ? (s.kind === 'video' ? `<video src="${esc(s.media_url)}#t=0.1" muted playsinline preload="metadata"></video>` : `<img src="${esc(s.media_url)}" alt="" loading="lazy">`) : `<span class="txtst">${esc((s.text || '').slice(0, 40))}</span>`}</button>`).join('')}</div>` : '<div class="empty" style="padding:20px">You have no stories to choose from yet.</div>'}
+    <button class="btn" id="hlgo" data-a="hlsave">Save highlight</button>`);
+}
+
+/* ---------- v0.22: private accounts, interests, hashtags, stores, product links, captions ---------- */
+S.requested = new Set(); S.reqIn = []; S.notInt = new Set(); S.intr = new Set(); S.feedMode = 'all';
+async function loadSocial() {
+  try {
+    const [rq, pf] = await Promise.all([sb.from('follow_requests').select('requester_id,target_id'), sb.from('post_prefs').select('post_id,interested')]);
+    S.requested = new Set((rq.data || []).filter(r => r.requester_id === S.user.id).map(r => r.target_id));
+    S.reqIn = (rq.data || []).filter(r => r.target_id === S.user.id).map(r => r.requester_id);
+    S.notInt = new Set((pf.data || []).filter(x => !x.interested).map(x => x.post_id));
+    S.intr = new Set((pf.data || []).filter(x => x.interested).map(x => x.post_id));
+    if (S.ready.home) render(true);
+  } catch (e) {}
+}
+const feedList = () => S.posts.filter(p => !S.notInt.has(p.id));
+const feedTabs = () => `<div class="chips feedtabs">${[['all', 'For you'], ['following', 'Following']].map(([k, l]) => `<button class="chip ${S.feedMode === k ? 'on' : ''}" data-a="feedtab" data-id="${k}">${l}</button>`).join('')}</div>`;
+function prodCard(p) {
+  const o = p.prod; if (!o) return '';
+  return `<button class="prodcard" data-a="listing" data-id="${o.id}">${o.media ? `<img src="${esc(o.media.url)}" alt="" loading="lazy">` : '<span class="pcph">🛍️</span>'}<span class="tx"><b>${esc(o.title)}</b><small>${fmt(o.price, o.cur)}${(o.moq || 1) > 1 ? ' · min. ' + o.moq : ''}</small></span><span class="pbadge">View</span></button>`;
+}
+function showUndo(pid) {
+  const old = $('#undobar'); if (old) old.remove();
+  const b = document.createElement('div'); b.id = 'undobar'; b.className = 'undobar';
+  b.innerHTML = `Post hidden <button data-a="undoni" data-id="${pid}">Undo</button>`; document.body.appendChild(b); setTimeout(() => { if (b.parentNode) b.remove(); }, 7000);
+}
+const linkTags = h => h.replace(/(<[^>]*>)|(^|[\s>(])#([\p{L}\p{N}_]{2,30})/gu, (m, tag, pre, w) => tag ? tag : `${pre}<button class="htag" data-a="tag" data-id="${w}">#${w}</button>`);
+const fmtText = t => linkTags(fmtText0(t));
+function openPostSearch(q) {
+  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button><input id="pq" type="search" placeholder="Search posts or #hashtags" aria-label="Search posts" maxlength="60" style="flex:1" autocomplete="off" value="${esc(q || '')}"></header><div class="setbody" id="pqres"><div class="empty" style="padding:40px 24px">Type a word or a #hashtag.</div></div></div>`;
+  if (q) runPostSearch(q); else setTimeout(() => $('#pq') && $('#pq').focus(), 50);
+}
+async function runPostSearch(q) {
+  const box = $('#pqres'); if (!box) return; q = q.trim();
+  if (q.length < 2) { box.innerHTML = '<div class="empty" style="padding:40px 24px">Type at least 2 characters.</div>'; return; }
+  box.innerHTML = '<div class="empty" style="padding:40px 24px">Searching...</div>';
+  const like = '%' + q.replace(/[\\%_]/g, m => '\\' + m) + '%';
+  const { data, error } = await sb.from('posts').select('id,user_id,content,created_at').ilike('content', like).order('created_at', { ascending: false }).limit(30);
+  const cur = $('#pq'); if (!cur || cur.value.trim() !== q) return;
+  if (error) { box.innerHTML = '<div class="empty" style="padding:40px 24px">Search failed. Try again.</div>'; return; }
+  await loadProfiles((data || []).map(p => p.user_id));
+  box.innerHTML = (data || []).length ? data.map(p => `<button class="ordrow" data-a="openpost" data-id="${p.id}">${avOf(p.user_id, 40)}<span class="tx"><b>${esc(nameOf(p.user_id))}</b><span class="ls" style="display:block">${esc((p.content || '').slice(0, 120))}</span></span><span class="ls">${esc(ago(p.created_at))}</span></button>`).join('') : '<div class="empty" style="padding:40px 24px">No posts found.</div>';
+}
+let pqT; document.addEventListener('input', e => { if (e.target.id === 'pq') { clearTimeout(pqT); const v = e.target.value; pqT = setTimeout(() => runPostSearch(v), 350); } });
+async function openFollowReqs() {
+  setPage('Follow requests', '<div class="empty" style="padding:40px">Loading...</div>');
+  const { data } = await sb.from('follow_requests').select('requester_id,created_at').eq('target_id', S.user.id).order('created_at', { ascending: false });
+  const L = data || []; await loadProfiles(L.map(x => x.requester_id)); S.reqIn = L.map(x => x.requester_id);
+  const b = $('#spbody'); if (!b) return;
+  b.innerHTML = (S.profile && S.profile.is_locked ? '' : '<div class="note" style="margin:12px 16px">Your account is public, so nobody needs approval. Turn on Private account in Privacy and search to use requests.</div>') + (L.length ? L.map(x => `<div class="reqrow">${avOf(x.requester_id, 46)}<button data-a="user" data-id="${x.requester_id}" class="tx" style="flex:1;text-align:start"><b>${esc(nameOf(x.requester_id))}</b></button><button class="btn sm2" data-a="fqok" data-id="${x.requester_id}">Approve</button><button class="btn alt sm2" data-a="fqno" data-id="${x.requester_id}">Decline</button></div>`).join('') : '<div class="empty" style="padding:50px 24px">No follow requests.</div>');
+}
+async function openStore(uid) {
+  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button><b class="ttl">Store</b></header><div class="setbody" id="stb"><div class="empty" style="padding:40px">Loading...</div></div></div>`;
+  await loadProfiles([uid]);
+  const [pr, st, rv] = await Promise.all([
+    sb.from('products').select('*').eq('seller_id', uid).eq('status', 'active').order('created_at', { ascending: false }).limit(60),
+    sb.rpc('seller_stats', { p_seller: uid }),
+    sb.from('seller_reviews').select('rating,body,reviewer_id,created_at').eq('seller_id', uid).order('created_at', { ascending: false }).limit(10)
+  ]);
+  const prods = (pr.data || []).map(mapProd); await loadProfiles((rv.data || []).map(r => r.reviewer_id));
+  prods.forEach(p => { p.who = nameOf(p.sid); if (!S.products.find(x => x.id === p.id)) S.products.push(p); });
+  const b = $('#stb'); if (!b) return; const s = st.data && st.data[0], modes = [...new Set(prods.flatMap(p => p.modes || []))], p0 = S.pf[uid] || {};
+  b.innerHTML = `<div class="pcenter" style="padding-top:16px">${avOf(uid, 72)}<div class="big" style="margin-top:8px">${esc(nameOf(uid))}</div><div class="ls">${s && s.reviews > 0 ? '★ ' + s.avg_rating + ' · ' + s.reviews + ' review' + (s.reviews === 1 ? '' : 's') : 'No reviews yet'}${p0.country ? ' · ' + esc(p0.country) : ''}</div>
+    <div class="dots" style="justify-content:center;margin-top:8px">${modes.map(m => `<span class="pbadge">${({ retail: 'Retail', wholesale: 'Wholesale', custom: 'Custom-made' })[m] || ''}</span>`).join('')}</div>
+    <div class="row2" style="padding:10px 16px 0"><button class="btn ${S.following.has(uid) ? 'alt' : ''}" data-a="qfollow" data-id="${uid}">${S.following.has(uid) ? 'Following' : (S.requested.has(uid) ? 'Requested' : 'Follow store')}</button><button class="btn alt" data-a="dm" data-id="${uid}">Contact</button></div></div>
+    <h3 class="sub">Products (${prods.length})</h3>${prods.length ? `<div class="grid">${prods.map(listingCard).join('')}</div>` : '<div class="empty" style="padding:30px">No items for sale right now.</div>'}
+    <h3 class="sub">Verified reviews</h3>${(rv.data || []).length ? rv.data.map(r => `<div class="item"><p>${'★'.repeat(r.rating)}${'☆'.repeat(5 - r.rating)} · ${esc(nameOf(r.reviewer_id))}<small>${esc(r.body || '')}</small></p></div>`).join('') : '<div class="empty" style="padding:20px">Reviews appear after completed orders.</div>'}`;
+}
+/* pinned product in a live */
+const _paintLive = typeof paintLive === 'function' ? paintLive : null;
+if (_paintLive) paintLive = function () { const r = _paintLive.apply(this, arguments); try { pinUI(); } catch (e) {} return r; };
+function pinUI() {
+  const L = S.live, root = $('#live'); if (!L || !root) return;
+  let el = $('#lvpin'); if (!el) { el = document.createElement('div'); el.id = 'lvpin'; el.className = 'lvpin'; root.appendChild(el); }
+  const host = L.role === 'host', p = L.pinned;
+  el.innerHTML = (p ? `<button class="lvprod" data-a="lvprod" data-id="${p.id}">${p.media ? `<img src="${esc(p.media.url)}" alt="">` : ''}<span><b>${esc(p.title)}</b><small>${fmt(p.price, p.cur)}</small></span><span class="pbadge">View</span></button>` : '') + (host ? `<button class="chip" data-a="lvpinpick">📌 ${p ? 'Change' : 'Pin'} product</button>` : '');
+  if (!L.pinPoll) { L.pinPoll = true; refreshPin(); (L.timers = L.timers || []).push(setInterval(refreshPin, 12000)); }
+}
+async function refreshPin() {
+  const L = S.live; if (!L) return;
+  try {
+    const { data } = await sb.from('live_streams').select('pinned_product').eq('id', L.id).maybeSingle(); const pid = data && data.pinned_product;
+    if (!pid) { if (L.pinned) { L.pinned = null; pinUI(); } return; }
+    if (L.pinned && L.pinned.id === pid) return;
+    const r = await sb.from('products').select('*').eq('id', pid).maybeSingle();
+    if (r.data) { await loadProfiles([r.data.seller_id]); L.pinned = mapProd(r.data); if (!S.products.find(x => x.id === L.pinned.id)) S.products.push(L.pinned); pinUI(); }
+  } catch (e) {}
+}
+const srtToVtt = t => { t = String(t || '').replace(/\r/g, '').trim(); return /^WEBVTT/.test(t) ? t : 'WEBVTT\n\n' + t.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2'); };
+
+async function fillProdSelect() {
+  try {
+    if (!S.myProds) { const { data } = await sb.from('products').select('id,title').eq('seller_id', S.user.id).eq('status', 'active').order('created_at', { ascending: false }).limit(30); S.myProds = data || []; }
+    const el = $('#pprod'); if (el) el.innerHTML = '<option value="">None</option>' + S.myProds.map(p => `<option value="${p.id}">${esc(p.title)}</option>`).join('');
+  } catch (e) {}
+}
+
 /* ---------- settings + theme ---------- */
 function applyTheme() {
   const dark = S.mode === 'dark' || (S.mode === 'system' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
@@ -2071,17 +2533,17 @@ async function clearCache() {
 let setPageKey = null;
 const sw2 = (on, a, v) => `<button class="switch ${on ? 'on' : ''}" role="switch" aria-checked="${on}" data-a="${a}"${v ? ` data-v="${v}"` : ''}><i></i></button>`;
 const SET_SECTIONS = [
-  { title: 'How you use KiHelp', rows: [['saved', '🔖', 'Saved', 'Posts you saved'], ['notifs', '🔔', 'Notifications', 'Alerts for messages, calls and more'], ['invite', '📨', 'Invite friends', 'Share KiHelp']] },
+  { title: 'How you use KiHelp', rows: [['saved', '🔖', 'Saved', 'Posts you saved'], ['notifs', '🔔', 'Notifications', 'Alerts for messages, calls and more'], ['lists', '💝', 'Wish lists', 'Saved products in named lists'], ['drafts', '📝', 'Drafts and scheduled posts', 'Finish or publish later'], ['qr', '▦', 'My QR code', 'Let people scan your profile'], ['invite', '📨', 'Invite friends', 'Share KiHelp']] },
   { title: 'Subscription', rows: [['sub', '⭐', 'Subscriptions', 'Verified badge and premium (coming soon)']] },
   { title: 'Creator tools', rows: [['dash', '📈', 'Dashboard', 'Your numbers at a glance'], ['pro', '💼', 'Professional dashboard', 'Reach, audience and earnings'], ['lives', '🔴', 'My lives', 'Watch, share or delete saved lives'], ['wallet', '🪙', 'Wallet and gifts', 'Coins and creator earnings']] },
-  { title: 'Who can see you', rows: [['privacy', '🔒', 'Privacy and search', 'Find me by email or phone'], ['defvis', '🌍', 'Default post audience', 'Who sees your new posts'], ['blocked', '⛔', 'Blocked accounts', 'People you blocked']] },
+  { title: 'Who can see you', rows: [['privacy', '🔒', 'Privacy and search', 'Find me by email or phone'], ['defvis', '🌍', 'Default post audience', 'Who sees your new posts'], ['freq', '🔒', 'Follow requests', 'Approve who can follow you'], ['blocked', '⛔', 'Blocked accounts', 'People you blocked']] },
   { title: 'How others can interact with you', rows: [['comments', '💬', 'Comments', 'Turn comments on or off for new posts'], ['react', '❤️', 'Reactions', 'Choose reactions allowed on new posts'], ['mentions', '@', 'Mentions', 'Who can mention you']] },
-  { title: 'What you see', rows: [['lang', '🌐', 'App language', 'Language of menus and buttons'], ['tlang', '🈯', 'Translation', 'Language to translate posts into'], ['content', '👀', 'Content and data', 'Data saver and media']] },
+  { title: 'What you see', rows: [['lang', '🌐', 'App language', 'Language of menus and buttons'], ['tlang', '🈯', 'Translation', 'Language to translate posts into'], ['content', '👀', 'Content and data', 'Data saver and media'], ['currency', '💱', 'Display currency', 'Show prices in the currency you prefer']] },
   { title: 'Your app and media', rows: [['appearance', '🌗', 'Appearance', 'Light or dark, accent colour'], ['media', '🖼️', 'Media, storage and cache', 'Data saver, clear cache'], ['install', '📲', 'Install KiHelp', 'Add it to your home screen']] },
   { title: 'Family center', rows: [['family', '👪', 'Family center', 'Supervision tools (coming soon)']] },
-  { title: 'Your orders and funds', rows: [['orders', '🧾', 'Orders', 'Purchases and sales (coming soon)'], ['funds', '💰', 'Funds and payouts', 'Wallet balance']] },
+  { title: 'Your orders and funds', rows: [['orders', '🧾', 'Orders', 'Track what you bought and sold'], ['rfq', '📨', 'Quotes (RFQ)', 'Ask suppliers for prices or answer requests'], ['deliver', '🚚', 'Delivery', 'Find a courier or work as one'], ['funds', '💰', 'Funds and payouts', 'Wallet balance']] },
   { title: 'Help and support', rows: [['help', '❓', 'Help and support', 'Contact us or report a problem'], ['privacypol', '📄', 'Privacy Policy', ''], ['terms', '📜', 'Terms of Use', ''], ['rules', '🤝', 'Community rules', '']] },
-  { title: 'Account', rows: [['accounts', '👤', 'Switch or add account', ''], ['logout', '↩️', 'Log out', ''], ['delete', '🗑️', 'Delete my account', '']] }
+  { title: 'Account', rows: [['accounts', '👤', 'Switch or add account', ''], ['logout', '↩️', 'Log out', ''], ['delete', '🗑️', 'Delete my account', 'Hidden for 30 days, then deleted']] }
 ];
 function settingsListHTML() {
   const q = (S.setq || '').trim().toLowerCase();
@@ -2102,7 +2564,8 @@ const infoPage = (title, text) => setPage(title, `<div style="padding:20px 16px"
 function openSetPage(key) {
   setPageKey = key; const pc = S.pc || {}; const AC = { teal: '#0e6b6b', saffron: '#f0a800', violet: '#6b46c9', rose: '#d6336c' };
   if (key === 'notifs') { setPage('Notifications', '<div id="pushrow"><div class="srow"><div class="ls">Checking...</div></div></div>'); paintPushRow(); }
-  else if (key === 'privacy') setPage('Privacy and search', `<div class="srow"><div><div class="lbl">Find me by email</div><div class="ls">Only people who type your exact email can find you</div></div>${sw2(pc.allow_email_search, 'tglemail')}</div>
+  else if (key === 'privacy') setPage('Privacy and search', `<div class="srow"><div><div class="lbl">Private account</div><div class="ls">Only approved followers see your posts, videos and stories. Your name, photo and bio stay public.</div></div>${sw2(S.profile && S.profile.is_locked, 'tgllock')}</div>
+    <div class="srow"><div><div class="lbl">Find me by email</div><div class="ls">Only people who type your exact email can find you</div></div>${sw2(pc.allow_email_search, 'tglemail')}</div>
     <div class="srow col"><div class="lbl">Phone number</div><input id="phone" type="tel" inputmode="tel" placeholder="+251912345678" value="${esc(pc.phone || '')}" maxlength="20" autocomplete="tel"><div class="ls">Include your country code. Only you can see it.</div><button class="btn alt" data-a="savephone">Save phone</button></div>
     <div class="srow"><div><div class="lbl">Find me by phone</div><div class="ls">Only people who type your exact number can find you</div></div>${sw2(pc.allow_phone_search, 'tglphone')}</div>`);
   else if (key === 'defvis') setPage('Default post audience', `<div class="srow col"><div class="lbl">New posts are seen by</div><div class="seg c3">${[['public', 'Public'], ['friends', 'Friends'], ['private', 'Only me']].map(([k, l]) => `<button class="${(S.defVis || 'public') === k ? 'on' : ''}" data-a="defvis" data-id="${k}">${l}</button>`).join('')}</div><div class="ls">You can still change it for each post.</div></div>`);
@@ -2116,6 +2579,7 @@ function openSetPage(key) {
     <div class="srow col"><div class="lbl">${tr('accent')}</div><div class="dots"><button class="chip ${S.accent === 'auto' ? 'on' : ''}" data-a="accent" data-id="auto">${tr('auto')}</button>${Object.entries(AC).map(([k, c]) => `<button class="dotb ${S.accent === k ? 'on' : ''}" style="background:${c}" data-a="accent" data-id="${k}" aria-label="${k}"></button>`).join('')}</div></div>`);
   else if (key === 'media') { setPage('Media, storage and cache', `<div class="srow"><div><div class="lbl">${tr('saver')}</div><div class="ls">${tr('saverDesc')}</div></div>${sw2(S.saver, 'togglesaver')}</div>
     <div class="srow"><div><div class="lbl">${tr('storage')}</div><div class="ls" id="usage">...</div></div><button class="btn sm" data-a="clearcache">${tr('clear')}</button></div>`); showUsage(); }
+  else if (key === 'currency') setPage('Display currency', `<div class="srow col"><div class="lbl">Show prices also in</div><select id="dcur" aria-label="Display currency"><option value="">Only the seller's currency</option>${DCURS.map(c => `<option value="${c}" ${S.dcur === c ? 'selected' : ''}>${c}</option>`).join('')}</select><div class="ls">Converted prices are estimates from daily exchange rates (source: exchangerate-api.com). The agreed price of an order stays in the seller's currency.${S.fx ? '' : ' Rates are loading.'}</div></div>`);
   else if (key === 'sub') infoPage('Subscriptions', 'KiHelp Verified and creator subscriptions are coming once payments are connected.');
   else if (key === 'family') infoPage('Family center', 'Tools for parents and guardians to supervise teen accounts are coming soon.');
   else if (key === 'orders') infoPage('Orders', 'Your purchases and sales will appear here once checkout and delivery are connected.');
@@ -2142,10 +2606,12 @@ async function openDashboard(pro) {
     if (pro) {
       const by = {}; rxs.forEach(x => { by[x.post_id] = (by[x.post_id] || 0) + 1; });
       const top = pr.map(x => ({ x, n: by[x.id] || 0 })).sort((a, b) => b.n - a.n).slice(0, 5).filter(t => t.n > 0);
+      const tv = (await sb.from('videos').select('id,caption,views').eq('user_id', me).order('views', { ascending: false }).limit(5)).data || [];
       const fl = (await sb.from('follows').select('follower_id').eq('following_id', me).limit(300)).data || [];
       await loadProfiles(fl.map(x => x.follower_id)); const cc = {}; fl.forEach(x => { const c = (S.pf[x.follower_id] || {}).country; if (c) cc[c] = (cc[c] || 0) + 1; });
       const tc = Object.entries(cc).sort((a, b) => b[1] - a[1]).slice(0, 5);
       extra = `<h3 class="sub">Top posts</h3>${top.length ? top.map(t => `<div class="item"><p>${esc((t.x.content || 'Photo or video post').slice(0, 70))}<small>${t.n} reactions</small></p></div>`).join('') : '<div class="empty" style="padding:16px">No reactions yet.</div>'}
+        <h3 class="sub">Top videos</h3>${tv.length ? tv.map(v => `<div class="item"><p>${esc((v.caption || 'Video').slice(0, 70))}<small>${Number(v.views) || 0} views</small></p></div>`).join('') : '<div class="empty" style="padding:16px">No videos yet.</div>'}
         <h3 class="sub">Where your followers are</h3>${tc.length ? tc.map(([c, n]) => `<div class="item"><p>${esc(c)}<small>${n} follower${n === 1 ? '' : 's'}</small></p></div>`).join('') : '<div class="empty" style="padding:16px">Followers have not shared a country yet.</div>'}
         <h3 class="sub">Earnings</h3><div class="dgrid">${card(gw ? gw.earnings : 0, 'Creator earnings')}${card(gw ? gw.coins : 0, 'Coins in wallet')}</div><p class="ls" style="padding:0 16px 16px">Test mode: earnings have no cash value yet.</p>`;
     }
@@ -2163,7 +2629,7 @@ const ACT = {
   settings: () => openSettingsHub(),
   setprof: () => { setPageKey = null; S.ovStack.length = 0; $('#over').innerHTML = ''; S.tab = 'me'; render(); refresh(); },
   setgo: id => {
-    const m = { saved: () => openSaved(), wallet: () => openWallet(), funds: () => openWallet(), lives: () => openMyLives(), blocked: () => openBlocked(), dash: () => openDashboard(false), pro: () => openDashboard(true), privacypol: () => openLegal('privacy'), terms: () => openLegal('terms'), rules: () => openLegal('rules'), accounts: () => ACT.accounts(), logout: () => ACT.logout(), delete: () => ACT.delacct(), install: () => ACT.install(), invite: () => ACT.invite() };
+    const m = { saved: () => openSaved(), wallet: () => openWallet(), funds: () => openWallet(), lives: () => openMyLives(), blocked: () => openBlocked(), dash: () => openDashboard(false), pro: () => openDashboard(true), privacypol: () => openLegal('privacy'), terms: () => openLegal('terms'), rules: () => openLegal('rules'), accounts: () => ACT.accounts(), logout: () => ACT.logout(), delete: () => ACT.delacct(), install: () => ACT.install(), invite: () => ACT.invite(), freq: () => openFollowReqs(), lists: () => openLists(), drafts: () => openDrafts(), qr: () => ACT.qr('me'), deliver: () => { S.dtab = 'find'; openDelivery(); }, orders: () => { S.otab = 'buy'; openOrders(); }, rfq: () => { S.rtab = 'mine'; openRfqHub(); } };
     if (m[id]) m[id](); else openSetPage(id);
   },
   defvis: id => { S.defVis = id; saveSettings(); openSettings(); },
@@ -2176,7 +2642,7 @@ const ACT = {
   togglesaver: () => { S.saver = !S.saver; S.loaded.clear(); saveSettings(); applyTheme(); openSettings(); },
   clearcache: () => clearCache(),
   logout: async () => {
-    if (!confirm('Log out of this account?')) return;
+    if (!S.noConfirmLogout && !confirm('Log out of this account?')) return; S.noConfirmLogout = false;
     try { await removeDevicePush(); } catch (e) {}
     const id = S.user.id; S.switching = true;
     try { await sb.auth.signOut({ scope: 'local' }); } catch (e) {}
@@ -2226,6 +2692,299 @@ const ACT = {
     p.adl = v; p.dl = true; closeSheet(); toast(v ? 'People can now save this' : 'Saving turned off');
   },
   search: () => openSearch(),
+  newpost: () => { ACT.newpost_old(); S.promo = false; fillProdSelect(); },
+  tglpromo: (id, el) => { S.promo = !S.promo; el.classList.toggle('on', S.promo); el.setAttribute('aria-checked', String(S.promo)); },
+  feedtab: id => { S.feedMode = id; S.ready.home = 0; render(true); loadFeed().then(() => render(true)).catch(() => toast('Could not load the feed')); },
+  pint: async (id, el) => {
+    const v = el.dataset.v === '1', pid = +id; closeSheet();
+    const { error } = await sb.from('post_prefs').upsert({ user_id: S.user.id, post_id: pid, interested: v }); if (error) return toast('Could not save');
+    if (v) { S.intr.add(pid); S.notInt.delete(pid); toast('We will show you more like this'); } else { S.notInt.add(pid); S.intr.delete(pid); render(true); showUndo(pid); }
+  },
+  undoni: async id => { const pid = +id, b = $('#undobar'); if (b) b.remove(); await sb.from('post_prefs').delete().eq('user_id', S.user.id).eq('post_id', pid); S.notInt.delete(pid); render(true); toast('Post is back'); },
+  psearch: () => openPostSearch(''),
+  tag: id => openPostSearch('#' + id),
+  store: id => { closeSheet(); setTimeout(() => openStore(id), 60); },
+  tgllock: async () => {
+    const v = !(S.profile && S.profile.is_locked); const { error } = await sb.from('profiles').update({ is_locked: v }).eq('id', S.user.id);
+    if (error) return toast('Could not update'); S.profile.is_locked = v; S.pf[S.user.id] = S.profile; openSettings(); toast(v ? 'Your account is private' : 'Your account is public');
+  },
+  fqok: async id => { const { error } = await sb.rpc('approve_follow_request', { p_requester: id }); if (error) return toast('Could not approve'); toast('Approved'); openFollowReqs(); },
+  fqno: async id => { await sb.rpc('decline_follow_request', { p_requester: id }); toast('Declined'); openFollowReqs(); },
+  qfollow: async id => {
+    if (S.following.has(id)) return ACT.qfollow_old(id);
+    if (S.requested.has(id)) { await sb.rpc('cancel_follow_request', { p_target: id }); S.requested.delete(id); syncFollowUI(id); render(true); return toast('Request canceled'); }
+    const { data, error } = await sb.rpc('request_follow', { p_target: id }); if (error) return toast((error.message || 'Could not follow').replace(/^.*?:\s*/, ''));
+    if (data === 'requested') { S.requested.add(id); toast('Follow request sent'); } else { S.following.add(id); if (S.prof && S.prof.id === id) S.prof.followers += 1; }
+    syncFollowUI(id); render(true); if ($('#pposts') && S.prof) paintProfile();
+  },
+  pfollow: async id => {
+    const P = S.prof; if (!P || P.id !== id) return; if (P.following) return ACT.pfollow_old(id);
+    if (S.requested.has(id)) { await sb.rpc('cancel_follow_request', { p_target: id }); S.requested.delete(id); paintProfile(); return toast('Request canceled'); }
+    const { data, error } = await sb.rpc('request_follow', { p_target: id }); if (error) return toast((error.message || 'Could not follow').replace(/^.*?:\s*/, ''));
+    if (data === 'requested') { S.requested.add(id); toast('Follow request sent'); } else { P.following = true; P.followers += 1; S.following.add(id); }
+    paintProfile();
+  },
+  follow: async (id, el) => {
+    if (el.dataset.f === '1') return ACT.follow_old(id, el);
+    const { data, error } = await sb.rpc('request_follow', { p_target: id }); if (error) return toast('Could not update');
+    if (data === 'requested') { S.requested.add(id); el.textContent = 'Requested'; } else { el.dataset.f = '1'; el.textContent = 'Following'; S.following.add(id); } el.classList.add('alt');
+  },
+  lvpinpick: async () => {
+    sheet('<h2>Pin a product</h2><div class="empty" style="padding:20px">Loading...</div>');
+    const { data } = await sb.from('products').select('id,title,price,currency').eq('seller_id', S.user.id).eq('status', 'active').order('created_at', { ascending: false }).limit(30);
+    sheet(`<h2>Pin a product</h2>${(data || []).length ? data.map(p => `<button class="optrow" data-a="lvpinset" data-id="${p.id}">${esc(p.title)} · ${fmt(p.price, p.currency || 'ETB')}</button>`).join('') : '<p class="ls">You have no active listings. Add one with + then Sell.</p>'}<button class="optrow red" data-a="lvpinset" data-id="0">Remove pinned product</button>`);
+  },
+  lvpinset: async id => {
+    const pid = +id || null; const { error } = await sb.rpc('pin_live_product', { p_product: pid }); if (error) return toast((error.message || 'Could not pin').replace(/^.*?:\s*/, ''));
+    closeSheet(); const L = S.live; if (!L) return;
+    if (!pid) { L.pinned = null; pinUI(); return toast('Removed'); }
+    const r = await sb.from('products').select('*').eq('id', pid).maybeSingle(); if (r.data) { L.pinned = mapProd(r.data); L.pinned.who = nameOf(L.pinned.sid); if (!S.products.find(x => x.id === pid)) S.products.push(L.pinned); pinUI(); toast('Pinned for your viewers'); }
+  },
+  lvprod: id => { const p = S.products.find(x => x.id == id); if (p) ACT.listing(id); },
+  vcc: async id => {
+    const v = (S.videos || []).find(x => x.id == id), { data } = await sb.from('videos').select('captions').eq('id', id).maybeSingle(); const caps = (data && data.captions) || []; S.capSrc = { id, caps };
+    sheet(`<h2>Captions</h2>${caps.length ? `<button class="optrow" data-a="capset" data-id="off">Off</button>${caps.map(c => `<button class="optrow" data-a="capset" data-id="${esc(c.lang)}">${esc(c.label)}</button>`).join('')}` : '<p class="ls">This video has no captions yet.</p>'}${v && v.uid === S.user.id ? `<button class="optrow" data-a="capadd" data-id="${id}">➕ Add or replace captions</button>` : ''}`);
+  },
+  capset: id => {
+    closeSheet(); const vid = document.querySelector('video[data-vid="' + (S.capSrc && S.capSrc.id) + '"]'); if (!vid) return;
+    [].slice.call(vid.querySelectorAll('track')).forEach(t => t.remove()); [].slice.call(vid.textTracks || []).forEach(t => { t.mode = 'disabled'; });
+    if (id === 'off') return toast('Captions off'); const c = S.capSrc.caps.find(x => x.lang === id); if (!c) return;
+    const tr = document.createElement('track'); tr.kind = 'subtitles'; tr.srclang = c.lang; tr.label = c.label; tr.default = true; tr.src = URL.createObjectURL(new Blob([c.vtt], { type: 'text/vtt' })); vid.appendChild(tr); try { tr.track.mode = 'showing'; } catch (e) {}
+  },
+  capadd: id => {
+    S.capSrc = Object.assign(S.capSrc || {}, { id });
+    sheet(`<h2>Add captions</h2><p class="ls" style="margin-bottom:8px">Upload a .vtt or .srt file for one language. Viewers choose their language under CC.</p>
+      <div class="fld"><label for="capl">Language</label><select id="capl">${TLANGS.map(([c, n]) => `<option value="${c}" ${c === (S.tlang || 'en') ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></div>
+      <div class="fld"><label class="up"><input type="file" id="capf" accept=".vtt,.srt,text/vtt" hidden><span>${I.plus}</span>Choose caption file</label></div>
+      <div class="fld"><label for="capt">Or paste the captions here</label><textarea id="capt" maxlength="60000" placeholder="WEBVTT&#10;&#10;00:00.000 --> 00:02.000&#10;Hello"></textarea></div>
+      <button class="btn" id="capgo" data-a="capsave">Save captions</button>`);
+  },
+  capsave: async () => {
+    const id = S.capSrc && S.capSrc.id; if (!id) return; const f = $('#capf') && $('#capf').files[0]; let txt = ($('#capt') || {}).value || '';
+    if (f) { try { txt = await f.text(); } catch (e) { return toast('Could not read the file'); } }
+    if (!txt.trim()) return toast('Choose a file or paste captions'); const vtt = srtToVtt(txt); if (vtt.length > 60000) return toast('Captions file is too large');
+    const lang = $('#capl').value, label = tlangName(lang).split(' (')[0].slice(0, 40); busy('#capgo', true, '...');
+    const { data } = await sb.from('videos').select('captions').eq('id', id).maybeSingle(); const caps = ((data && data.captions) || []).filter(c => c.lang !== lang); caps.push({ lang, label, vtt });
+    const { error } = await sb.rpc('set_video_captions', { p_video: id, p_captions: caps });
+    if (error) { busy('#capgo', false, 'Save captions'); return toast((error.message || 'Could not save').replace(/^.*?:\s*/, '')); } closeSheet(); toast('Captions saved');
+  },
+  listshub: () => openLists(),
+  deliverhub: () => { S.dtab = 'find'; openDelivery(); },
+  dtab: id => { S.dtab = id; openDelivery(); },
+  dscope: id => { S.dscope = id; document.querySelectorAll('#dsc button').forEach(b => b.classList.toggle('on', b.dataset.id === id)); },
+  dmeth: (id, el) => { if (!S.dmeth) S.dmeth = new Set(); S.dmeth.has(id) ? S.dmeth.delete(id) : S.dmeth.add(id); el.classList.toggle('on', S.dmeth.has(id)); },
+  davail: (id, el) => { S.davail = !S.davail; el.classList.toggle('on', S.davail); el.setAttribute('aria-checked', String(S.davail)); },
+  dsave: async () => {
+    const name = $('#dn').value.trim(), phone = $('#dph').value.trim();
+    if (name.length < 2) return toast('Add your name or business name'); if (phone.length < 6) return toast('Add a phone number');
+    const num = id => { const x = parseFloat($(id).value); return isFinite(x) && x >= 0 ? x : null; };
+    busy('#dsv', true, '...');
+    const row = { user_id: S.user.id, name, phone, country: $('#dco').value.trim() || null, areas: $('#dar').value.split(',').map(x => x.trim()).filter(Boolean).slice(0, 20), scope: S.dscope || 'local', methods: [...(S.dmeth && S.dmeth.size ? S.dmeth : ['motorbike'])], max_weight_kg: num('#dkg') || null, capacity_note: $('#dcn').value.trim() || null, base_fee: num('#dfee') || 0, fee_currency: $('#dfc').value, per_km_fee: num('#dkm'), hours: $('#dhr').value.trim() || null, limits: $('#dlm').value.trim() || null, available: !!S.davail };
+    const { error } = await sb.from('delivery_providers').upsert(row);
+    busy('#dsv', false, S.hasProv ? 'Save changes' : 'Register as a courier'); if (error) return toast('Could not save. Check your details.');
+    S.hasProv = true; toast('Saved. Buyers can now find you.'); openDelivery();
+  },
+  ddel: async () => { if (!confirm('Stop being a courier? Active jobs are not affected.')) return; const { error } = await sb.from('delivery_providers').delete().eq('user_id', S.user.id); if (error) return toast('Could not remove'); toast('Removed'); openDelivery(); },
+  dprov: id => {
+    const p = (S.dprov || []).find(x => x.user_id === id); if (!p) return;
+    sheet(`<h2>${esc(p.name)}</h2><div class="specs"><div><span>Service</span><b>${DSCOPE[p.scope]}</b></div><div><span>Methods</span><b>${(p.methods || []).map(m => DMETH[m] || m).join(', ')}</b></div>${(p.areas || []).length ? `<div><span>Areas</span><b>${esc(p.areas.join(', '))}</b></div>` : ''}${p.country ? `<div><span>Country</span><b>${esc(p.country)}</b></div>` : ''}${p.max_weight_kg ? `<div><span>Max weight</span><b>${p.max_weight_kg} kg</b></div>` : ''}${p.capacity_note ? `<div><span>Capacity</span><b>${esc(p.capacity_note)}</b></div>` : ''}<div><span>Base fee</span><b>${fmt(p.base_fee, p.fee_currency)}</b></div>${p.per_km_fee ? `<div><span>Per km</span><b>${fmt(p.per_km_fee, p.fee_currency)}</b></div>` : ''}${p.hours ? `<div><span>Hours</span><b>${esc(p.hours)}</b></div>` : ''}${p.limits ? `<div><span>Does not carry</span><b>${esc(p.limits)}</b></div>` : ''}</div>
+      <button class="btn" data-a="dforder" data-id="${p.user_id}">Request delivery for an order</button><button class="btn alt" data-a="msgu" data-id="${p.user_id}">Message</button>`);
+  },
+  dforder: async id => {
+    S.dreqProv = id; sheet('<h2>Choose an order</h2><div class="empty" style="padding:20px">Loading...</div>');
+    const { data } = await sb.from('orders').select('*').in('status', ['placed', 'confirmed', 'shipped']).order('created_at', { ascending: false }).limit(30);
+    const L = data || []; S.orders = (S.orders || []).concat(L.filter(o => !(S.orders || []).find(x => x.id === o.id)));
+    sheet(`<h2>Choose an order</h2>${L.length ? L.map(o => `<button class="ordrow" style="padding-inline:0" data-a="dstart" data-id="${o.id}"><span class="tx"><b>${esc(o.title)}</b><span class="ls" style="display:block">x${o.qty} · ${esc(ST[o.status])}</span></span></button>`).join('') : '<div class="empty" style="padding:20px">You have no open orders to deliver.</div>'}`);
+  },
+  dstart: id => { S.dreq = { orderId: id, provider: S.dreqProv, tier: 'standard' }; paintDelReq(); },
+  dpick: () => pickProvider(S.curOrder),
+  dsel: id => { S.dreq = { orderId: S.dreqOrder, provider: id, tier: 'standard' }; paintDelReq(); },
+  dtier: id => { if (S.dreq) { S.dreq.tier = id; paintDelReq(); } },
+  dgo: async () => {
+    const R = S.dreq; if (!R) return; const o = await getOrder(R.orderId), pr = (S.dprov || []).find(p => p.user_id === R.provider); if (!o || !pr) return;
+    const e = estimate(o, pr, R.tier), note = ($('#dhn') || {}).value || '';
+    busy('#dgo', true, '...');
+    const { error } = await sb.rpc('request_delivery', { p_order: o.id, p_provider: pr.user_id, p_pickup: ($('#dpu') || {}).value || '', p_dest: ($('#ddt') || {}).value || '', p_handling: ('Item: ' + o.title + ' x' + o.qty + (note ? ' · ' + note : '')).slice(0, 300), p_tier: R.tier, p_fee: delFee(pr, R.tier), p_currency: pr.fee_currency, p_from: e.from.toISOString(), p_to: e.to.toISOString() });
+    if (error) { busy('#dgo', false, 'Send request'); return toast((error.message || 'Could not send').replace(/^.*?:\s*/, '')); }
+    closeSheet(); S.dreq = null; toast('Delivery requested. The courier was notified.'); S.otab = S.otab || 'buy'; openOrders();
+  },
+  djob: id => openJob(id),
+  djset: async (id, el) => {
+    const j = S.curJob, s = el.dataset.s; if (!j || !s) return; let proof = '';
+    if (s === 'delivered') { const f = $('#dproof') && $('#dproof').files[0]; if (f) { try { proof = (await uploadMedia(f)).url; } catch (e) { return toast(upErr(e)); } } }
+    const { error } = await sb.rpc('set_delivery_status', { p_job: j.id, p_status: s, p_proof: proof });
+    if (error) return toast((error.message || 'Could not update').replace(/^.*?:\s*/, '')); closeSheet(); toast('Delivery ' + (DJ[s] || s).toLowerCase()); openDelivery();
+  },
+  djcancel: async id => { if (!confirm('Cancel this delivery request?')) return; const { error } = await sb.rpc('set_delivery_status', { p_job: id, p_status: 'canceled', p_proof: '' }); if (error) return toast('Could not cancel'); closeSheet(); toast('Delivery canceled'); openOrders(); },
+  dopen: () => sheet(`<h2>Report a problem</h2><p class="ls" style="margin-bottom:8px">Tell the seller what went wrong. You can add photos as evidence in the case.</p><div class="fld"><label for="dk">What happened?</label><select id="dk">${Object.entries(DK).map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></div><div class="fld"><label for="dd">Describe the problem</label><textarea id="dd" maxlength="1000"></textarea></div><button class="btn" id="dgo2" data-a="dsub">Open case</button>`),
+  dsub: async () => {
+    const desc = $('#dd').value.trim(); if (desc.length < 5) return toast('Describe the problem in a few words'); busy('#dgo2', true, '...');
+    const { data, error } = await sb.rpc('open_dispute', { p_order: S.curOrder, p_kind: $('#dk').value, p_desc: desc });
+    if (error) { busy('#dgo2', false, 'Open case'); return toast((error.message || 'Could not open').replace(/^.*?:\s*/, '')); }
+    closeSheet(); toast('Case opened. The seller was notified.'); setTimeout(() => openCase(data), 80);
+  },
+  dcase: id => openCase(id),
+  dsend: async () => {
+    const d = S.curCase; if (!d) return; let body = ($('#dmsg') || {}).value.trim(), url = ''; const f = $('#dfile') && $('#dfile').files[0];
+    if (!body && !f) return toast('Write a message or add a photo'); busy('#dsend', true, '...');
+    if (f) { try { url = (await uploadMedia(f)).url; } catch (e) { busy('#dsend', false, 'Send'); return toast(upErr(e)); } if (!body) body = 'Photo evidence'; }
+    const { error } = await sb.rpc('add_dispute_message', { p_dispute: d.id, p_body: body, p_url: url });
+    if (error) { busy('#dsend', false, 'Send'); return toast((error.message || 'Could not send').replace(/^.*?:\s*/, '')); } openCase(d.id);
+  },
+  dres: async () => { const d = S.curCase; if (!d) return; const txt = prompt('How was it resolved? (for example: refund agreed)') ; if (txt === null) return; const { error } = await sb.rpc('set_dispute_status', { p_dispute: d.id, p_status: 'resolved', p_resolution: txt }); if (error) return toast('Could not update'); openCase(d.id); },
+  dwith: async () => { const d = S.curCase; if (!d || !confirm('Withdraw this case?')) return; const { error } = await sb.rpc('set_dispute_status', { p_dispute: d.id, p_status: 'closed', p_resolution: '' }); if (error) return toast('Could not update'); openCase(d.id); },
+  wlnew: () => sheet(`<h2>New list</h2><div class="fld"><label for="wln">Name</label><input id="wln" maxlength="40" placeholder="Birthday ideas"></div><button class="btn" data-a="wlmake">Create list</button>`),
+  wlmake: async () => {
+    const name = ($('#wln') || {}).value.trim(); if (!name) return toast('Give your list a name');
+    const { data, error } = await sb.from('wishlists').insert({ owner_id: S.user.id, name }).select('id').single(); if (error || !data) return toast('Could not create the list');
+    closeSheet(); if (S.wlPending) { const pid = S.wlPending; S.wlPending = null; await sb.from('wishlist_items').insert({ list_id: data.id, product_id: pid }); toast('Added to ' + name); } else { toast('List created'); openLists(); }
+  },
+  wlopen: id => openWishlist(id),
+  wladd: async id => {
+    S.wlPending = id; sheet('<h2>Add to list</h2><div class="empty" style="padding:20px">Loading...</div>');
+    const { data } = await sb.from('wishlists').select('id,name').eq('owner_id', S.user.id).order('created_at', { ascending: false });
+    sheet(`<h2>Add to list</h2>${(data || []).map(l => `<button class="optrow" data-a="wlpick" data-id="${l.id}">${esc(l.name)}</button>`).join('')}<div class="fld" style="margin-top:10px"><label for="wln">Or start a new list</label><input id="wln" maxlength="40" placeholder="List name"></div><button class="btn alt" data-a="wlmake">Create list and add</button>`);
+  },
+  wlpick: async id => {
+    const pid = S.wlPending; if (!pid) return; const { error } = await sb.from('wishlist_items').insert({ list_id: id, product_id: pid });
+    closeSheet(); S.wlPending = null; toast(error ? (error.code === '23505' ? 'Already in that list' : 'Could not add') : 'Added to your list');
+  },
+  wlshare: async () => { const L = S.curList; if (!L) return; const { error } = await sb.from('wishlists').update({ is_shared: !L.is_shared }).eq('id', L.id); if (error) return toast('Could not update'); openWishlist(L.id); },
+  wlcopy: async () => { const L = S.curList; if (!L) return; const link = location.origin + location.pathname + '#w=' + L.id; try { await navigator.clipboard.writeText(link); toast('Link copied'); } catch (e) { prompt('Copy this link', link); } },
+  wldel: async () => { const L = S.curList; if (!L || !confirm('Delete this list?')) return; const { error } = await sb.from('wishlists').delete().eq('id', L.id); if (error) return toast('Could not delete'); toast('List deleted'); S.ovStack.pop(); openLists(); },
+  cmp: id => openCompare(id),
+  cmpsort: id => { S.cmpSort = id; openCompare(S.cmpId); },
+  qr: async id => {
+    const uid = id === 'me' ? S.user.id : id, link = location.origin + location.pathname + '#u=' + uid;
+    try { await loadQR(); const q = window.qrcode(0, 'M'); q.addData(link); q.make(); S.qrLink = link;
+      sheet(`<h2>Profile QR code</h2><div class="qrbox"><img src="${q.createDataURL(6, 2)}" alt="QR code for the profile link"></div><p class="ls" style="text-align:center">Scanning opens the profile. Privacy settings still decide what people can see.</p><div class="row2"><button class="btn alt" data-a="qrcopy">Copy link</button><button class="btn" data-a="qrshare">Share</button></div>`);
+    } catch (e) { toast('Could not make the QR code. Check your connection.'); }
+  },
+  qrcopy: async () => { try { await navigator.clipboard.writeText(S.qrLink); toast('Link copied'); } catch (e) { prompt('Copy this link', S.qrLink); } },
+  qrshare: async () => { try { if (navigator.share) await navigator.share({ title: 'KiHelp profile', url: S.qrLink }); else ACT.qrcopy(); } catch (e) {} },
+  hlnew: async () => {
+    sheet('<h2>New highlight</h2><div class="empty" style="padding:20px">Loading your stories...</div>');
+    const { data } = await sb.from('stories').select('id,kind,media_url,text,bg,caption,created_at').eq('user_id', S.user.id).order('created_at', { ascending: false }).limit(60);
+    S.hlPool = (data || []).filter(s => s.kind === 'text' || safeUrl(s.media_url)); S.hlSel = new Set();
+    paintHlPick();
+  },
+  hlsel: id => { if (S.hlSel.has(id)) S.hlSel.delete(id); else S.hlSel.add(id); const b = document.querySelector('[data-a="hlsel"][data-id="' + id + '"]'); if (b) b.classList.toggle('on', S.hlSel.has(id)); const c = $('#hlcount'); if (c) c.textContent = S.hlSel.size + ' selected'; },
+  hlsave: async () => {
+    const title = ($('#hlt') || {}).value.trim(); if (!title) return toast('Name your highlight'); if (!S.hlSel.size) return toast('Choose at least one story');
+    const items = S.hlPool.filter(s => S.hlSel.has(s.id)).reverse(); const cover = (items.find(s => safeUrl(s.media_url) && s.kind !== 'video') || items.find(s => safeUrl(s.media_url)) || {}).media_url || null;
+    busy('#hlgo', true, '...');
+    const { data: h, error } = await sb.from('highlights').insert({ owner_id: S.user.id, title: title.slice(0, 30), cover_url: cover }).select('id').single();
+    if (error || !h) { busy('#hlgo', false, 'Save highlight'); return toast('Could not save'); }
+    const r = await sb.from('highlight_items').insert(items.map(s => ({ highlight_id: h.id, kind: s.kind || 'photo', media_url: s.media_url || null, text: s.text || null, bg: s.bg || null, caption: s.caption || null })));
+    if (r.error) { await sb.from('highlights').delete().eq('id', h.id); busy('#hlgo', false, 'Save highlight'); return toast('Could not save the stories'); }
+    closeSheet(); toast('Highlight saved'); S.hls[S.user.id] = undefined; render(true);
+  },
+  hlopen: async id => {
+    const h = ((S.hls[(S.prof && $('#pposts') && S.prof.id) || S.user.id]) || []).find(x => x.id === id) || Object.values(S.hls).flat().find(x => x && x.id === id); S.curHl = h || { id };
+    const { data } = await sb.from('highlight_items').select('*').eq('highlight_id', id).order('id', { ascending: true }); S.hlItems = data || [];
+    const own = h && Object.entries(S.hls).some(([u, L]) => u === S.user.id && (L || []).some(x => x.id === id));
+    sheet(`<h2>${esc((h && h.title) || 'Highlight')}</h2><p class="ls">${S.hlItems.length} story item(s)</p><button class="btn" data-a="hlview">▶ Watch</button>${own ? '<button class="btn alt" data-a="hldel">Delete highlight</button>' : ''}`);
+  },
+  hlview: () => { const items = (S.hlItems || []).filter(i => safeUrl(i.media_url)).map(i => ({ type: i.kind === 'video' ? 'video' : 'image', url: i.media_url })); if (!items.length) return toast('This highlight has only text stories'); closeSheet(); setTimeout(() => openViewer(items, 0, false), 60); },
+  hldel: async () => { const h = S.curHl; if (!h || !confirm('Delete this highlight?')) return; const { error } = await sb.from('highlights').delete().eq('id', h.id).eq('owner_id', S.user.id); if (error) return toast('Could not delete'); closeSheet(); S.hls[S.user.id] = undefined; render(true); toast('Highlight deleted'); },
+  savedraft: () => { S.asDraft = true; ACT.publishpost(); },
+  dfrow: id => { const d = (S.dfts || []).find(x => x.id === id); if (!d) return; S.curDraft = d; sheet(`<h2>${d.publish_at ? 'Scheduled post' : 'Draft'}</h2><p style="white-space:pre-wrap">${esc((d.content || 'Photo or video post').slice(0, 300))}</p><button class="btn" data-a="dfnow">Publish now</button><div class="fld" style="margin-top:10px"><label for="dfw">${d.publish_at ? 'Change the time' : 'Schedule it'}</label><input type="datetime-local" id="dfw"></div><button class="btn alt" data-a="dfsched">Set time</button><button class="btn alt" style="margin-top:8px" data-a="dfdel">Delete</button>`); },
+  dfnow: async () => { const d = S.curDraft; if (!d) return; const { error } = await sb.rpc('publish_draft_now', { p_draft: d.id }); if (error) return toast('Could not publish'); closeSheet(); toast('Published'); try { await loadFeed(); } catch (e) {} openDrafts(); },
+  dfsched: async () => { const d = S.curDraft, v = ($('#dfw') || {}).value; if (!d || !v) return toast('Pick a date and time'); const t = new Date(v); if (isNaN(t) || t.getTime() < Date.now() + 60000) return toast('Pick a time at least a minute from now'); const { error } = await sb.from('post_drafts').update({ publish_at: t.toISOString() }).eq('id', d.id); if (error) return toast('Could not schedule'); closeSheet(); toast('Scheduled'); openDrafts(); },
+  dfdel: async () => { const d = S.curDraft; if (!d || !confirm('Delete this draft?')) return; const { error } = await sb.from('post_drafts').delete().eq('id', d.id); if (error) return toast('Could not delete'); closeSheet(); openDrafts(); },
+  delacct: () => sheet(`<h2>Delete your account</h2><p>Your profile and posts are hidden right away. After <b>30 days</b> everything is permanently deleted: posts, comments, messages, stories, videos and settings.</p>
+    <p class="ls" style="margin:8px 0">Changed your mind? Log in any time during those 30 days and tap Cancel deletion. If you own a group, transfer ownership first.</p>
+    <div class="fld"><label for="dtx">Type DELETE to confirm</label><input id="dtx" autocomplete="off" autocapitalize="characters"></div>
+    <button class="btn" style="background:var(--coral);color:#fff" id="dbtn" data-a="delgo">Delete my account in 30 days</button>`),
+  delgo: async () => {
+    if ((($('#dtx') || {}).value || '').trim() !== 'DELETE') return toast('Type DELETE to confirm');
+    busy('#dbtn', true, '...'); const { error } = await sb.rpc('request_account_deletion');
+    if (error) { busy('#dbtn', false, 'Delete my account in 30 days'); return toast('Could not start the deletion. Try again.'); }
+    closeSheet(); toast('Your account is hidden and will be deleted in 30 days. Log in to cancel.'); S.noConfirmLogout = true; ACT.logout();
+  },
+  delcancel: async () => { const { error } = await sb.rpc('cancel_account_deletion'); if (error) return toast('Could not cancel'); if (S.profile) S.profile.delete_after = null; closeSheet(); toast('Welcome back. Your account is safe.'); },
+  mmode: id => { S.mmode = id; render(true); },
+  openorders: () => { S.otab = 'buy'; openOrders(); },
+  rfqhub: () => { S.rtab = 'mine'; openRfqHub(); },
+  smode: (id, el) => { if (!S.sellModes) S.sellModes = new Set(['retail']); if (S.sellModes.has(id)) { if (S.sellModes.size > 1) S.sellModes.delete(id); } else S.sellModes.add(id); document.querySelectorAll('#smodes .chip').forEach(b => b.classList.toggle('on', S.sellModes.has(b.dataset.id))); },
+  listing: id => {
+    const l = S.products.find(x => x.id == id); if (!l) return;
+    const mine = l.sid === S.user.id, tiers = l.tiers || [], out = l.stock != null && l.stock <= 0;
+    const priceMain = (l.pmin != null && l.pmax != null) ? fmt(l.pmin, l.cur) + ' – ' + fmt(l.pmax, l.cur) : fmt(l.price, l.cur) + (l.opt === 'bulk' ? ' / unit' : '');
+    const info = { fixed: 'The seller set one price.', negotiable: 'Price can be discussed. Send an offer in chat.', auction: 'Bidding opens soon. For now, message the seller.', bulk: 'Larger orders get a lower price each, see the quantity prices.' }[l.opt] || '';
+    const rows = [l.cond && ['Condition', cap(l.cond)], l.brand && ['Brand', l.brand], l.model && ['Model', l.model], l.origin && ['Made in or ships from', l.origin], (l.moq || 1) > 1 && ['Minimum order', l.moq + ' items'], l.stock != null && ['In stock', l.stock > 0 ? l.stock : 'Out of stock'], l.prep != null && ['Preparation', l.prep + ' day' + (l.prep === 1 ? '' : 's')], l.sample != null && ['Sample price', fmt(l.sample, l.cur)]].filter(Boolean);
+    Object.entries(l.attrs || {}).forEach(([k, v]) => rows.push([k, v]));
+    const modes = (l.modes || ['retail']).map(m => ({ retail: 'Retail', wholesale: 'Wholesale', custom: 'Custom-made' })[m]).filter(Boolean);
+    const canBuy = !mine && !out && (l.opt === 'fixed' || l.opt === 'bulk' || l.opt === 'negotiable');
+    sheet(`<div class="dm">${l.media ? media(l.media, '') : `<div class="ph" style="--h:${l.h}"></div>`}</div>
+      <h2>${esc(l.title)}</h2><div class="big">${priceMain}</div>
+      ${tiers.length ? `<div class="tiers"><b>Quantity prices</b>${tiers.map(t => `<div><span>${t.min_qty}+ items</span><b>${fmt(t.price, l.cur)} each</b></div>`).join('')}</div>` : ''}
+      <div class="dots" style="margin:6px 0">${modes.map(m => `<span class="pbadge">${m}</span>`).join('')}</div>
+      <div class="note"><b>${OPT[l.opt] || esc(l.opt)}.</b> ${info}</div>
+      ${rows.length ? `<div class="specs">${rows.map(([k, v]) => `<div><span>${esc(k)}</span><b>${esc(String(v))}</b></div>`).join('')}</div>` : ''}
+      <p style="white-space:pre-wrap">${esc(l.desc)}</p>
+      <button class="sel" data-a="store" data-id="${l.sid}" style="display:flex;gap:10px;align-items:center;text-align:start;width:100%">${avOf(l.sid, 36)}<div><b>${esc(l.who)}</b> <small>· Visit store</small><div class="ls" id="selrate">${esc(l.cat)}</div></div></button>
+      ${mine ? `<button class="btn" data-a="sold" data-id="${l.id}">Mark as sold</button>` : `${canBuy ? `<button class="btn" data-a="buynow" data-id="${l.id}">Buy now</button>` : ''}
+        ${l.opt === 'negotiable' ? `<button class="btn alt" data-a="offer" data-id="${l.id}">Make an offer</button>` : ''}${l.opt === 'auction' ? `<button class="btn alt" data-a="bid" data-id="${l.id}">Place bid</button>` : ''}
+        ${out ? '<div class="note">Out of stock. You can still message the seller.</div>' : ''}
+        <div class="row2"><button class="btn alt" data-a="rfqfor" data-id="${l.id}">Request a quote</button><button class="btn alt" data-a="msgseller" data-id="${l.id}">Contact seller</button></div>
+        <button class="btn alt" data-a="save" data-id="${l.id}">${S.saved.has(l.id) ? 'Saved' : 'Save'}</button>
+        <div class="row2"><button class="btn alt" data-a="wladd" data-id="${l.id}">💝 Add to list</button><button class="btn alt" data-a="cmp" data-id="${l.id}">⚖️ Compare similar</button></div>`}`);
+    if (!mine) sb.rpc('seller_stats', { p_seller: l.sid }).then(({ data }) => { const r = data && data[0], el = $('#selrate'); if (el && r && r.reviews > 0) el.textContent = '★ ' + r.avg_rating + ' · ' + r.reviews + ' review' + (r.reviews === 1 ? '' : 's') + ' · ' + l.cat; });
+  },
+  buynow: id => { const l = S.products.find(x => x.id == id); if (!l) return; if (l.stock != null && l.stock < (l.moq || 1)) return toast('Not enough stock'); S.buy = { id: l.id, qty: Math.max(1, l.moq || 1) }; paintBuy(); },
+  bqty: id => { const B = S.buy, l = B && S.products.find(x => x.id == B.id); if (!l) return; const min = l.moq || 1, max = l.stock != null ? l.stock : 100000; B.qty = Math.min(max, Math.max(min, B.qty + (+id))); paintBuy(); },
+  bgo: async () => {
+    const B = S.buy; if (!B) return; busy('#bgo', true, '...');
+    const { error } = await sb.rpc('place_order', { p_product: B.id, p_qty: B.qty, p_address: ($('#bad') || {}).value || '', p_country: ($('#bco') || {}).value || '', p_note: ($('#bno') || {}).value || '' });
+    if (error) { busy('#bgo', false, 'Place order'); return toast((error.message || 'Could not place order').replace(/^.*?:\s*/, '')); }
+    closeSheet(); S.buy = null; try { await loadProducts(); } catch (e) {} toast('Order placed. The seller was notified.'); S.otab = 'buy'; openOrders();
+  },
+  otab: id => { S.otab = id; openOrders(); },
+  ord: id => openOrder(id),
+  ordset: async (id, el) => {
+    const s = el.dataset.s; if (!S.curOrder || !s) return;
+    if (s === 'canceled' && !confirm('Cancel this order?')) return;
+    const { error } = await sb.rpc('set_order_status', { p_order: S.curOrder, p_status: s });
+    if (error) return toast((error.message || 'Could not update').replace(/^.*?:\s*/, ''));
+    closeSheet(); toast('Order ' + (ST[s] || s).toLowerCase()); openOrders();
+  },
+  review: () => { S.stars = 5; paintReview(); },
+  rstar: id => { S.stars = +id; paintReview(); },
+  rsub: async () => {
+    const body = ($('#rvb') || {}).value || '';
+    const { error } = await sb.rpc('submit_review', { p_order: S.curOrder, p_rating: S.stars || 5, p_body: body });
+    if (error) return toast((error.message || 'Could not save').replace(/^.*?:\s*/, ''));
+    closeSheet(); toast('Thanks for your review');
+  },
+  msgu: id => { closeSheet(); openThread(id); },
+  rtab: id => { S.rtab = id; openRfqHub(); },
+  rfqnew: () => rfqForm(),
+  rfqfor: id => { const l = S.products.find(x => x.id == id); if (!l) return; closeSheet(); setTimeout(() => rfqForm({ title: 'Quote for: ' + l.title, qty: Math.max(l.moq || 1, 10), cat: l.cat, desc: 'About the listing "' + l.title + '"' }), 60); },
+  rfqsave: async () => {
+    const title = $('#rt').value.trim(), qty = parseInt($('#rq').value, 10);
+    if (title.length < 3) return toast('Describe what you need'); if (!(qty >= 1)) return toast('Add a quantity');
+    busy('#rgo', true, '...');
+    const { error } = await sb.from('rfqs').insert({ buyer_id: S.user.id, title, qty, category: $('#rc').value, description: $('#rd').value.trim() || null, dest_country: $('#rco').value.trim() || null, dest_city: $('#rci').value.trim() || null, needed_by: $('#rn').value || null });
+    if (error) { busy('#rgo', false, 'Send request'); return toast('Could not send'); }
+    closeSheet(); toast('Request sent. Suppliers can now answer.'); S.rtab = 'mine'; openRfqHub();
+  },
+  rfq: id => openRfq(id),
+  rfqclose: async id => { const { error } = await sb.from('rfqs').update({ status: 'closed' }).eq('id', id).eq('buyer_id', S.user.id); if (error) return toast('Could not close'); closeSheet(); toast('Request closed'); openRfqHub(); },
+  offsub: async id => {
+    const p = parseFloat($('#op').value); if (!(p >= 0)) return toast('Add your price each');
+    busy('#ogo', true, '...');
+    const { error } = await sb.rpc('submit_offer', { p_rfq: id, p_price: p, p_currency: $('#ocu').value, p_qty: parseInt($('#oq').value, 10) || 1, p_lead: parseInt($('#ol').value, 10) || 0, p_valid: $('#ov').value || null, p_note: $('#on').value || '' });
+    if (error) { busy('#ogo', false, 'Send offer'); return toast((error.message || 'Could not send').replace(/^.*?:\s*/, '')); }
+    closeSheet(); toast('Offer sent to the buyer');
+  },
+  ofacc: id => { S.accOffer = id; sheet(`<h2>Accept this offer</h2><p class="ls">An order is created and the supplier is told. Payment is arranged with the supplier.</p><div class="fld"><label for="bad">Delivery address</label><textarea id="bad" maxlength="300" placeholder="Area, city, landmark"></textarea></div><div class="fld"><label for="bco">Country</label><input id="bco" maxlength="60"></div><button class="btn" id="bgo" data-a="ofaccgo">Confirm order</button>`); },
+  ofaccgo: async () => {
+    busy('#bgo', true, '...');
+    const { error } = await sb.rpc('accept_offer', { p_offer: S.accOffer, p_address: ($('#bad') || {}).value || '', p_country: ($('#bco') || {}).value || '' });
+    if (error) { busy('#bgo', false, 'Confirm order'); return toast((error.message || 'Could not accept').replace(/^.*?:\s*/, '')); }
+    closeSheet(); toast('Order created from the quotation'); S.otab = 'buy'; openOrders();
+  },
   gview: (id, el) => { const p = findPost(id); if (p) openViewer(p.media, +el.dataset.i || 0, p.dl); },
   ptab: id => { if ($('#pposts') && S.prof) { S.prof.tab = id; paintProfile(); } else { S.mtab = id; render(true); } },
   editprofile: () => {
@@ -2270,9 +3029,10 @@ const ACT = {
     <button class="ccard" data-a="cnew" data-id="live"><span>🔴</span><b>Live streaming</b><small>Broadcast now</small></button>
     <button class="ccard" data-a="cnew" data-id="video"><span>🎬</span><b>Video</b><small>Short video</small></button>
     <button class="ccard" data-a="cnew" data-id="event"><span>📅</span><b>Event</b><small>Plan a meetup</small></button>
-    <button class="ccard" data-a="cnew" data-id="sell"><span>🛍️</span><b>Sell</b><small>List an item</small></button></div>
+    <button class="ccard" data-a="cnew" data-id="sell"><span>🛍️</span><b>Sell</b><small>Retail or wholesale</small></button>
+    <button class="ccard" data-a="cnew" data-id="rfq"><span>📨</span><b>Request a quote</b><small>Ask suppliers</small></button></div>
     <p class="ls" style="margin-top:12px">To write a post, use "What's on your mind?" on Home.</p>`),
-  cnew: id => { closeSheet(); setTimeout(() => { const f = { video: ACT.vupload, live: ACT.golive, sell: ACT.sell, event: ACT.enew }[id]; if (f) f(); }, 60); },
+  cnew: id => { closeSheet(); setTimeout(() => { const f = { video: ACT.vupload, live: ACT.golive, sell: ACT.sell, rfq: ACT.rfqnew, event: ACT.enew }[id]; if (f) f(); }, 60); },
   avview: id => { const p = S.pf[id], url = safeUrl(p && p.avatar_url); if (url) openViewer([{ type: 'image', url }], 0, false); else toast('No profile photo yet'); },
   xpand: (id, el) => { const t = el.previousElementSibling; if (!t) return; if (t.classList.contains('open')) { t.classList.remove('open'); if (t.dataset.xk) S.xp.delete(t.dataset.xk); el.textContent = 'See more'; } else { t.classList.add('open'); if (t.dataset.xk) S.xp.add(t.dataset.xk); el.textContent = 'See less'; } },
   sgdismiss: id => { S.suggest = (S.suggest || []).filter(p => p.id !== id); render(true); },
@@ -2282,7 +3042,7 @@ const ACT = {
   lvrow: id => {
     const s = (S.myLives || []).find(x => x.id === id); if (!s) return; const has = s.replay_parts > 0 && s.status !== 'live';
     sheet(`<h2>${esc(s.title || 'Live')}</h2><div class="ls" style="margin:-6px 0 8px">${esc(new Date(s.started_at).toLocaleString())}</div>
-      ${has ? `<button class="optrow" data-a="lvplay" data-id="${s.id}">▶ Watch the saved live</button><button class="optrow" data-a="lvshare" data-id="${s.id}">${s.replay_public ? '🔒 Make it private again' : '🌍 Share it on my profile'}</button><button class="optrow red" data-a="lvdelrep" data-id="${s.id}">Delete the saved video</button>` : '<div class="ls" style="padding:6px 0">No saved video for this live.</div>'}
+      ${has ? `<button class="optrow" data-a="lvplay" data-id="${s.id}">▶ Watch the saved live</button><div class="ls" style="padding:4px 0">Expires ${esc(new Date(lvExp(s)).toLocaleDateString())}. Download it before then if you want to keep it.</div><div class="dots">${Array.from({ length: Math.min(s.replay_parts, 12) }, (_, i) => `<a class="chip" href="${replayUrl(s, i)}" download target="_blank" rel="noopener">⬇ Part ${i + 1}</a>`).join('')}</div><button class="optrow" data-a="lvshare" data-id="${s.id}">${s.replay_public ? '🔒 Make it private again' : '🌍 Share it on my profile'}</button><button class="optrow red" data-a="lvdelrep" data-id="${s.id}">Delete the saved video</button>` : '<div class="ls" style="padding:6px 0">No saved video for this live.</div>'}
       ${s.status === 'live' ? '' : `<button class="optrow red" data-a="lvdel" data-id="${s.id}">Delete this live completely</button>`}`);
   },
   lvplay: id => { const s = (S.myLives || []).find(x => x.id === id); if (s) { closeSheet(); openReplay(s); } },
@@ -2384,11 +3144,11 @@ const ACT = {
     for (const a of getAccounts()) { try { const r = await sb.auth.refreshSession({ refresh_token: a.rt }); if (r.data && r.data.session) await sb.auth.signOut({ scope: 'local' }); } catch (e) {} }
     S.switching = false; putAccounts([]); closeSheet(); resetSession();
   },
-  delacct: () => sheet(`<h2>Delete your account</h2><p>This permanently deletes your profile, posts, comments, messages, stories, videos and settings. It cannot be undone.</p>
+  delacct_old: () => sheet(`<h2>Delete your account</h2><p>This permanently deletes your profile, posts, comments, messages, stories, videos and settings. It cannot be undone.</p>
     <p class="ls" style="margin:8px 0">If you own a group, transfer ownership first. Groups you own are deleted with your account. Photos and videos you uploaded may stay in storage for a short time before they are cleaned up.</p>
     <div class="fld"><label for="dtx">Type DELETE to confirm</label><input id="dtx" autocomplete="off" autocapitalize="characters"></div>
     <button class="btn" style="background:var(--coral);color:#fff" id="dbtn" data-a="delgo">Delete my account</button>`),
-  delgo: async () => {
+  delgo_old: async () => {
     if ((($('#dtx') || {}).value || '').trim() !== 'DELETE') return toast('Type DELETE to confirm');
     busy('#dbtn', true, '...'); const id = S.user.id;
     const { error } = await sb.rpc('delete_my_account');
@@ -2643,7 +3403,7 @@ const ACT = {
     else { try { navigator.clipboard.writeText(url); } catch (e) {} toast('Invite link copied'); }
   },
   pmore: id => loadProfileData(id, false),
-  pfollow: async id => {
+  pfollow_old: async id => {
     const P = S.prof; if (!P || P.id !== id) return;
     const was = P.following; P.following = !was; P.followers += was ? -1 : 1; was ? S.following.delete(id) : S.following.add(id); paintProfile();
     const q = was ? sb.from('follows').delete().eq('follower_id', S.user.id).eq('following_id', id) : sb.from('follows').insert({ follower_id: S.user.id, following_id: id });
@@ -2692,6 +3452,8 @@ const ACT = {
     } else {
       sheet(`<h2>Post options</h2>
         <button class="optrow" data-a="psave" data-id="${p.id}">${S.savedPosts.has(p.id) ? 'Remove from saved' : 'Save post'}</button>
+        <button class="optrow" data-a="pint" data-id="${p.id}" data-v="1">👍 Interested</button>
+        <button class="optrow" data-a="pint" data-id="${p.id}" data-v="0">🙈 Not interested</button>
         <button class="optrow" data-a="user" data-id="${p.uid}">View profile</button>
         <button class="optrow red" data-a="rep" data-t="post" data-id="${p.id}" data-o="${p.uid}">Report post</button>
         <button class="optrow" data-a="gift" data-id="${p.uid}" data-t="post" data-i="${p.id}">🎁 Send a gift to ${esc(nameOf(p.uid))}</button>
@@ -2755,7 +3517,7 @@ const ACT = {
     S.allowDl = false;
     sheet(`<h2>New video</h2>
       <div class="fld">${uploadField('video/mp4,video/webm,video/quicktime', 'Choose a video')}</div>
-      <div class="ls" style="margin:-4px 0 12px">Up to 60 seconds and 50 MB.</div>
+      <div class="ls" style="margin:-4px 0 12px">Up to 10 minutes and 50 MB. Shorter or lower-quality videos upload faster.</div>
       <div class="fld"><label for="vc">Caption</label><textarea id="vc" maxlength="300" placeholder="Say something about your video"></textarea></div>
       <div class="srow" style="padding:6px 0 14px;border:0"><div><div class="lbl">Allow saving</div><div class="ls">Let people save this video to their phone</div></div><button class="switch" id="dlsw" role="switch" aria-checked="false" data-a="tgldl"><i></i></button></div>
       <button class="btn" id="vbtn" data-a="vpublish">Post video</button>`);
@@ -2764,7 +3526,7 @@ const ACT = {
   vpublish: async () => {
     if (!S.draft || S.draft.type !== 'video') return toast('Choose a video first');
     const dur = await videoDuration(S.draft.prev);
-    if (isFinite(dur) && dur > 61) return toast('Video must be 60 seconds or less');
+    if (isFinite(dur) && dur > 601) return toast('Video must be 10 minutes or less');
     busy('#vbtn', true, 'Uploading...');
     let m;
     try { m = await uploadMedia(S.draft.file); } catch (e) { busy('#vbtn', false, 'Post video'); return toast(upErr(e)); }
@@ -2774,7 +3536,7 @@ const ACT = {
   },
   user: id => openUser(id),
   dm: id => { closeSheet(); openThread(id); },
-  follow: async (id, el) => {
+  follow_old: async (id, el) => {
     const was = el.dataset.f === '1'; el.disabled = true;
     const q = was ? sb.from('follows').delete().eq('follower_id', S.user.id).eq('following_id', id) : sb.from('follows').insert({ follower_id: S.user.id, following_id: id });
     const { error } = await q; el.disabled = false;
@@ -2832,7 +3594,7 @@ const ACT = {
   txt: async (id, el) => { const k = el.dataset.k; if (S.txon.has(k)) { S.txon.delete(k); return txRepaint(); } if (!S.tlang) { S.txPending = k; return openTxLang(); } doTranslate(k); },
   txchg: () => openTxLang(),
   txlang: id => { setTlang(id); closeSheet(); if (S.txPending) { const k = S.txPending; S.txPending = null; doTranslate(k); } else txRepaint(); },
-  qfollow: async id => {
+  qfollow_old: async id => {
     const was = S.following.has(id);
     was ? S.following.delete(id) : S.following.add(id); syncFollowUI(id);
     const q = was ? sb.from('follows').delete().eq('follower_id', S.user.id).eq('following_id', id) : sb.from('follows').insert({ follower_id: S.user.id, following_id: id });
@@ -2949,7 +3711,7 @@ const ACT = {
   },
   close: closeSheet,
 
-  listing: id => {
+  listing_old: id => {
     const l = S.products.find(x => x.id == id); if (!l) return;
     const mine = l.sid === S.user.id;
     const price = `<div class="big">${fmt(l.price, l.cur)}${l.opt === 'bulk' ? ' / unit' : ''}</div>`;
@@ -2975,7 +3737,7 @@ const ACT = {
   },
 
   sell: () => {
-    S.sellOpt = 'fixed';
+    S.sellOpt = 'fixed'; S.sellModes = new Set(['retail']);
     sheet(`<h2>Sell an item</h2>
       <div class="fld">${uploadField('image/*', 'Add a photo')}</div>
       <div class="fld"><label for="st">What are you selling?</label><input id="st" maxlength="120" placeholder="e.g. Wooden chair"></div>
@@ -2983,6 +3745,17 @@ const ACT = {
       <div class="fld"><label for="sp">Price</label><div style="display:grid;grid-template-columns:1.4fr 1fr;gap:8px"><input id="sp" type="number" inputmode="decimal" min="0" placeholder="0"><select id="scur" aria-label="Currency">${CURS.map(c => `<option>${c}</option>`).join('')}</select></div></div>
       <div class="fld"><label for="sc">Category</label><select id="sc">${CATS.slice(1).map(c => `<option>${c}</option>`).join('')}</select></div>
       <div class="fld"><label for="sd">Description</label><textarea id="sd" maxlength="1000" placeholder="Condition, size, pickup or delivery"></textarea></div>
+      <details class="more"><summary>More details: wholesale, stock, specifications</summary>
+        <div class="fld"><label>Sold as</label><div class="dots" id="smodes">${[['retail', 'Retail'], ['wholesale', 'Wholesale'], ['custom', 'Custom-made']].map(([k, l]) => `<button class="chip ${k === 'retail' ? 'on' : ''}" type="button" data-a="smode" data-id="${k}">${l}</button>`).join('')}</div></div>
+        <div class="fld"><label for="scond">Condition</label><select id="scond"><option value="">Not stated</option><option value="new">New</option><option value="used">Used</option><option value="refurbished">Refurbished</option></select></div>
+        <div class="fld"><label>Brand and model</label><div class="lkrow"><input id="sbrand" maxlength="60" placeholder="Brand"><input id="smodel" maxlength="60" placeholder="Model"></div></div>
+        <div class="fld"><label for="sorig">Made in or shipped from</label><input id="sorig" maxlength="60" placeholder="Country"></div>
+        <div class="fld"><label>Minimum order and stock</label><div class="lkrow"><input id="smoq" type="number" inputmode="numeric" min="1" placeholder="Min. order"><input id="sstock" type="number" inputmode="numeric" min="0" placeholder="In stock"></div></div>
+        <div class="fld"><label>Price range (optional)</label><div class="lkrow"><input id="spmin" type="number" inputmode="decimal" min="0" placeholder="From"><input id="spmax" type="number" inputmode="decimal" min="0" placeholder="To"></div></div>
+        <div class="fld"><label>Quantity discounts (optional)</label>${[0, 1, 2].map(i => `<div class="lkrow"><input id="stq${i}" type="number" inputmode="numeric" min="2" placeholder="From quantity"><input id="stp${i}" type="number" inputmode="decimal" min="0" placeholder="Price each"></div>`).join('')}</div>
+        <div class="fld"><label>Sample price and preparation time</label><div class="lkrow"><input id="ssamp" type="number" inputmode="decimal" min="0" placeholder="Sample price"><input id="sprep" type="number" inputmode="numeric" min="0" max="120" placeholder="Days to prepare"></div></div>
+        <div class="fld"><label>Specifications (optional)</label>${[0, 1, 2, 3].map(i => `<div class="lkrow"><input id="sak${i}" maxlength="30" placeholder="e.g. Color"><input id="sav${i}" maxlength="60" placeholder="e.g. Brown"></div>`).join('')}</div>
+      </details>
       <button class="btn" id="pubbtn" data-a="publish">Publish item</button>`);
     bindUpload({ edit: true });
   },
@@ -2994,31 +3767,37 @@ const ACT = {
     busy('#pubbtn', true, S.draft ? 'Uploading...' : '...');
     let m = null;
     try { if (S.draft) m = await uploadMedia(S.draft.file); } catch (e) { busy('#pubbtn', false, 'Publish item'); return toast(upErr(e)); }
-    const { error } = await sb.from('products').insert({ seller_id: S.user.id, title, description: $('#sd').value.trim(), price, category: $('#sc').value, price_type: S.sellOpt, currency: $('#scur').value, image_url: m ? m.url : null });
+    const { error } = await sb.from('products').insert({ seller_id: S.user.id, title, description: $('#sd').value.trim(), price, category: $('#sc').value, price_type: S.sellOpt, currency: $('#scur').value, image_url: m ? m.url : null, ...sellExtras() });
     if (error) { busy('#pubbtn', false, 'Publish item'); return toast('Could not publish'); }
     closeSheet(); S.cat = 'All'; S.opt = 'all'; S.q = '';
     try { await loadProducts(); } catch (e) {}
     render(); toast('Published');
   },
 
-  newpost: () => {
+  newpost_old: () => {
     S.postVis = S.defVis || 'public'; S.allowDl = false; S.drafts = [];
     sheet(`<h2>New post</h2>
       <div class="fld"><textarea id="pt" data-mention maxlength="3000" placeholder="What's on your mind? Type @ to mention someone"></textarea><button class="chip" type="button" style="margin-top:8px" data-a="emo" data-t="#pt" data-p="#emop2">😊 Emoji</button><div id="emop2" class="emop" hidden></div></div>
       <div class="fld"><label class="up"><input type="file" id="files" accept="image/*,video/mp4,video/webm,video/quicktime" multiple hidden><span id="prev">${I.plus}</span><span id="addtxt">Add photos or videos</span></label><div class="thumbs" id="thumbs"></div></div>
       <div class="fld"><label>Who can see this post?</label><div class="seg c3" id="pvs">${[['public', 'Public'], ['friends', 'Friends'], ['private', 'Only me']].map(([k, l]) => `<button data-a="pvsel" data-id="${k}" class="${k === S.postVis ? 'on' : ''}">${l}</button>`).join('')}</div></div>
       <div class="srow" style="padding:6px 0 14px;border:0"><div><div class="lbl">Allow saving</div><div class="ls">Let people save your photos and videos to their phone</div></div><button class="switch" id="dlsw" role="switch" aria-checked="false" data-a="tgldl"><i></i></button></div>
-      <button class="btn" id="postbtn" data-a="publishpost">${tr('post')}</button>`);
+      <div class="fld"><label for="pprod">Attach one of your listings (optional)</label><select id="pprod"><option value="">None</option></select></div>
+      <div class="srow" style="padding:4px 0 10px;border:0"><div><div class="lbl">Paid promotion</div><div class="ls">Turn on if you were paid or received free products to post this</div></div><button class="switch" id="ppromo" role="switch" aria-checked="false" data-a="tglpromo"><i></i></button></div>
+      <div class="fld"><label for="pwhen">Publish later (optional)</label><input type="datetime-local" id="pwhen"></div>
+      <button class="btn" id="postbtn" data-a="publishpost">${tr('post')}</button>
+      <button class="btn alt" style="margin-top:8px" data-a="savedraft">Save as draft</button>`);
     bindMulti();
   },
   publishpost: async () => {
     const text = $('#pt').value.trim(), files = S.drafts.slice();
-    if (!text && !files.length) return toast('Write something or add photos or videos');
+    if (!text && !files.length) { S.asDraft = false; return toast('Write something or add photos or videos'); }
+    const when = ($('#pwhen') || {}).value;
     busy('#postbtn', true, files.length ? 'Uploading 1 of ' + files.length + '...' : '...');
     const media = [];
     try { for (let i = 0; i < files.length; i++) { busy('#postbtn', true, 'Uploading ' + (i + 1) + ' of ' + files.length + '...'); media.push(await uploadMedia(files[i].file)); } }
     catch (e) { busy('#postbtn', false, tr('post')); return toast(upErr(e)); }
-    const row = { user_id: S.user.id, content: text, visibility: S.postVis, allow_download: !!S.allowDl, comments_enabled: S.defComments !== false, allowed_reactions: S.defRx || null, media_url: media[0] ? media[0].url : null, media_type: media[0] ? media[0].type : null };
+    if (when || S.asDraft) return saveDraftFrom(text, media, S.asDraft ? '' : when);
+    const row = { user_id: S.user.id, content: text, visibility: S.postVis, allow_download: !!S.allowDl, comments_enabled: S.defComments !== false, product_id: ($('#pprod') && $('#pprod').value) ? +$('#pprod').value : null, is_paid_promo: !!S.promo, allowed_reactions: S.defRx || null, media_url: media[0] ? media[0].url : null, media_type: media[0] ? media[0].type : null };
     const { data: post, error } = await sb.from('posts').insert(row).select('id').single();
     if (error || !post) { busy('#postbtn', false, tr('post')); return toast('Could not post'); }
     if (media.length) {
@@ -3262,7 +4041,7 @@ window.addEventListener('popstate', () => {
   ['sheet', 'viewer', 'story', 'call', 'live'].forEach(id => { const e = document.getElementById(id); if (e) new MutationObserver(hq).observe(e, { attributes: true, attributeFilter: ['class'] }); });
   new MutationObserver(hq).observe(document.getElementById('over'), { childList: true });
   new MutationObserver(hq).observe(document.getElementById('app'), { childList: true });
-  ['openThread', 'openUser', 'openPost', 'openGroup', 'openGroups', 'openEvents', 'openSaved', 'openBlocked', 'openWallet', 'openSearch', 'openSettingsHub', 'openSetPage', 'openDashboard', 'openFollowList', 'openStoryComposer', 'openMyLives'].forEach(name => {
+  ['openThread', 'openUser', 'openPost', 'openGroup', 'openGroups', 'openEvents', 'openSaved', 'openBlocked', 'openWallet', 'openSearch', 'openSettingsHub', 'openSetPage', 'openDashboard', 'openOrders', 'openRfqHub', 'openLists', 'openWishlist', 'openPostSearch', 'openStore', 'openFollowReqs', 'openDelivery', 'openDrafts', 'openFollowList', 'openStoryComposer', 'openMyLives'].forEach(name => {
     const f = window[name]; if (typeof f !== 'function') return;
     window[name] = function () {
       const args = [].slice.call(arguments), sig = name + JSON.stringify(args.filter(a => typeof a !== 'object'));
@@ -3366,9 +4145,10 @@ async function openMyLives() {
   const b = $('#mlbody'); if (!b) return;
   if (error) { b.innerHTML = '<div class="empty" style="padding:40px">Could not load your lives.</div>'; return; }
   S.myLives = data || [];
+  for (const s of S.myLives) { if (s.replay_parts > 0 && s.status !== 'live' && lvExp(s) < Date.now()) { try { await wipeReplayFiles(s); await sb.rpc('clear_live_replay', { p_stream: s.id }); s.replay_parts = 0; s.replay_public = false; } catch (e) {} } }
   b.innerHTML = S.myLives.length ? `<p class="ls" style="padding:12px 16px">Lives you saved stay here. You can watch them, share them to your profile, or delete them anytime.</p>` + S.myLives.map(s => {
     const secs = s.replay_seconds || (s.ended_at ? Math.max(0, Math.floor((new Date(s.ended_at) - new Date(s.started_at)) / 1000)) : 0);
-    return `<button class="evrow" data-a="lvrow" data-id="${s.id}"><span class="evd"><b>${new Date(s.started_at).getDate()}</b><small>${esc(new Date(s.started_at).toLocaleString([], { month: 'short' }))}</small></span><span class="tx"><b>${esc(s.title || 'Live')}</b><span class="l">${mmss(secs)} · up to ${s.peak_viewers} watching</span></span><span class="pbadge">${s.status === 'live' ? 'Live now' : s.replay_parts > 0 ? (s.replay_public ? 'Shared' : 'Saved') : 'No copy'}</span></button>`;
+    return `<button class="evrow" data-a="lvrow" data-id="${s.id}"><span class="evd"><b>${new Date(s.started_at).getDate()}</b><small>${esc(new Date(s.started_at).toLocaleString([], { month: 'short' }))}</small></span><span class="tx"><b>${esc(s.title || 'Live')}</b><span class="l">${mmss(secs)} · up to ${s.peak_viewers} watching</span></span><span class="pbadge">${s.status === 'live' ? 'Live now' : s.replay_parts > 0 ? (s.replay_public ? 'Shared' : 'Saved') + ' · ' + lvLeft(s) : 'No copy'}</span></button>`;
   }).join('') : '<div class="empty" style="padding:50px 24px">No lives yet.<br>Tap Create, then Go live.</div>';
 }
 function openReplay(s) {
