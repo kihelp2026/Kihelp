@@ -142,6 +142,7 @@ async function hydratePosts(posts) {
     const { data: tg } = await sb.from('post_tags').select('id,post_id,tagged_id,media_index,x,y,status').in('post_id', ids);
     await loadProfiles((tg || []).map(t => t.tagged_id)); out.forEach(p => { p.tags = (tg || []).filter(t => t.post_id === p.id && t.status === 'approved'); });
   } catch (e) {}
+  try { const { data: cb } = await sb.from('post_collaborators').select('post_id,user_id,status').in('post_id', ids); await loadProfiles((cb || []).map(c => c.user_id)); out.forEach(p => { p.collabs = (cb || []).filter(c => c.post_id === p.id && c.status === 'accepted').map(c => c.user_id); }); } catch (e) {}
   const pids = [...new Set(out.map(p => p.productId).filter(Boolean))];
   if (pids.length) {
     try {
@@ -264,7 +265,9 @@ async function loadMe() {
 }
 async function loadVideos() {
   const cols = 'id,user_id,video_url,caption,views,created_at,allow_download';
-  const { data: vs, error } = await sb.from('videos').select(cols).order('created_at', { ascending: false }).limit(30);
+  let vq = sb.from('videos').select(cols).order('created_at', { ascending: false }).limit(30);
+  if (S.vmode === 'following') vq = vq.in('user_id', S.following.size ? [...S.following] : ['00000000-0000-0000-0000-000000000000']);
+  const { data: vs, error } = await vq;
   if (error) throw error;
   let list = vs;
   if (S.focusVideo && !list.some(v => v.id === S.focusVideo)) {
@@ -392,11 +395,12 @@ const gate = () => {
 function head() {
   const t = S.tab, home = t === 'home';
   const title = tr({ home: 'social', video: 'videos', chat: 'chats', market: 'marketplace', alerts: 'alerts', me: 'profile' }[t]);
-  const act = '';
-  const left = home ? '<div class="brand"></div>' : `<div class="brand"><div class="ttl2">${title}</div></div>`;
+  const left = (home || t === 'market' || t === 'video') ? '<div class="brand"></div>' : `<div class="brand"><div class="ttl2">${title}</div></div>`;
   const prof = home && S.user ? `<button class="hav" data-a="tab" data-id="me" aria-label="Profile">${avOf(S.user.id, 34)}</button>` : '';
   const gear = t === 'me' ? `<button class="ibtn" data-a="settings" aria-label="${tr('settings')}">${I.sliders}</button>` : '';
-  return `${left}<div class="hr">${act}<button class="ibtn" data-a="search" aria-label="Search people">${I.search}</button><button class="ibtn" data-a="alerts" aria-label="${tr('alerts')}">${I.bell}</button>${gear}${prof}</div>`;
+  const sa = t === 'video' ? 'vsearch' : t === 'market' ? 'msearch' : 'search', sl = t === 'video' ? 'Search videos' : t === 'market' ? 'Search items' : 'Search people';
+  const bell = (t === 'video' || t === 'chat') ? '' : `<button class="ibtn" data-a="alerts" aria-label="${tr('alerts')}">${I.bell}</button>`;
+  return `${left}<div class="hr"><button class="ibtn" data-a="${sa}" aria-label="${sl}">${I.search}</button>${bell}${gear}${prof}</div>`;
 }
 const postLists = () => $('#onep') ? [S.onePost] : $('#pposts') ? [S.profPosts] : $('#spl') ? [S.savedList] : S.tab === 'me' ? [S.myPosts] : [S.posts];
 const findPost = id => postLists()[0].find(x => x.id == id) || [...S.posts, ...S.myPosts, ...S.profPosts, ...S.savedList].find(x => x.id == id);
@@ -421,9 +425,9 @@ function commentsHTML(p) {
   const top = p.cm.filter(c => !c.pid), kids = c => p.cm.filter(x => x.pid === c.id);
   const row = (c, sub) => (S.editC && S.editC.id === c.id)
     ? `<div class="cmt${sub ? ' sub' : ''}"><input id="ec${c.id}" value="${esc(c.t)}" maxlength="1000"><div class="crow"><button class="btn sm2" data-a="csave" data-id="${c.id}" data-p="${p.id}">Save</button><button class="btn alt sm2" data-a="ccancel">Cancel</button></div></div>`
-    : `<div class="cmt${sub ? ' sub' : ''}"><b>${esc(c.w)}</b>${fmtText(txShow('c' + c.id, c.t))}${txLink('c' + c.id, c.t)}${c.ed ? ' <small class="ls">(edited)</small>' : ''}${cmMedia(c)}
-      <div class="cact"><span class="ls">${ago(c.at)}</span><button data-a="creply" data-id="${c.id}" data-p="${p.id}">Reply</button>${c.uid === S.user.id ? `<button data-a="cedit" data-id="${c.id}">Edit</button><button data-a="cdel" data-id="${c.id}" data-p="${p.id}">Delete</button>` : `<button data-a="rep" data-t="comment" data-id="${c.id}" data-o="${c.uid}">Report</button>`}</div></div>`;
-  return top.map(c => row(c, false) + kids(c).map(k => row(k, true)).join('')).join('');
+    : `<div class="cmt${sub ? ' sub' : ''}"><button class="cav" data-a="user" data-id="${c.uid}" aria-label="Profile">${avOf(c.uid, sub ? 26 : 34)}</button><div class="cbody"><b>${esc(c.w)}</b>${fmtText(txShow('c' + c.id, c.t))}${txLink('c' + c.id, c.t)}${c.ed ? ' <small class="ls">(edited)</small>' : ''}${cmMedia(c)}
+      <div class="cact"><span class="ls">${ago(c.at)}</span><button data-a="creply" data-id="${c.id}" data-p="${p.id}">Reply</button>${c.uid === S.user.id ? `<button data-a="cedit" data-id="${c.id}">Edit</button><button data-a="cdel" data-id="${c.id}" data-p="${p.id}">Delete</button>` : `<button data-a="rep" data-t="comment" data-id="${c.id}" data-o="${c.uid}">Report</button>`}</div></div></div>`;
+  return top.map(c => { const ks = kids(c), open = S.cmExp.has(c.id); return row(c, false) + (ks.length ? (open ? ks.map(k => row(k, true)).join('') + `<button class="vrep" data-a="cexp" data-id="${c.id}">Hide replies</button>` : `<button class="vrep" data-a="cexp" data-id="${c.id}">View ${ks.length} repl${ks.length === 1 ? 'y' : 'ies'}</button>`) : ''); }).join('');
 }
 const replyChip = p => S.replyC && S.replyC.p === p.id ? `<div class="rchip">Replying to <b>${esc(S.replyC.name)}</b><button data-a="creplyx" aria-label="Cancel reply">${I.x}</button></div>` : '';
 const fChip = id => (id !== S.user.id && !S.following.has(id)) ? `<button class="fchip" data-a="qfollow" data-id="${id}">${S.requested.has(id) ? 'Requested' : 'Follow'}</button>` : '';
@@ -439,8 +443,8 @@ function postCard(p) {
   const chips = rxs.map(([e, n]) => `<button class="rxchip ${p.react === e ? 'on' : ''}" data-a="rxtap" data-id="${p.id}" data-e="${e}">${e}<span>${n}</span></button>`).join('');
   const canReact = !p.allowed || p.allowed.length > 0, cmOn = p.cmOn !== false;
   return `<article class="post">
-    <div class="prow"><button class="ph-row" data-a="user" data-id="${p.uid}">${avOf(p.uid)}<div><b>${esc(nameOf(p.uid))}</b><small>${p.t}${p.ed ? ' · edited' : ''} · ${visIcon(p.vis)}${p.repostOf ? ' · 🔁 reposted' : ''}${p.promo ? ' · Paid promotion' : ''}${p.place ? ' · 📍 ' + esc(p.place) : ''}</small></div></button>${fChip(p.uid)}${p.pin ? '<span class="pbadge">Pinned</span>' : ''}<span style="flex:1"></span><button class="ibtn" data-a="pmenu" data-id="${p.id}" aria-label="More options">${I.more}</button></div>
-    ${p.text ? `<p class="ptext clamp${S.xp.has('p' + p.id) ? ' open' : ''}" data-xk="p${p.id}" data-dt="pt" data-id="${p.id}">${fmtText(txShow('p' + p.id, p.text))}</p>${txLink('p' + p.id, p.text)}` : ''}
+    <div class="prow"><button class="ph-row" data-a="user" data-id="${p.uid}">${avOf(p.uid)}<div><b>${esc(nameOf(p.uid))}${collabNames(p)}</b><small>${p.t}${p.ed ? ' · edited' : ''} · ${visIcon(p.vis)}${p.repostOf ? ' · 🔁 reposted' : ''}${p.promo ? ' · Paid promotion' : ''}${p.place ? ' · 📍 ' + esc(p.place) : ''}</small></div></button>${fChip(p.uid)}${p.pin ? '<span class="pbadge">Pinned</span>' : ''}<span style="flex:1"></span>${p.uid === S.user.id ? `<button class="ibtn dl" data-a="pdel" data-id="${p.id}" aria-label="Delete post">${I.trash}</button>` : ''}<button class="ibtn" data-a="pmenu" data-id="${p.id}" aria-label="More options">${I.more}</button></div>
+    ${ptextHTML(p)}
     ${repostCard(p)}
     ${mediaBlock(p)}
     ${prodCard(p)}
@@ -451,48 +455,47 @@ function postCard(p) {
       <button class="sp ${S.savedPosts.has(p.id) ? 'on' : ''}" data-a="psave" data-id="${p.id}" aria-label="Save post">${I.save}</button>
     </div>
     ${chips || canReact ? `<div class="rxrow">${chips}${canReact ? `<button class="rxchip add" data-a="rxadd" data-id="${p.id}" aria-label="Add a reaction">☺<span>+</span></button>` : ''}</div>` : ''}
-    ${!cmOn ? '<div class="ls" style="padding:2px 16px 8px">Comments are turned off.</div>' : S.open.has(p.id) ? `<div class="cmts">${commentsHTML(p)}\n      ${replyChip(p)}\n      ${cmPrev(p.id)}<div class="cin"><label class="cattach" aria-label="Attach a photo or video"><input type="file" data-cf="${p.id}" accept="image/*,video/*" hidden>📎</label><button class="cattach ${S.crec && S.crec.id == p.id ? 'rec' : ''}" data-a="crec" data-id="${p.id}" aria-label="Record a voice message">🎤</button><input id="ci${p.id}" data-mention placeholder="Write a comment" maxlength="1000" value="${esc((S.cdraft && S.cdraft[p.id]) || '')}"><button class="send" data-a="addcmt" data-id="${p.id}" aria-label="Send comment">${I.send}</button></div></div>` : ''}
+    ${!cmOn ? '<div class="ls" style="padding:2px 16px 8px">Comments are turned off.</div>' : `<button class="viewcm" data-a="cmt" data-id="${p.id}">${p.cm.length ? 'View all ' + p.cm.length + ' comment' + (p.cm.length === 1 ? '' : 's') : 'Add a comment'}</button>`}
   </article>`;
 }
 function viewHome() {
   if (gate()) return gate();
   const row = installBar() + notifBar() + composerBox() + quickRow() + storiesRow();
-  if (!S.posts.length) return row + feedTabs() + `<div class="empty" style="padding:60px 24px">${S.feedMode === 'following' ? 'Nobody you follow has posted yet.<br>Follow people to fill this feed.' : 'No posts yet.<br>Be the first. Share something in the box above.'}</div>` + videoStrip();
+  if (!S.posts.length) return row + `<div class="empty" style="padding:60px 24px">${S.feedMode === 'following' ? 'Nobody you follow has posted yet.<br>Follow people to fill this feed.' : 'No posts yet.<br>Be the first. Share something in the box above.'}</div>` + videoStrip();
   const at = Math.min(2, S.posts.length - 1);
-  return row + feedTabs() + feedList().map((p, i) => postCard(p) + (i === 0 ? suggestStrip() : '') + (i === at ? videoStrip() : '')).join('');
+  return row + feedList().map((p, i) => postCard(p) + (i === 0 ? suggestStrip() : '') + (i === at ? videoStrip() : '')).join('');
 }
 const vgridHTML = list => list.length ? `<div class="vgrid">${list.map(v => `<button data-a="watch" data-id="${v.id}" aria-label="Watch video">${S.saver ? `<div class="ph" style="--h:${hue(v.id)};width:100%;height:100%"></div>` : `<video src="${esc(v.video_url)}#t=0.1" muted playsinline preload="metadata"></video>`}<span>${Number(v.views) || 0} views</span></button>`).join('')}</div>` : '';
 function viewVideo() {
   if (gate()) return gate();
-  if (!S.videos.length) return `<div class="empty" style="padding:60px 24px;color:#fff">No videos yet.<br>Tap <b>+</b> below to post the first video.</div>`;
-  return `<div class="vidfeed" id="vf" tabindex="0">${S.videos.map(v => {
-    const p = S.pf[v.uid] || {};
+  const tabs = `<div class="vtabs"><button class="${S.vmode !== 'following' ? 'on' : ''}" data-a="vfeed" data-id="all">For You</button><button class="${S.vmode === 'following' ? 'on' : ''}" data-a="vfeed" data-id="following">Following</button></div>`;
+  const list = S.videos.filter(v => !S.vnot.has(v.id));
+  if (!list.length) return tabs + `<div class="empty" style="padding:120px 24px 0;color:#fff">${S.vmode === 'following' ? 'No videos from people you follow yet.<br>Follow creators in For You.' : 'No videos yet.<br>Tap <b>+</b> below to post the first video.'}</div>`;
+  return tabs + `<div class="vidfeed" id="vf" tabindex="0">${list.map(v => {
+    const p = S.pf[v.uid] || {}, own = v.uid === S.user.id;
     return `<section class="vid" data-vid="${v.id}">
-      <video data-dt="v" data-id="${v.id}" data-vid="${v.id}" src="${esc(v.url)}" loop playsinline muted preload="${S.saver ? 'none' : 'metadata'}"></video>
+      <video data-dt="v" data-id="${v.id}" data-vid="${v.id}" src="${esc(v.url)}" ${S.vauto ? '' : 'loop'} playsinline preload="${S.saver ? 'none' : 'metadata'}"></video>
       ${S.saver && !S.loaded.has('v' + v.id) ? `<button class="vplay" data-a="vplay" data-id="${v.id}">Tap to play<br><small>Data saver is on</small></button>` : ''}
       <div class="vshade"></div>
-      <button class="vmute" data-a="vmute" aria-label="Sound">${S.muted ? I.mute : I.volume}</button>
-      <button class="vspd" data-a="vspeed" aria-label="Playback speed">${S.rate}x</button>
-      <div class="vinfo"><b>${esc(nameOf(v.uid))}${p.username ? ' <span style="font-weight:500;opacity:.85">@' + esc(p.username) + '</span>' : ''}</b>${fChip(v.uid)}
+      <div class="vinfo"><b>${esc(nameOf(v.uid))}${p.username ? ' <span style="font-weight:500;opacity:.85">@' + esc(p.username) + '</span>' : ''}</b>
         ${v.cap ? `<p>${esc(v.cap)}</p>` : ''}<div style="font-size:13px;opacity:.85;margin-top:4px" data-views="${v.id}">${v.views} views</div></div>
       <div class="vacts">
-        <button class="va" data-a="user" data-id="${v.uid}" aria-label="Creator">${avOf(v.uid, 46)}</button>
+        <div class="vav"><button class="va" data-a="user" data-id="${v.uid}" aria-label="Creator">${avOf(v.uid, 48)}</button>${!own && !S.following.has(v.uid) ? `<button class="vplus" data-a="qfollow" data-id="${v.uid}" aria-label="Follow ${esc(nameOf(v.uid))}">${S.requested.has(v.uid) ? '✓' : '+'}</button>` : ''}</div>
         <button class="va ${v.liked ? 'on' : ''}" data-lk="${v.id}" data-a="vlike" data-id="${v.id}" aria-label="Like"><span class="c">${I.heart}</span><span class="n">${v.likes}</span></button>
         <button class="va" data-a="vcmt" data-id="${v.id}" aria-label="Comments"><span class="c">${I.cmt}</span><span data-cc="${v.id}">${v.cc}</span></button>
-        <button class="vcc" data-a="vcc" data-id="${v.id}" aria-label="Captions">CC</button><button class="va" data-a="vshare" data-id="${v.id}" aria-label="Share"><span class="c">${I.share}</span>Share</button>
-        ${v.uid !== S.user.id ? `<button class="va" data-a="gift" data-id="${v.uid}" data-t="video" data-i="${v.id}" aria-label="Send a gift"><span class="c">🎁</span>Gift</button>` : ''}
-        ${v.uid !== S.user.id ? `<button class="va" data-a="vmore" data-id="${v.id}" aria-label="More options"><span class="c">${I.more}</span></button>` : ''}
-        ${v.dl ? `<button class="va" data-a="vdl2" data-id="${v.id}" aria-label="Save video"><span class="c">${I.download}</span>Save</button>` : ''}
+        <button class="va" data-a="vshare" data-id="${v.id}" aria-label="Share"><span class="c">${I.share}</span>Share</button>
+        ${!own ? `<button class="va" data-a="gift" data-id="${v.uid}" data-t="video" data-i="${v.id}" aria-label="Send a gift"><span class="c">🎁</span>Gift</button>` : ''}
+        <button class="va" data-a="vmore" data-id="${v.id}" aria-label="More options"><span class="c">${I.more}</span></button>
+        <button class="vdisc" data-a="vsound" data-id="${v.id}" aria-label="Sound"><span class="vdiscin">${avOf(v.uid, 26)}</span></button>
       </div></section>`;
   }).join('')}</div>`;
 }
+const chatFilter = () => { const q = (S.cq || '').trim().toLowerCase(); return S.threads.filter(t => !q || nameOf(t.id).toLowerCase().includes(q)); };
+const chatRows = list => list.length ? list.map(t => { const last = t.msgs[t.msgs.length - 1], n = nameOf(t.id); return `<button class="thread" data-a="thread" data-id="${t.id}"><span class="tav">${avOf(t.id, 52)}</span><span class="tx"><span class="trow"><b>${esc(n)}</b><small class="tt">${last && last.at ? esc(ago(last.at)) : ''}</small></span><span class="l">${last ? (last.me ? 'You: ' : '') + esc(msgPreview(last)) : ''}</span></span></button>`; }).join('') : '<div class="empty" style="padding:40px 24px">No chats match.</div>';
 function viewChat() {
   if (gate()) return gate();
-  if (!S.threads.length) return `<div class="empty" style="padding:60px 24px">No chats yet.<br>Open an item in <b>${tr('market')}</b> and tap <b>Message seller</b>.</div>`;
-  return S.threads.map(t => {
-    const last = t.msgs[t.msgs.length - 1], n = nameOf(t.id);
-    return `<button class="thread" data-a="thread" data-id="${t.id}">${avOf(t.id, 48)}<span class="tx"><b>${esc(n)}</b><span class="l">${last ? (last.me ? 'You: ' : '') + esc(msgPreview(last)) : ''}</span></span></button>`;
-  }).join('');
+  if (!S.threads.length) return `<div class="empty" style="padding:60px 24px">No chats yet.<br>Open an item in <b>${tr('market')}</b> and tap <b>Message seller</b>, or open someone's profile to message them.</div>`;
+  return `<div class="msearch"><input id="cq" type="search" placeholder="Search chats" value="${esc(S.cq || '')}" aria-label="Search chats"></div><div id="clist">${chatRows(chatFilter())}</div>`;
 }
 function listingCard(l) {
   const range = l.pmin != null && l.pmax != null;
@@ -512,12 +515,21 @@ function gridHTML() {
   return items.map(listingCard).join('');
 }
 const optChips = () => [['all', 'Any price type'], ...Object.entries(OPT)].map(([k, v]) => `<button class="chip ${S.opt === k ? 'on' : ''}" data-a="opt" data-id="${k}">${v}</button>`).join('');
-const catChips = () => CATS.map(c => `<button class="chip ${S.cat === c ? 'on' : ''}" data-a="cat" data-id="${c}">${c}</button>`).join('');
+const catChips = () => CATS.map(c => `<button class="mkcat ${S.cat === c ? 'on' : ''}" data-a="cat" data-id="${c}"><span>${catEmoji(c)}</span><small>${c}</small></button>`).join('');
 function viewMarket() {
   if (gate()) return gate();
-  return `<div class="msearch"><input id="q" type="search" placeholder="${tr('search')}" value="${esc(S.q)}" aria-label="${tr('search')}"></div>
-    ${mkBar()}<div class="chips" id="cats">${catChips()}</div><div class="chips" id="opts">${optChips()}</div>
-    <div class="grid" id="grid">${gridHTML()}</div>`;
+  const q = S.q.trim(), plain = !q && S.cat === 'All' && S.opt === 'all' && (!S.mmode || S.mmode === 'all');
+  const deals = S.products.filter(l => (l.tiers && l.tiers.length) || (l.modes || []).indexOf('wholesale') >= 0).slice(0, 12);
+  const fresh = S.products.slice(0, 12);
+  const rail = L => `<div class="mrail">${L.map(l => `<button class="mcard" data-a="listing" data-id="${l.id}"><span class="mimg">${l.media ? `<img src="${esc(l.media.url)}" alt="" loading="lazy">` : '<span class="ph0">🛍️</span>'}</span><b>${fmt(l.price, l.cur)}</b><small>${esc(l.title)}</small>${(l.moq || 1) > 1 ? `<em>Min. ${l.moq}</em>` : ''}</button>`).join('')}</div>`;
+  return `<div class="mkhead"><div class="mksearch"><span aria-hidden="true">🔎</span><input id="q" type="search" placeholder="Search products, brands, suppliers" value="${esc(S.q)}" aria-label="${tr('search')}"></div><button class="mkcart" data-a="cartopen" aria-label="Cart">🛒${S.cart.length ? `<i>${S.cart.length}</i>` : ''}</button></div>
+    <div class="mkquick">${[['🧾', 'Orders', 'openorders'], ['📨', 'Quotes', 'rfqhub'], ['💝', 'Lists', 'listshub'], ['🚚', 'Delivery', 'deliverhub'], ['🏪', 'My shop', 'myshop']].map(([e, l, a]) => `<button data-a="${a}"><span>${e}</span><small>${l}</small></button>`).join('')}</div>
+    ${plain ? `<div class="mkbanners"><button class="mkban b1" data-a="mmode" data-id="wholesale"><b>Wholesale prices</b><small>Buy in bulk and pay less per item</small><span>Shop now ›</span></button><button class="mkban b2" data-a="cnew" data-id="sell"><b>Sell on KiHelp</b><small>List your items in minutes</small><span>Start selling ›</span></button><button class="mkban b3" data-a="rfqnew"><b>Request a quote</b><small>Let suppliers compete for your order</small><span>Ask now ›</span></button></div>` : ''}
+    <div class="mkcats" id="cats">${catChips()}</div>
+    <div class="chips mkmodes">${[['all', 'All'], ['retail', 'Retail'], ['wholesale', 'Wholesale'], ['custom', 'Custom-made']].map(([k, l]) => `<button class="chip ${(S.mmode || 'all') === k ? 'on' : ''}" data-a="mmode" data-id="${k}">${l}</button>`).join('')}</div><div class="chips" id="opts">${optChips()}</div>
+    ${plain && deals.length ? `<h3 class="mksec">🔥 Bulk and wholesale deals <button data-a="mmode" data-id="wholesale">See all ›</button></h3>${rail(deals)}` : ''}
+    ${plain && fresh.length ? `<h3 class="mksec">✨ New arrivals</h3>${rail(fresh)}` : ''}
+    <h3 class="mksec">${q ? 'Results' : 'Recommended for you'}</h3><div class="grid" id="grid">${gridHTML()}</div>`;
 }
 function viewAlerts() {
   if (gate()) return gate();
@@ -559,7 +571,7 @@ function wireVideos() {
   S.vio = new IntersectionObserver(es => es.forEach(e => {
     const v = e.target.querySelector('video'); if (!v) return;
     if (e.isIntersecting && e.intersectionRatio >= 0.7) {
-      if (!(S.saver && !S.loaded.has('v' + v.dataset.id))) { v.muted = S.muted; v.playbackRate = S.rate; v.play().catch(() => {}); }
+      if (!(S.saver && !S.loaded.has('v' + v.dataset.id))) { v.muted = S.muted; v.playbackRate = S.rate; v.loop = !S.vauto; const pr = v.play(); if (pr && pr.catch) pr.catch(() => { v.muted = true; v.play().catch(() => {}); if (!S.unmuteHint) { S.unmuteHint = true; toast('Tap the video once to turn the sound on'); } }); }
     } else v.pause();
   }), { root: feed, threshold: [0, 0.7, 1] });
   feed.querySelectorAll('.vid').forEach(el => S.vio.observe(el));
@@ -632,7 +644,7 @@ async function openThread(id, draft) {
   if (!t) { t = { id, msgs: [], last: Date.now() }; S.threads.unshift(t); }
   S.openThread = id; S.reply = null; S.editM = null;
   const n = nameOf(id);
-  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button>${avOf(id, 38)}<b>${esc(n)}</b><span style="flex:1"></span><button class="ibtn" data-a="call" data-id="${id}" data-k="audio" aria-label="Voice call">${I.phone}</button><button class="ibtn" data-a="call" data-id="${id}" data-k="video" aria-label="Video call">${I.cam}</button></header>
+  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button><button class="thead" data-a="user" data-id="${id}" aria-label="View profile">${avOf(id, 40)}<span class="tn"><b>${esc(n)}</b><small>Tap to view profile</small></span></button><span style="flex:1"></span><button class="ibtn" data-a="call" data-id="${id}" data-k="audio" aria-label="Voice call">${I.phone}</button><button class="ibtn" data-a="call" data-id="${id}" data-k="video" aria-label="Video call">${I.cam}</button></header>
     <div class="msgs" id="msgs"></div>
     <div id="cbar"></div>
     <div id="emop" class="emop" hidden></div>
@@ -665,7 +677,7 @@ function paintCbar() {
 function paintMsgs(t) {
   const m = $('#msgs'); if (!m) return;
   const stick = !m.dataset.init || m.scrollHeight - m.scrollTop - m.clientHeight < 140;
-  m.innerHTML = t.msgs.length ? t.msgs.map(x => bubble(x, t)).join('') : `<div class="empty">Say hello.</div>`;
+  m.innerHTML = t.msgs.length ? t.msgs.map((x, i) => daySep(t.msgs[i - 1], x) + bubble(x, t)).join('') : `<div class="empty">Say hello.</div>`;
   if (stick) m.scrollTop = m.scrollHeight;
   m.dataset.init = '1'; fillMedia();
 }
@@ -1144,6 +1156,7 @@ function paintRxEdit() {
 function syncFollowUI(id) {
   const f = S.following.has(id);
   document.querySelectorAll(`.fchip[data-id="${id}"]`).forEach(b => { if (f) b.remove(); });
+  document.querySelectorAll(`.vplus[data-id="${id}"]`).forEach(b => { if (f) b.remove(); });
   document.querySelectorAll(`.fbtn[data-id="${id}"]`).forEach(b => { b.textContent = f ? 'Following' : 'Follow'; b.classList.toggle('alt', f); });
   if (S.prof && S.prof.id === id) { S.prof.following = f; paintProfile(); }
   if ($('#fl')) paintFollowList();
@@ -1968,6 +1981,8 @@ function joinLiveRoom() {
   L.ch = sb.channel('kihelp-live-' + L.id, { config: { presence: { key: S.user.id }, broadcast: { self: false } } })
     .on('presence', { event: 'sync' }, () => { if (!S.live || S.live.id !== L.id) return; L.viewers = Math.max(0, Object.keys(L.ch.presenceState()).length - 1); const e = $('#lvn'); if (e) e.textContent = L.viewers + ' watching'; })
     .on('broadcast', { event: 'heart' }, () => floatHeart())
+    .on('broadcast', { event: 'guest-invite' }, ({ payload }) => { if (payload && payload.uid === S.user.id && S.live && S.live.role === 'viewer') promptGuest(); })
+    .on('broadcast', { event: 'guest-kick' }, ({ payload }) => { if (payload && payload.uid === S.user.id && S.live && S.live.guest) stopGuest(true); })
     .on('broadcast', { event: 'kick' }, ({ payload }) => { if (payload && payload.uid === S.user.id) { toast('You were removed from this live'); leaveLive(); } })
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'live_messages', filter: 'stream_id=eq.' + L.id }, p => addLiveMsg(p.new))
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'live_streams', filter: 'id=eq.' + L.id }, p => { if (p.new && p.new.status === 'ended' && S.live && S.live.role === 'viewer' && S.live.id === L.id) { toast('The live has ended'); leaveLive(); } })
@@ -2016,10 +2031,11 @@ async function watchLive(streamId, hostId) {
   paintLive();
   client.on('user-published', async (user, type) => {
     try { await client.subscribe(user, type); } catch (e) { return; }
-    if (type === 'video') { const box = $('#lvv'); if (box) { box.innerHTML = ''; user.videoTrack.play(box); } }
+    if (type === 'video') liveTile(user.uid, user.videoTrack);
     if (type === 'audio') user.audioTrack.play();
   });
-  client.on('user-left', () => { if (S.live && S.live.client === client) { toast('The live has ended'); leaveLive(); } });
+  client.on('user-left', user => { if (!(S.live && S.live.client === client)) return; if (user.uid === agoraUid(hostId)) { toast('The live has ended'); leaveLive(); } else dropTile(user.uid); });
+  client.on('user-unpublished', (user, type) => { if (type === 'video') dropTile(user.uid); });
   client.on('token-privilege-will-expire', async () => { try { const t = await liveToken(hostId, 'audience'); await client.renewToken(t.token); } catch (e) {} });
   try { await client.join(tk.appId, tk.channel, tk.token, tk.uid); }
   catch (e) { leaveLive(); return toast('Could not join the live'); }
@@ -2428,6 +2444,7 @@ async function loadSocial() {
     S.reqIn = (rq.data || []).filter(r => r.target_id === S.user.id).map(r => r.requester_id);
     S.notInt = new Set((pf.data || []).filter(x => !x.interested).map(x => x.post_id));
     S.intr = new Set((pf.data || []).filter(x => x.interested).map(x => x.post_id));
+    try { const vp = await sb.from('video_prefs').select('video_id,interested'); S.vnot = new Set((vp.data || []).filter(x => !x.interested).map(x => x.video_id)); } catch (e) {}
     try { const w = await sb.from('product_alerts').select('product_id'); S.watch = new Set((w.data || []).map(x => x.product_id)); } catch (e) {}
     if (S.ready.home) render(true);
   } catch (e) {}
@@ -2636,6 +2653,139 @@ async function leaveGroupCall() {
   const r = $('#gcall'); if (r) r.remove(); setTimeout(syncHist, 0);
 }
 
+/* ---------- v0.24: videos, comments panel, market app, chat, collaboration, live guests ---------- */
+S.vmode = 'all'; S.vnot = new Set(); S.vauto = false; S.bgAudio = false; S.cmExp = new Set(); S.cmOpen = null; S.vcOpen = null; S.muted = false; S.cq = '';
+const defTlang = () => { const l = ((navigator.language || 'en').slice(0, 2) || 'en').toLowerCase(); return TLANGS.some(x => x[0] === l) ? l : 'en'; };
+function txBtn(k, raw) {
+  if (!txOk(raw)) return '';
+  S.txsrc[k] = raw;
+  return S.txon.has(k) ? `<button class="txbtn on" data-a="txt" data-k="${k}">🌐 Translated to ${esc(tlangName(S.tlang))} · See original</button><button class="txbtn" data-a="txchg">Change language</button>` : `<button class="txbtn" data-a="txt" data-k="${k}">🌐 Translate</button>`;
+}
+function ptextHTML(p) {
+  if (!p.text) return '';
+  const key = 'p' + p.id, shown = txShow(key, p.text), long = shown.length > 170 || (shown.match(/\n/g) || []).length >= 3, open = S.xp.has(key);
+  return `<p class="ptext${long && !open ? ' clamp' : ''}" data-xk="${key}" data-dt="pt" data-id="${p.id}">${fmtText(shown)}</p>${long ? `<button class="seemore" data-a="xmore" data-k="${key}">${open ? 'See less' : 'See more'}</button>` : ''}<div class="txrow">${txBtn(key, p.text)}</div>`;
+}
+const collabNames = p => (p.collabs && p.collabs.length) ? ' <span class="with">with ' + p.collabs.map(u => esc(nameOf(u))).join(', ') + '</span>' : '';
+const CATEMO = { all: '🛍️', fashion: '👗', phones: '📱', home: '🏠', food: '🍲', electronics: '💻', other: '🏷️' };
+const catEmoji = c => CATEMO[String(c).toLowerCase()] || '🏷️';
+const daySep = (prev, cur) => { if (!cur || !cur.at) return ''; const d = new Date(cur.at); if (prev && prev.at && new Date(prev.at).toDateString() === d.toDateString()) return ''; const t = new Date(), y = new Date(Date.now() - 864e5); return `<div class="daysep">${d.toDateString() === t.toDateString() ? 'Today' : d.toDateString() === y.toDateString() ? 'Yesterday' : d.toLocaleDateString([], { month: 'short', day: 'numeric', year: d.getFullYear() === t.getFullYear() ? undefined : 'numeric' })}</div>`; };
+document.addEventListener('input', e => { if (e.target.id === 'cq') { S.cq = e.target.value; const l = $('#clist'); if (l) l.innerHTML = chatRows(chatFilter()); } });
+/* comments panel */
+function closeCpanel() { S.cmOpen = null; S.vcOpen = null; const e = $('#cpanel'); if (e) e.remove(); setTimeout(syncHist, 0); }
+function cpShell(inner) {
+  let el = $('#cpanel'); const fresh = !el;
+  if (!el) { el = document.createElement('div'); el.id = 'cpanel'; el.className = 'cpanel'; document.body.appendChild(el); setTimeout(syncHist, 0); }
+  const list = $('#cplist'), top = list ? list.scrollTop : 0;
+  el.innerHTML = inner; const nl = $('#cplist'); if (nl && !fresh) nl.scrollTop = top; return el;
+}
+function paintComments() {
+  const id = S.cmOpen; if (!id) { const e = $('#cpanel'); if (e && !S.vcOpen) e.remove(); return; }
+  const p = findPost(id); if (!p) { closeCpanel(); return; }
+  const keep = $('#ci' + id) ? $('#ci' + id).value : (S.cdraft[id] || ''), rp = S.replyC && S.replyC.p === p.id;
+  cpShell(`<div class="cp-back" data-a="cpclose"></div><div class="cp-sheet"><div class="cp-grab"></div><div class="cp-head"><b>Comments${p.cm.length ? ' · ' + p.cm.length : ''}</b><button class="ibtn" data-a="cpclose" aria-label="Close">${I.x}</button></div>
+    <div class="cp-list" id="cplist">${p.cmOn === false ? '<div class="empty" style="padding:40px 16px">Comments are turned off for this post.</div>' : (commentsHTML(p) || '<div class="empty" style="padding:40px 16px">No comments yet.<br>Be the first to comment.</div>')}</div>
+    ${p.cmOn === false ? '' : `${replyChip(p)}${cmPrev(p.id)}<div class="cp-bar">${avOf(S.user.id, 34)}<div class="cp-in"><input id="ci${p.id}" data-mention placeholder="${rp ? 'Reply to ' + esc(S.replyC.name) + '...' : 'Add a comment...'}" maxlength="1000" value="${esc(keep)}" autocomplete="off"><label class="cattach" aria-label="Attach a photo or video"><input type="file" data-cf="${p.id}" accept="image/*,video/*" hidden>📎</label><button class="cattach ${S.crec && S.crec.id == p.id ? 'rec' : ''}" data-a="crec" data-id="${p.id}" aria-label="Record a voice message">🎤</button></div><button class="send" data-a="addcmt" data-id="${p.id}" aria-label="Send comment">${I.send}</button></div>`}</div>`);
+}
+const _rp = repaint; repaint = function () { _rp.apply(this, arguments); if (S.cmOpen) paintComments(); };
+function paintVPanel() {
+  const id = S.vcOpen; if (!id) return;
+  cpShell(`<div class="cp-back" data-a="cpclose"></div><div class="cp-sheet"><div class="cp-grab"></div><div class="cp-head"><b>Comments</b><button class="ibtn" data-a="cpclose" aria-label="Close">${I.x}</button></div>
+    <div class="cp-list" id="vcl"><div class="ls" style="padding:20px">Loading...</div></div>
+    <div class="cp-bar">${avOf(S.user.id, 34)}<div class="cp-in"><input id="vci" maxlength="1000" placeholder="Add a comment..." autocomplete="off"></div><button class="send" data-a="vaddcmt" data-id="${id}" aria-label="Send comment">${I.send}</button></div></div>`);
+}
+/* video helpers */
+document.addEventListener('play', e => { if (e.target && e.target.matches && e.target.matches('.vid video')) S.lastVid = e.target; }, true);
+document.addEventListener('click', e => { if (S.unmuteHint && e.target.closest && e.target.closest('.vid video')) { S.unmuteHint = false; document.querySelectorAll('.vid video').forEach(v => { v.muted = false; }); } });
+document.addEventListener('ended', e => {
+  const v = e.target; if (!S.vauto || !v || !v.matches || !v.matches('.vid video')) return;
+  const sh = $('#sheet'); if (sh && sh.classList.contains('open') || $('#cpanel')) { v.currentTime = 0; v.play().catch(() => {}); return; }
+  const nx = v.closest('.vid') && v.closest('.vid').nextElementSibling; if (nx) nx.scrollIntoView({ behavior: 'smooth' }); else { v.currentTime = 0; v.play().catch(() => {}); }
+}, true);
+document.addEventListener('visibilitychange', () => {
+  if (!S.bgAudio) return;
+  if (document.hidden) {
+    const v = S.lastVid; if (!v || v.ended) return;
+    try { const a = S.bgA = new Audio(v.currentSrc || v.src); a.currentTime = v.currentTime; a.play().catch(() => {});
+      if (navigator.mediaSession) { navigator.mediaSession.metadata = new MediaMetadata({ title: 'KiHelp video', artist: nameOf(((S.videos || []).find(x => x.id === v.dataset.vid) || {}).uid || '') }); navigator.mediaSession.setActionHandler('pause', () => { try { a.pause(); } catch (e) {} }); navigator.mediaSession.setActionHandler('play', () => { try { a.play(); } catch (e) {} }); } } catch (e) {}
+  } else if (S.bgA) { try { if (S.lastVid) { S.lastVid.currentTime = S.bgA.currentTime; S.lastVid.play().catch(() => {}); } S.bgA.pause(); } catch (e) {} S.bgA = null; }
+});
+function showUndoV(id) {
+  const old = $('#undobar'); if (old) old.remove();
+  const b = document.createElement('div'); b.id = 'undobar'; b.className = 'undobar'; b.innerHTML = `Video hidden <button data-a="undovn" data-id="${id}">Undo</button>`; document.body.appendChild(b); setTimeout(() => { if (b.parentNode) b.remove(); }, 7000);
+}
+function openVideoSearch(q) {
+  $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button><input id="vq" type="search" placeholder="Search videos or creators" aria-label="Search videos" maxlength="60" style="flex:1" autocomplete="off" value="${esc(q || '')}"></header><div class="setbody" id="vqres"><div class="empty" style="padding:40px 24px">Type a word, a #hashtag or a creator's name.</div></div></div>`;
+  if (q) runVideoSearch(q); else setTimeout(() => $('#vq') && $('#vq').focus(), 50);
+}
+async function runVideoSearch(q) {
+  const box = $('#vqres'); if (!box) return; q = q.trim(); if (q.length < 2) { box.innerHTML = '<div class="empty" style="padding:40px 24px">Type at least 2 characters.</div>'; return; }
+  box.innerHTML = '<div class="empty" style="padding:40px 24px">Searching...</div>';
+  const like = '%' + q.replace(/[\\%_,()]/g, m => m === ',' || m === '(' || m === ')' ? ' ' : '\\' + m) + '%';
+  const [a, b] = await Promise.all([sb.from('videos').select('id,user_id,caption,views').ilike('caption', like).order('views', { ascending: false }).limit(30), sb.from('profiles').select('id').or('display_name.ilike.' + like + ',username.ilike.' + like).limit(10)]);
+  const ids = (b.data || []).map(x => x.id); let more = []; if (ids.length) { const r = await sb.from('videos').select('id,user_id,caption,views').in('user_id', ids).order('views', { ascending: false }).limit(30); more = r.data || []; }
+  const cur = $('#vq'); if (!cur || cur.value.trim() !== q) return;
+  const seen = new Set(), list = (a.data || []).concat(more).filter(v => !seen.has(v.id) && seen.add(v.id));
+  await loadProfiles(list.map(v => v.user_id));
+  box.innerHTML = list.length ? list.map(v => `<button class="ordrow" data-a="vplaysearch" data-id="${v.id}">${avOf(v.user_id, 44)}<span class="tx"><b>${esc(nameOf(v.user_id))}</b><span class="ls" style="display:block">${esc((v.caption || 'Video').slice(0, 90))}</span></span><span class="ls">${Number(v.views) || 0} views</span></button>`).join('') : '<div class="empty" style="padding:40px 24px">No videos found.</div>';
+}
+let vqT; document.addEventListener('input', e => { if (e.target.id === 'vq') { clearTimeout(vqT); const v = e.target.value; vqT = setTimeout(() => runVideoSearch(v), 350); } });
+/* collaboration */
+async function openCollabs() {
+  setPage('Collaborations', '<div class="empty" style="padding:40px">Loading...</div>');
+  const { data } = await sb.from('post_collaborators').select('post_id,status,created_at').eq('user_id', S.user.id).order('created_at', { ascending: false }).limit(50);
+  const L = data || []; const owners = {};
+  if (L.length) { const r = await sb.from('posts').select('id,user_id').in('id', L.map(x => x.post_id)); (r.data || []).forEach(x => { owners[x.id] = x.user_id; }); await loadProfiles(Object.values(owners)); }
+  const b = $('#spbody'); if (!b) return;
+  b.innerHTML = L.length ? L.map(x => `<div class="reqrow"><div class="tx" style="flex:1"><b>${esc(nameOf(owners[x.post_id]))}</b><span class="ls" style="display:block">${x.status === 'pending' ? 'invited you to collaborate' : 'Shared post'}</span></div><button class="btn alt sm2" data-a="openpost" data-id="${x.post_id}">View</button>${x.status === 'pending' ? `<button class="btn sm2" data-a="cbok" data-id="${x.post_id}">Accept</button>` : ''}<button class="btn alt sm2" data-a="cbno" data-id="${x.post_id}">${x.status === 'pending' ? 'Decline' : 'Leave'}</button></div>`).join('') : '<div class="empty" style="padding:50px 24px">No collaboration invites.<br>Post owners can invite you from their post menu.</div>';
+}
+let cbT; document.addEventListener('input', e => {
+  if (e.target.id !== 'cbq') return; clearTimeout(cbT); const q = e.target.value.trim().replace(/[%,()]/g, '');
+  cbT = setTimeout(async () => {
+    const box = $('#cbres'); if (!box) return; if (q.length < 2) { box.innerHTML = ''; return; }
+    const { data } = await sb.from('profiles').select('id,display_name,username').or('display_name.ilike.%' + q + '%,username.ilike.%' + q + '%').neq('id', S.user.id).limit(8);
+    (data || []).forEach(x => { S.pf[x.id] = Object.assign({}, S.pf[x.id], x); });
+    box.innerHTML = (data || []).map(x => `<button class="ordrow" style="padding-inline:0" data-a="cbpick" data-id="${x.id}">${avOf(x.id, 36)}<span class="tx"><b>${esc(x.display_name || 'Member')}</b><span class="ls" style="display:block">${x.username ? '@' + esc(x.username) : ''}</span></span></button>`).join('') || '<div class="ls">No one found.</div>';
+  }, 300);
+});
+/* live guests */
+function liveTile(uid, track) {
+  const box = $('#lvv'); if (!box || !track) return; let t = $('#lvt-' + uid);
+  if (!t) { t = document.createElement('div'); t.id = 'lvt-' + uid; t.className = 'lvtile'; box.appendChild(t); }
+  track.play(t); layoutLive();
+}
+function dropTile(uid) { const t = $('#lvt-' + uid); if (t) t.remove(); layoutLive(); }
+function layoutLive() { const box = $('#lvv'); if (box) box.className = 'lv-video n' + Math.min(Math.max(box.children.length, 1), 4); }
+function hostGuestEvents(L) {
+  L.client.on('user-published', async (user, mt) => { try { await L.client.subscribe(user, mt); } catch (e) { return; } if (mt === 'video') liveTile(user.uid, user.videoTrack); if (mt === 'audio' && user.audioTrack) user.audioTrack.play(); });
+  L.client.on('user-unpublished', (user, mt) => { if (mt === 'video') dropTile(user.uid); });
+  L.client.on('user-left', user => dropTile(user.uid));
+}
+function liveExtras() {
+  const L = S.live; if (!L) return; const top = document.querySelector('#live .lv-top');
+  if (top && L.role === 'host' && !$('#lvgb')) { const b = document.createElement('button'); b.id = 'lvgb'; b.className = 'lv-ic'; b.setAttribute('data-a', 'lvguests'); b.setAttribute('aria-label', 'Invite guests'); b.textContent = '👥'; const end = top.querySelector('.lv-end'); if (end) top.insertBefore(b, end); else top.appendChild(b); }
+  if (L.role === 'host' && L.client && !L.hostEv) { L.hostEv = true; hostGuestEvents(L); }
+  if (top && L.role === 'viewer' && L.guest && !$('#lvgl')) { const b = document.createElement('button'); b.id = 'lvgl'; b.className = 'lv-ic'; b.setAttribute('data-a', 'lvstage'); b.setAttribute('aria-label', 'Leave the stage'); b.textContent = '🎙️'; top.insertBefore(b, top.querySelector('.lv-ic')); }
+}
+const _pl2 = paintLive; paintLive = function () { const r = _pl2.apply(this, arguments); try { liveExtras(); } catch (e) {} return r; };
+function promptGuest() { sheet('<h2>Join the live as a guest?</h2><p>The host invited you on stage. Your camera and microphone will be visible to everyone watching.</p><button class="btn" data-a="lvgjoin">Join as guest</button><button class="btn alt" data-a="lvgno">Not now</button>'); }
+async function becomeGuest() {
+  const L = S.live; if (!L || L.role !== 'viewer' || L.guest) return;
+  const r = await sb.rpc('respond_live_guest', { p_stream: L.id, p_accept: true }); if (r.error) return toast('This invitation is no longer valid');
+  try {
+    const AR = await loadAgora(), tk = await liveToken(L.host, 'guest'); await L.client.renewToken(tk.token); await L.client.setClientRole('host');
+    const mic = await AR.createMicrophoneAudioTrack(), cam = await AR.createCameraVideoTrack({ encoderConfig: S.saver ? { width: 480, height: 360, frameRate: 15 } : { width: 640, height: 480, frameRate: 24 } });
+    L.gt = [mic, cam]; await L.client.publish(L.gt); L.guest = true; liveTile(agoraUid(S.user.id), cam); paintLive(); liveTile(agoraUid(S.user.id), cam); toast('You are on stage');
+  } catch (e) { toast('Could not start your camera or microphone'); await stopGuest(false); }
+}
+async function stopGuest(kicked) {
+  const L = S.live; if (!L) return;
+  try { if (L.gt) { try { await L.client.unpublish(L.gt); } catch (e) {} L.gt.forEach(t => { t.stop(); t.close(); }); } await L.client.setClientRole('audience'); } catch (e) {}
+  L.gt = null; L.guest = false; dropTile(agoraUid(S.user.id)); const b = $('#lvgl'); if (b) b.remove();
+  try { await sb.rpc('respond_live_guest', { p_stream: L.id, p_accept: false }); } catch (e) {}
+  if (kicked) toast('The host ended your guest spot');
+}
+
 /* ---------- settings + theme ---------- */
 function applyTheme() {
   const dark = S.mode === 'dark' || (S.mode === 'system' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
@@ -2666,7 +2816,7 @@ const SET_SECTIONS = [
   { title: 'How you use KiHelp', rows: [['saved', '🔖', 'Saved', 'Posts you saved'], ['notifs', '🔔', 'Notifications', 'Alerts for messages, calls and more'], ['lists', '💝', 'Wish lists', 'Saved products in named lists'], ['drafts', '📝', 'Drafts and scheduled posts', 'Finish or publish later'], ['qr', '▦', 'My QR code', 'Let people scan your profile'], ['invite', '📨', 'Invite friends', 'Share KiHelp']] },
   { title: 'Subscription', rows: [['sub', '⭐', 'Subscriptions', 'Verified badge and premium (coming soon)']] },
   { title: 'Creator tools', rows: [['dash', '📈', 'Dashboard', 'Your numbers at a glance'], ['pro', '💼', 'Professional dashboard', 'Reach, audience and earnings'], ['lives', '🔴', 'My lives', 'Watch, share or delete saved lives'], ['wallet', '🪙', 'Wallet and gifts', 'Coins and creator earnings']] },
-  { title: 'Who can see you', rows: [['privacy', '🔒', 'Privacy and search', 'Find me by email or phone'], ['defvis', '🌍', 'Default post audience', 'Who sees your new posts'], ['freq', '🔒', 'Follow requests', 'Approve who can follow you'], ['tags', '🏷️', 'Tag requests', 'Approve or remove photo tags'], ['blocked', '⛔', 'Blocked accounts', 'People you blocked']] },
+  { title: 'Who can see you', rows: [['privacy', '🔒', 'Privacy and search', 'Find me by email or phone'], ['defvis', '🌍', 'Default post audience', 'Who sees your new posts'], ['freq', '🔒', 'Follow requests', 'Approve who can follow you'], ['tags', '🏷️', 'Tag requests', 'Approve or remove photo tags'], ['collab', '🤝', 'Collaborations', 'Invites and shared posts'], ['blocked', '⛔', 'Blocked accounts', 'People you blocked']] },
   { title: 'How others can interact with you', rows: [['comments', '💬', 'Comments', 'Turn comments on or off for new posts'], ['react', '❤️', 'Reactions', 'Choose reactions allowed on new posts'], ['mentions', '@', 'Mentions', 'Who can mention you']] },
   { title: 'What you see', rows: [['lang', '🌐', 'App language', 'Language of menus and buttons'], ['tlang', '🈯', 'Translation', 'Language to translate posts into'], ['content', '👀', 'Content and data', 'Data saver and media'], ['currency', '💱', 'Display currency', 'Show prices in the currency you prefer']] },
   { title: 'Your app and media', rows: [['appearance', '🌗', 'Appearance', 'Light or dark, accent colour'], ['media', '🖼️', 'Media, storage and cache', 'Data saver, clear cache'], ['install', '📲', 'Install KiHelp', 'Add it to your home screen']] },
@@ -2760,7 +2910,7 @@ const ACT = {
   settings: () => openSettingsHub(),
   setprof: () => { setPageKey = null; S.ovStack.length = 0; $('#over').innerHTML = ''; S.tab = 'me'; render(); refresh(); },
   setgo: id => {
-    const m = { saved: () => openSaved(), wallet: () => openWallet(), funds: () => openWallet(), lives: () => openMyLives(), blocked: () => openBlocked(), dash: () => openDashboard(false), pro: () => openDashboard(true), privacypol: () => openLegal('privacy'), terms: () => openLegal('terms'), rules: () => openLegal('rules'), accounts: () => ACT.accounts(), logout: () => ACT.logout(), delete: () => ACT.delacct(), install: () => ACT.install(), invite: () => ACT.invite(), freq: () => openFollowReqs(), tags: () => openTagReqs(), lists: () => openLists(), drafts: () => openDrafts(), qr: () => ACT.qr('me'), deliver: () => { S.dtab = 'find'; openDelivery(); }, orders: () => { S.otab = 'buy'; openOrders(); }, rfq: () => { S.rtab = 'mine'; openRfqHub(); } };
+    const m = { saved: () => openSaved(), wallet: () => openWallet(), funds: () => openWallet(), lives: () => openMyLives(), blocked: () => openBlocked(), dash: () => openDashboard(false), pro: () => openDashboard(true), privacypol: () => openLegal('privacy'), terms: () => openLegal('terms'), rules: () => openLegal('rules'), accounts: () => ACT.accounts(), logout: () => ACT.logout(), delete: () => ACT.delacct(), install: () => ACT.install(), invite: () => ACT.invite(), freq: () => openFollowReqs(), tags: () => openTagReqs(), collab: () => openCollabs(), lists: () => openLists(), drafts: () => openDrafts(), qr: () => ACT.qr('me'), deliver: () => { S.dtab = 'find'; openDelivery(); }, orders: () => { S.otab = 'buy'; openOrders(); }, rfq: () => { S.rtab = 'mine'; openRfqHub(); } };
     if (m[id]) m[id](); else openSetPage(id);
   },
   defvis: id => { S.defVis = id; saveSettings(); openSettings(); },
@@ -2784,7 +2934,7 @@ const ACT = {
   load: id => { S.loaded.add(id); repaint(); },
   vclose: () => closeViewer(),
   vdl: () => { const v = S.viewer; if (v && v.dl) downloadMedia(v.items[v.idx]); },
-  vdl2: id => { const v = S.videos.find(x => x.id === id); if (v && v.dl) downloadMedia({ type: 'video', url: v.url }); },
+  vdl2_old: id => { const v = S.videos.find(x => x.id === id); if (v && v.dl) downloadMedia({ type: 'video', url: v.url }); },
   vopen: (id, el) => { const p = findPost(id); if (p) openViewer(p.media, +el.dataset.i || 0, p.dl); },
   umention: async u => {
     const { data } = await sb.from('profiles').select('id').eq('username', u).maybeSingle();
@@ -2823,6 +2973,80 @@ const ACT = {
     p.adl = v; p.dl = true; closeSheet(); toast(v ? 'People can now save this' : 'Saving turned off');
   },
   search: () => openSearch(),
+  xmore: (id, el) => { const k = el.dataset.k, p = el.previousElementSibling; if (S.xp.has(k)) { S.xp.delete(k); if (p) p.classList.add('clamp'); el.textContent = 'See more'; } else { S.xp.add(k); if (p) p.classList.remove('clamp'); el.textContent = 'See less'; } },
+  ptr: id => { const k = 'p' + id; const p = findPost(id); if (p) S.txsrc[k] = p.text; closeSheet(); if (!S.txsrc[k]) return toast('This post has no text to translate'); ACT.txt(id, { dataset: { k } }); },
+  pdellist: async id => {
+    if (!confirm('Delete this listing? You cannot undo this.')) return;
+    const { error } = await sb.from('products').delete().eq('id', +id).eq('seller_id', S.user.id); if (error) return toast('Could not delete the listing');
+    closeSheet(); try { await loadProducts(); } catch (e) {} render(true); toast('Listing deleted');
+  },
+  cmt: id => { S.cmOpen = +id; paintComments(); },
+  cpclose: () => closeCpanel(),
+  cexp: id => { const c = +id; if (S.cmExp.has(c)) S.cmExp.delete(c); else S.cmExp.add(c); if (S.cmOpen) paintComments(); else repaint(); },
+  vcmt: async id => { S.vcOpen = id; S.cmOpen = null; paintVPanel(); await paintVComments(id); },
+  vfeed: id => { S.vmode = id; S.ready.video = 0; render(true); loadVideos().then(() => render(true)).catch(() => toast('Could not load videos')); },
+  vsearch: () => openVideoSearch(''),
+  vplaysearch: id => { $('#over').innerHTML = ''; S.ovStack.length = 0; setPageKey = null; ACT.watch(id); },
+  msearch: () => { const i = $('#q'); if (i) { try { i.scrollIntoView({ block: 'center' }); } catch (e) {} i.focus(); } },
+  myshop: () => openStore(S.user.id),
+  vmore: id => {
+    const v = S.videos.find(x => x.id === id); if (!v) return; const own = v.uid === S.user.id;
+    sheet(`<h2>Video options</h2>
+      <button class="optrow" data-a="vq" data-id="${v.id}">🎞️ Video quality</button>
+      <button class="optrow" data-a="vdl2" data-id="${v.id}">⬇️ Download</button>
+      <button class="optrow" data-a="vcc" data-id="${v.id}">💬 Captions</button>
+      <button class="optrow" data-a="vspeedmenu">⏩ Speed <span class="ls">${S.rate}x</span></button>
+      <button class="optrow" data-a="vauto">⏭️ Auto-scroll <span class="ls">${S.vauto ? 'On' : 'Off'}</span></button>
+      <button class="optrow" data-a="vpip" data-id="${v.id}">🖼️ Picture-in-picture</button>
+      <button class="optrow" data-a="vbg">🎧 Background audio <span class="ls">${S.bgAudio ? 'On' : 'Off'}</span></button>
+      ${own ? `<button class="optrow red" data-a="vdel" data-id="${v.id}">🗑️ Delete video</button>` : `<button class="optrow" data-a="vint" data-id="${v.id}" data-v="1">👍 Interested</button><button class="optrow" data-a="vint" data-id="${v.id}" data-v="0">🙈 Not interested</button><button class="optrow red" data-a="rep" data-t="video" data-id="${v.id}" data-o="${v.uid}">🚩 Report video</button><button class="optrow red" data-a="block" data-id="${v.uid}">Block ${esc(nameOf(v.uid))}</button>`}`);
+  },
+  vdl2: id => { const v = S.videos.find(x => x.id === id); if (!v) return; if (!v.dl && v.uid !== S.user.id) return toast('The creator turned off downloads for this video'); closeSheet(); downloadMedia({ type: 'video', url: v.url }); },
+  vq: id => {
+    const el = document.querySelector('video[data-vid="' + id + '"]'), res = el && el.videoHeight ? el.videoWidth + 'x' + el.videoHeight : 'unknown';
+    sheet(`<h2>Video quality</h2><button class="optrow ${S.saver ? '' : 'sel'}" data-a="vqset" data-id="auto"><span>Auto (original quality)</span><span class="rdio"></span></button><button class="optrow ${S.saver ? 'sel' : ''}" data-a="vqset" data-id="saver"><span>Data saver (tap to load videos)</span><span class="rdio"></span></button><p class="ls" style="margin-top:10px">This video plays at ${esc(res)}. Other qualities need extra versions of each video, which uploads do not have yet. Data saver stops videos from loading until you tap them, so you use less data.</p>`);
+  },
+  vqset: id => { S.saver = id === 'saver'; saveSettings(); closeSheet(); render(true); toast(S.saver ? 'Data saver on' : 'Original quality'); },
+  vspeedmenu: () => sheet(`<h2>Playback speed</h2>${[0.5, 1, 1.25, 1.5, 2].map(r => `<button class="optrow ${S.rate === r ? 'sel' : ''}" data-a="vsetspeed" data-id="${r}"><span>${r}x${r === 1 ? ' (normal)' : ''}</span><span class="rdio"></span></button>`).join('')}`),
+  vsetspeed: id => { S.rate = +id; document.querySelectorAll('.vid video').forEach(v => { v.playbackRate = S.rate; }); closeSheet(); toast('Speed ' + S.rate + 'x'); },
+  vauto: () => { S.vauto = !S.vauto; document.querySelectorAll('.vid video').forEach(v => { v.loop = !S.vauto; }); closeSheet(); toast(S.vauto ? 'Auto-scroll on: the next video plays when one ends' : 'Auto-scroll off'); },
+  vpip: id => { const v = document.querySelector('video[data-vid="' + id + '"]'); closeSheet(); if (!v || !document.pictureInPictureEnabled || !v.requestPictureInPicture) return toast('Picture-in-picture is not supported on this browser'); v.requestPictureInPicture().catch(() => toast('Could not open picture-in-picture')); },
+  vbg: () => { S.bgAudio = !S.bgAudio; closeSheet(); toast(S.bgAudio ? 'Background audio on. Sound keeps playing when you leave the app, on supported browsers.' : 'Background audio off'); },
+  vint: async (id, el) => {
+    const v = el.dataset.v === '1'; closeSheet(); const { error } = await sb.from('video_prefs').upsert({ user_id: S.user.id, video_id: id, interested: v }); if (error) return toast('Could not save');
+    if (v) { S.vnot.delete(id); toast('We will show you more like this'); } else { S.vnot.add(id); render(true); showUndoV(id); }
+  },
+  undovn: async id => { const b = $('#undobar'); if (b) b.remove(); await sb.from('video_prefs').delete().eq('user_id', S.user.id).eq('video_id', id); S.vnot.delete(id); render(true); toast('Video is back'); },
+  vdel: async id => {
+    if (!confirm('Delete this video? You cannot undo this.')) return; closeSheet();
+    const { error } = await sb.from('videos').delete().eq('id', id).eq('user_id', S.user.id); if (error) return toast('Could not delete the video');
+    S.videos = S.videos.filter(x => x.id !== id); S.myVideos = S.myVideos.filter(x => x.id !== id); render(true); toast('Video deleted');
+  },
+  vsound: id => { const v = S.videos.find(x => x.id === id); if (!v) return; sheet(`<h2>Original sound</h2><div class="reqrow" style="padding-inline:0">${avOf(v.uid, 46)}<div class="tx"><b>${esc(nameOf(v.uid))}</b><div class="ls">Original sound</div></div></div><button class="btn" data-a="user" data-id="${v.uid}">View profile</button>`); },
+  pcollab: async id => {
+    const p = findPost(id); if (!p) return; S.cbPost = p.id; closeSheet();
+    const { data } = await sb.from('post_collaborators').select('user_id,status').eq('post_id', p.id); const L = data || []; await loadProfiles(L.map(x => x.user_id));
+    setTimeout(() => sheet(`<h2>Collaborators</h2><p class="ls" style="margin-bottom:8px">Invited people see the post on their Collaborations list. It shows "with" their name only after they accept. Either of you can end the collaboration at any time.</p>
+      ${L.length ? L.map(x => `<div class="reqrow" style="padding-inline:0">${avOf(x.user_id, 40)}<div class="tx" style="flex:1"><b>${esc(nameOf(x.user_id))}</b><span class="ls" style="display:block">${x.status === 'accepted' ? 'Collaborator' : 'Invited'}</span></div><button class="btn alt sm2" data-a="cbrm" data-id="${x.user_id}">Remove</button></div>`).join('') : ''}
+      <div class="fld" style="margin-top:8px"><input id="cbq" type="search" placeholder="Search by name or @username" maxlength="40" autocomplete="off"></div><div id="cbres"></div>`), 60);
+  },
+  cbpick: async id => { const { error } = await sb.rpc('invite_collaborator', { p_post: S.cbPost, p_user: id }); if (error) return toast((error.message || 'Could not invite').replace(/^.*?:\s*/, '')); closeSheet(); toast('Invitation sent'); },
+  cbrm: async id => { await sb.rpc('remove_collaborator', { p_post: S.cbPost, p_user: id }); closeSheet(); toast('Removed'); const p = findPost(S.cbPost); if (p) p.collabs = (p.collabs || []).filter(u => u !== id); repaint(); },
+  cbok: async id => { const { error } = await sb.rpc('respond_collab', { p_post: +id, p_accept: true }); if (error) return toast('Could not accept'); toast('You are now a collaborator'); openCollabs(); },
+  cbno: async id => { await sb.rpc('respond_collab', { p_post: +id, p_accept: false }); toast('Done'); openCollabs(); },
+  lvguests: async () => {
+    const L = S.live; if (!L || L.role !== 'host') return;
+    const ids = Object.keys((L.ch && L.ch.presenceState && L.ch.presenceState()) || {}).filter(k => k !== S.user.id).slice(0, 30); await loadProfiles(ids);
+    const { data } = await sb.from('live_guests').select('user_id,status').eq('stream_id', L.id).in('status', ['invited', 'accepted']); const gs = data || []; await loadProfiles(gs.map(x => x.user_id));
+    sheet(`<h2>Guests on stage</h2><p class="ls" style="margin-bottom:8px">Invite up to 3 viewers to join you on camera. Everyone watching sees all of you together.</p>
+      ${gs.map(x => `<div class="reqrow" style="padding-inline:0">${avOf(x.user_id, 40)}<div class="tx" style="flex:1"><b>${esc(nameOf(x.user_id))}</b><span class="ls" style="display:block">${x.status === 'accepted' ? 'On stage' : 'Invited'}</span></div><button class="btn alt sm2" data-a="lvrmguest" data-id="${x.user_id}">Remove</button></div>`).join('')}
+      <h3 class="sub" style="padding:10px 0 4px">Viewers</h3>${ids.length ? ids.filter(u => !gs.some(g => g.user_id === u)).map(u => `<div class="reqrow" style="padding-inline:0">${avOf(u, 40)}<div class="tx" style="flex:1"><b>${esc(nameOf(u))}</b></div><button class="btn sm2" data-a="lvinvite" data-id="${u}">Invite</button></div>`).join('') || '<div class="ls">Everyone is already invited.</div>' : '<div class="ls">No viewers yet.</div>'}`);
+  },
+  lvinvite: async id => { const L = S.live; if (!L) return; const { error } = await sb.rpc('invite_live_guest', { p_user: id }); if (error) return toast((error.message || 'Could not invite').replace(/^.*?:\s*/, '')); try { L.ch.send({ type: 'broadcast', event: 'guest-invite', payload: { uid: id } }); } catch (e) {} closeSheet(); toast('Invitation sent'); },
+  lvrmguest: async id => { const L = S.live; if (!L) return; await sb.rpc('remove_live_guest', { p_user: id }); try { L.ch.send({ type: 'broadcast', event: 'guest-kick', payload: { uid: id } }); } catch (e) {} dropTile(agoraUid(id)); closeSheet(); toast('Removed from the stage'); },
+  lvgjoin: () => { closeSheet(); becomeGuest(); },
+  lvgno: async () => { closeSheet(); const L = S.live; if (L) { try { await sb.rpc('respond_live_guest', { p_stream: L.id, p_accept: false }); } catch (e) {} } },
+  lvstage: () => { if (confirm('Leave the stage and go back to watching?')) stopGuest(false); },
   cmx: id => { delete S.cmedia[id]; repaint(); },
   crec: async id => {
     if (S.crec) { S.crec.stop(); return; }
@@ -2846,7 +3070,7 @@ const ACT = {
     const { data, error } = await sb.from('comments').insert({ post_id: +id, user_id: S.user.id, content, parent_id: parent, media_url: mu, media_type: mt }).select('id,created_at').single();
     if (error) return toast('Could not comment');
     const p = findPost(id); if (p) p.cm.push({ id: data.id, uid: S.user.id, w: nameOf(S.user.id), t: content, pid: parent, ed: false, at: data.created_at, mu, mt });
-    delete S.cmedia[id]; delete S.cdraft[id]; S.replyC = null; saveMentions(v, +id); hideMbar(); S.open.add(+id); repaint();
+    delete S.cmedia[id]; delete S.cdraft[id]; if (parent) S.cmExp.add(parent); S.replyC = null; saveMentions(v, +id); hideMbar(); S.open.add(+id); repaint();
   },
   useplace: () => {
     if (!navigator.geolocation) return toast('Location is not available on this device'); toast('Finding your area...');
@@ -2869,7 +3093,7 @@ const ACT = {
     if (!S.products.find(p => p.id === o.product_id)) { const { data } = await sb.from('products').select('*').eq('id', o.product_id).eq('status', 'active').maybeSingle(); if (!data) return toast('This item is no longer for sale'); await loadProfiles([data.seller_id]); S.products.push(mapProd(data)); }
     closeSheet(); setTimeout(() => { ACT.buynow(o.product_id); if (S.buy) { S.buy.qty = Math.max(S.buy.qty, o.qty); paintBuy(); } }, 60);
   },
-  watch: async id => {
+  pwatch: async id => {
     const pid = +id, on = S.watch.has(pid);
     if (on) { await sb.from('product_alerts').delete().eq('user_id', S.user.id).eq('product_id', pid); S.watch.delete(pid); toast('You will not be notified'); }
     else { const { error } = await sb.from('product_alerts').upsert([{ user_id: S.user.id, product_id: pid, kind: 'price' }, { user_id: S.user.id, product_id: pid, kind: 'stock' }]); if (error) return toast('Could not save'); S.watch.add(pid); toast('We will notify you about price drops and restocks. Turn on notifications in Settings if you have not.'); }
@@ -2920,7 +3144,7 @@ const ACT = {
     if (S.requested.has(id)) { await sb.rpc('cancel_follow_request', { p_target: id }); S.requested.delete(id); syncFollowUI(id); render(true); return toast('Request canceled'); }
     const { data, error } = await sb.rpc('request_follow', { p_target: id }); if (error) return toast((error.message || 'Could not follow').replace(/^.*?:\s*/, ''));
     if (data === 'requested') { S.requested.add(id); toast('Follow request sent'); } else { S.following.add(id); if (S.prof && S.prof.id === id) S.prof.followers += 1; }
-    syncFollowUI(id); render(true); if ($('#pposts') && S.prof) paintProfile();
+    syncFollowUI(id); if (S.tab !== 'video') render(true); if ($('#pposts') && S.prof) paintProfile();
   },
   pfollow: async id => {
     const P = S.prof; if (!P || P.id !== id) return; if (P.following) return ACT.pfollow_old(id);
@@ -3129,13 +3353,13 @@ const ACT = {
       ${rows.length ? `<div class="specs">${rows.map(([k, v]) => `<div><span>${esc(k)}</span><b>${esc(String(v))}</b></div>`).join('')}</div>` : ''}
       <p style="white-space:pre-wrap">${esc(l.desc)}</p>
       <button class="sel" data-a="store" data-id="${l.sid}" style="display:flex;gap:10px;align-items:center;text-align:start;width:100%">${avOf(l.sid, 36)}<div><b>${esc(l.who)}</b> <small>· Visit store</small><div class="ls" id="selrate">${esc(l.cat)}</div></div></button>
-      ${mine ? `<button class="btn" data-a="sold" data-id="${l.id}">Mark as sold</button>` : `${canBuy ? `<button class="btn" data-a="buynow" data-id="${l.id}">Buy now</button><button class="btn alt" data-a="cartadd" data-id="${l.id}">🛒 Add to cart</button>` : ''}
+      ${mine ? `<button class="btn" data-a="sold" data-id="${l.id}">Mark as sold</button><button class="btn alt red" data-a="pdellist" data-id="${l.id}">🗑️ Delete listing</button>` : `${canBuy ? `<button class="btn" data-a="buynow" data-id="${l.id}">Buy now</button><button class="btn alt" data-a="cartadd" data-id="${l.id}">🛒 Add to cart</button>` : ''}
         ${l.opt === 'negotiable' ? `<button class="btn alt" data-a="offer" data-id="${l.id}">Make an offer</button>` : ''}${l.opt === 'auction' ? `<button class="btn alt" data-a="bid" data-id="${l.id}">Place bid</button>` : ''}
         ${out ? '<div class="note">Out of stock. You can still message the seller.</div>' : ''}
         <div class="row2"><button class="btn alt" data-a="rfqfor" data-id="${l.id}">Request a quote</button><button class="btn alt" data-a="msgseller" data-id="${l.id}">Contact seller</button></div>
         <button class="btn alt" data-a="save" data-id="${l.id}">${S.saved.has(l.id) ? 'Saved' : 'Save'}</button>
         <div class="row2"><button class="btn alt" data-a="wladd" data-id="${l.id}">💝 Add to list</button><button class="btn alt" data-a="cmp" data-id="${l.id}">⚖️ Compare similar</button></div>
-        <button class="btn alt" data-a="watch" data-id="${l.id}">${S.watch.has(l.id) ? '🔕 Stop watching' : '🔔 Watch price and stock'}</button>`}`);
+        <button class="btn alt" data-a="pwatch" data-id="${l.id}">${S.watch.has(l.id) ? '🔕 Stop watching' : '🔔 Watch price and stock'}</button>`}`);
     if (!mine) sb.rpc('seller_stats', { p_seller: l.sid }).then(({ data }) => { const r = data && data[0], el = $('#selrate'); if (el && r && r.reviews > 0) el.textContent = '★ ' + r.avg_rating + ' · ' + r.reviews + ' review' + (r.reviews === 1 ? '' : 's') + ' · ' + l.cat; });
   },
   buynow: id => { const l = S.products.find(x => x.id == id); if (!l) return; if (l.stock != null && l.stock < (l.moq || 1)) return toast('Not enough stock'); S.buy = { id: l.id, qty: Math.max(1, l.moq || 1) }; paintBuy(); },
@@ -3378,7 +3602,7 @@ const ACT = {
     if (error) { busy('#rsend', false, 'Send report'); return toast(error.code === '23505' ? 'You already reported this' : 'Could not send the report'); }
     closeSheet(); S.report = null; toast('Thank you. We will review your report.');
   },
-  vmore: id => { const v = S.videos.find(x => x.id === id); if (!v) return; sheet(`<h2>Video</h2><button class="optrow red" data-a="rep" data-t="video" data-id="${v.id}" data-o="${v.uid}">Report video</button><button class="optrow red" data-a="block" data-id="${v.uid}">Block ${esc(nameOf(v.uid))}</button>`); },
+  vmore_old: id => { const v = S.videos.find(x => x.id === id); if (!v) return; sheet(`<h2>Video</h2><button class="optrow red" data-a="rep" data-t="video" data-id="${v.id}" data-o="${v.uid}">Report video</button><button class="optrow red" data-a="block" data-id="${v.uid}">Block ${esc(nameOf(v.uid))}</button>`); },
   install: async () => {
     if (isStandalone()) return toast('KiHelp is already installed');
     if (deferredInstall) { deferredInstall.prompt(); try { await deferredInstall.userChoice; } catch (e) {} deferredInstall = null; render(true); return; }
@@ -3649,10 +3873,13 @@ const ACT = {
     const p = findPost(id); if (!p) return;
     if (p.uid === S.user.id) {
       sheet(`<h2>Your post</h2>
+        <button class="optrow red" data-a="pdel" data-id="${p.id}">🗑️ Delete post</button>
+        <button class="optrow" data-a="ptr" data-id="${p.id}">🌐 Translate text</button>
         <button class="optrow" data-a="pedit" data-id="${p.id}">Edit post</button>
         <button class="optrow" data-a="pcm" data-id="${p.id}">${p.cmOn === false ? '💬 Turn on comments' : '🚫 Turn off comments'}</button>
         <button class="optrow" data-a="prx" data-id="${p.id}">☺ Choose allowed reactions</button>
         <button class="optrow" data-a="ptag" data-id="${p.id}">🏷️ Tag people in photos</button>
+        <button class="optrow" data-a="pcollab" data-id="${p.id}">🤝 Invite a collaborator</button>
         <button class="optrow" data-a="ppin" data-id="${p.id}">${p.pin ? 'Unpin from your profile' : 'Pin to your profile'}</button>
         ${p.media.length ? `<button class="optrow" data-a="pdl" data-id="${p.id}">${p.adl ? 'Saving is allowed. Tap to turn off' : 'Saving is off. Tap to allow'}</button>` : ''}
         <div class="lbl" style="padding:14px 4px 6px">Who can see this post</div>
@@ -3661,6 +3888,7 @@ const ACT = {
     } else {
       sheet(`<h2>Post options</h2>
         <button class="optrow" data-a="psave" data-id="${p.id}">${S.savedPosts.has(p.id) ? 'Remove from saved' : 'Save post'}</button>
+        <button class="optrow" data-a="ptr" data-id="${p.id}">🌐 Translate text</button>
         <button class="optrow" data-a="pint" data-id="${p.id}" data-v="1">👍 Interested</button>
         <button class="optrow" data-a="pint" data-id="${p.id}" data-v="0">🙈 Not interested</button>
         <button class="optrow" data-a="user" data-id="${p.uid}">View profile</button>
@@ -3710,7 +3938,7 @@ const ACT = {
     const { error } = await q;
     if (error) { v.liked = was; v.likes += was ? 1 : -1; paintLike(v); toast('Could not update like'); }
   },
-  vcmt: async id => {
+  vcmt_old: async id => {
     sheet(`<h2>Comments</h2><div id="vcl"><div class="ls">Loading...</div></div>
       <div class="cin" style="margin-top:12px"><input id="vci" maxlength="1000" placeholder="Write a comment"><button class="send" data-a="vaddcmt" data-id="${id}" aria-label="Send comment">${I.send}</button></div>`);
     await paintVComments(id);
@@ -3800,7 +4028,7 @@ const ACT = {
     if (error) { busy('#rpb', false, 'Repost to my profile'); return toast('Could not repost'); }
     closeSheet(); toast('Reposted to your profile'); try { await loadFeed(); } catch (e) {} render(true);
   },
-  txt: async (id, el) => { const k = el.dataset.k; if (S.txon.has(k)) { S.txon.delete(k); return txRepaint(); } if (!S.tlang) { S.txPending = k; return openTxLang(); } doTranslate(k); },
+  txt: async (id, el) => { const k = el.dataset.k; if (S.txon.has(k)) { S.txon.delete(k); return txRepaint(); } if (!S.tlang) { S.tlang = defTlang(); saveSettings(); } doTranslate(k); },
   txchg: () => openTxLang(),
   txlang: id => { setTlang(id); closeSheet(); if (S.txPending) { const k = S.txPending; S.txPending = null; doTranslate(k); } else txRepaint(); },
   qfollow_old: async id => {
@@ -3812,7 +4040,7 @@ const ACT = {
     else if (S.prof && S.prof.id === id) { S.prof.followers += was ? -1 : 1; paintProfile(); }
   },
   flist: (id, el) => openFollowList(id, el.dataset.k),
-  cmt: id => { id = +id; S.open.has(id) ? S.open.delete(id) : S.open.add(id); repaint(); },
+  cmt_old: id => { id = +id; S.open.has(id) ? S.open.delete(id) : S.open.add(id); repaint(); },
   addcmt_old: async id => {
     const el = $('#ci' + id), v = el.value.trim(); if (!v) return;
     const parent = S.replyC && S.replyC.p === +id ? S.replyC.id : null;
@@ -4194,6 +4422,7 @@ function layers() {
   if (on('story')) L.push('story');
   if (on('live')) L.push('live');
   if (S.gc) L.push('gcall');
+  if ($('#cpanel')) L.push('cpanel');
   if (on('viewer')) L.push('viewer');
   const ov = $('#over') && $('#over').innerHTML.trim() ? Math.max(1, S.ovStack.length) : 0;
   for (let i = 0; i < ov; i++) L.push('over');
@@ -4211,6 +4440,7 @@ function closeTop(name) {
   if (name === 'story') { closeStory(); return true; }
   if (name === 'live') { if (S.live && S.live.role === 'viewer') { leaveLive(); return true; } toast('Tap End to finish your live'); return false; }
   if (name === 'gcall') { toast('Tap Leave to leave the call'); return false; }
+  if (name === 'cpanel') { closeCpanel(); return true; }
   if (name === 'viewer') { closeViewer(); return true; }
   if (name === 'over') {
     clearInterval(S.gpoll); clearInterval(S.poll); S.openThread = null; stopRecCancel(); S.reply = null; S.editM = null;
@@ -4253,7 +4483,7 @@ window.addEventListener('popstate', () => {
   ['sheet', 'viewer', 'story', 'call', 'live'].forEach(id => { const e = document.getElementById(id); if (e) new MutationObserver(hq).observe(e, { attributes: true, attributeFilter: ['class'] }); });
   new MutationObserver(hq).observe(document.getElementById('over'), { childList: true });
   new MutationObserver(hq).observe(document.getElementById('app'), { childList: true });
-  ['openThread', 'openUser', 'openPost', 'openGroup', 'openGroups', 'openEvents', 'openSaved', 'openBlocked', 'openWallet', 'openSearch', 'openSettingsHub', 'openSetPage', 'openDashboard', 'openOrders', 'openRfqHub', 'openLists', 'openWishlist', 'openCart', 'openTagReqs', 'openPostSearch', 'openStore', 'openFollowReqs', 'openDelivery', 'openDrafts', 'openFollowList', 'openStoryComposer', 'openMyLives'].forEach(name => {
+  ['openThread', 'openUser', 'openPost', 'openGroup', 'openGroups', 'openEvents', 'openSaved', 'openBlocked', 'openWallet', 'openSearch', 'openSettingsHub', 'openSetPage', 'openDashboard', 'openOrders', 'openRfqHub', 'openLists', 'openWishlist', 'openCart', 'openTagReqs', 'openCollabs', 'openVideoSearch', 'openPostSearch', 'openStore', 'openFollowReqs', 'openDelivery', 'openDrafts', 'openFollowList', 'openStoryComposer', 'openMyLives'].forEach(name => {
     const f = window[name]; if (typeof f !== 'function') return;
     window[name] = function () {
       const args = [].slice.call(arguments), sig = name + JSON.stringify(args.filter(a => typeof a !== 'object'));
