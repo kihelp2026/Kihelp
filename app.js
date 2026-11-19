@@ -109,7 +109,7 @@ async function hydratePosts(posts) {
   if (ids.length) {
     const [l, c, m] = await Promise.all([
       sb.from('post_likes').select('post_id,user_id,reaction').in('post_id', ids),
-      sb.from('comments').select('id,post_id,user_id,content,created_at,parent_id,edited_at,media_url,media_type').in('post_id', ids).order('created_at', { ascending: true }),
+      sb.from('comments').select('id,post_id,user_id,content,created_at,parent_id,edited_at,media_url,media_type,pinned_at').in('post_id', ids).order('created_at', { ascending: true }),
       sb.from('post_media').select('post_id,url,type,position').in('post_id', ids).order('position', { ascending: true })
     ]);
     likes = l.data || []; cms = c.data || []; pm = m.data || [];
@@ -126,7 +126,7 @@ async function hydratePosts(posts) {
     allowed: p.allowed_reactions || null, cmOn: p.comments_enabled !== false, repostOf: p.repost_of || null, productId: p.product_id || null, promo: !!p.is_paid_promo, place: p.place || null,
     vis: p.visibility || 'public', pin: !!p.pinned_at,
     ...rxOf(likes.filter(l => l.post_id === p.id)),
-    cm: cms.filter(c => c.post_id === p.id).map(c => ({ id: c.id, uid: c.user_id, w: nameOf(c.user_id), t: c.content, pid: c.parent_id, ed: !!c.edited_at, at: c.created_at, mu: c.media_url, mt: c.media_type }))
+    cm: cms.filter(c => c.post_id === p.id).map(c => ({ id: c.id, uid: c.user_id, w: nameOf(c.user_id), t: c.content, pid: c.parent_id, ed: !!c.edited_at, at: c.created_at, mu: c.media_url, mt: c.media_type, pin: !!c.pinned_at }))
   }));
   const rids = [...new Set(posts.map(p => p.repost_of).filter(Boolean))];
   if (rids.length) {
@@ -143,6 +143,14 @@ async function hydratePosts(posts) {
     await loadProfiles((tg || []).map(t => t.tagged_id)); out.forEach(p => { p.tags = (tg || []).filter(t => t.post_id === p.id && t.status === 'approved'); });
   } catch (e) {}
   try { const { data: cb } = await sb.from('post_collaborators').select('post_id,user_id,status').in('post_id', ids); await loadProfiles((cb || []).map(c => c.user_id)); out.forEach(p => { p.collabs = (cb || []).filter(c => c.post_id === p.id && c.status === 'accepted').map(c => c.user_id); }); } catch (e) {}
+  try {
+    const cids = []; out.forEach(p => p.cm.forEach(c => cids.push(c.id)));
+    if (cids.length) {
+      const { data: cl } = await sb.from('comment_likes').select('comment_id,user_id').in('comment_id', cids); const by = {};
+      (cl || []).forEach(l => { (by[l.comment_id] = by[l.comment_id] || []).push(l.user_id); });
+      out.forEach(p => p.cm.forEach(c => { const a = by[c.id] || []; c.likes = a.length; c.liked = a.indexOf(S.user.id) >= 0; }));
+    }
+  } catch (e) {}
   const pids = [...new Set(out.map(p => p.productId).filter(Boolean))];
   if (pids.length) {
     try {
@@ -185,8 +193,8 @@ async function loadProducts() {
   S.saved = new Set((sv.data || []).map(x => x.product_id));
   S.ready.market = 1;
 }
-const MSGCOLS = 'id,sender_id,receiver_id,body,created_at,reply_to,forwarded,edited_at,deleted_at,media_path,media_type,media_name,media_size';
-const mapMsg = (m, me) => ({ id: m.id, me: m.sender_id === me, t: m.deleted_at ? '' : m.body, at: m.created_at, reply: m.reply_to, fwd: !!m.forwarded, ed: !!m.edited_at, del: !!m.deleted_at, media: m.media_path ? { path: m.media_path, type: m.media_type, name: m.media_name, size: m.media_size } : null });
+const MSGCOLS = 'id,sender_id,receiver_id,body,created_at,reply_to,forwarded,edited_at,deleted_at,media_path,media_type,media_name,media_size,read_at';
+const mapMsg = (m, me) => ({ id: m.id, me: m.sender_id === me, t: m.deleted_at ? '' : m.body, at: m.created_at, reply: m.reply_to, fwd: !!m.forwarded, ed: !!m.edited_at, del: !!m.deleted_at, read: !!m.read_at, media: m.media_path ? { path: m.media_path, type: m.media_type, name: m.media_name, size: m.media_size } : null });
 const msgPreview = x => x.del ? 'Message deleted' : x.media ? ({ image: '📷 Photo', audio: '🎤 Voice message', video: '🎥 Video', file: '📎 ' + (x.media.name || 'File') }[x.media.type] || '📎 File') : SHARE_RE.test(x.t || '') ? shareLabel(SHARE_RE.exec(x.t)[1]) : (x.t || '');
 const hm = at => { try { return new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } };
 const fsize = n => n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
@@ -421,12 +429,18 @@ function mediaBlock(p) {
   };
   return `<div class="pcar ${single ? 'single' : ''}"><div class="rail">${m.map(item).join('')}</div>${single ? '' : `<span class="pcount">1 / ${m.length}</span>`}</div>${single ? '' : `<div class="pdots">${m.map((_, i) => `<i class="${i === 0 ? 'on' : ''}"></i>`).join('')}</div>`}`;
 }
+function cText(c) {
+  const key = 'c' + c.id, shown = txShow(key, c.t), long = shown.length > 200 || (shown.match(/\n/g) || []).length >= 4, open = S.xp.has(key);
+  return `<div class="ctext${long && !open ? ' clamp' : ''}">${fmtText(shown)}</div>${long ? `<button class="seemore" data-a="xmore" data-k="${key}" style="padding-inline:0">${open ? 'See less' : 'See more'}</button>` : ''}${txLink(key, c.t)}`;
+}
 function commentsHTML(p) {
-  const top = p.cm.filter(c => !c.pid), kids = c => p.cm.filter(x => x.pid === c.id);
+  const sortNew = S.cmSort === 'new', t0 = c => new Date(c.at).getTime();
+  const top = p.cm.filter(c => !c.pid).sort((a, b) => (b.pin ? 1 : 0) - (a.pin ? 1 : 0) || (sortNew ? t0(b) - t0(a) : ((b.likes || 0) - (a.likes || 0) || t0(a) - t0(b))));
+  const kids = c => p.cm.filter(x => x.pid === c.id);
   const row = (c, sub) => (S.editC && S.editC.id === c.id)
     ? `<div class="cmt${sub ? ' sub' : ''}"><input id="ec${c.id}" value="${esc(c.t)}" maxlength="1000"><div class="crow"><button class="btn sm2" data-a="csave" data-id="${c.id}" data-p="${p.id}">Save</button><button class="btn alt sm2" data-a="ccancel">Cancel</button></div></div>`
-    : `<div class="cmt${sub ? ' sub' : ''}"><button class="cav" data-a="user" data-id="${c.uid}" aria-label="Profile">${avOf(c.uid, sub ? 26 : 34)}</button><div class="cbody"><b>${esc(c.w)}</b>${fmtText(txShow('c' + c.id, c.t))}${txLink('c' + c.id, c.t)}${c.ed ? ' <small class="ls">(edited)</small>' : ''}${cmMedia(c)}
-      <div class="cact"><span class="ls">${ago(c.at)}</span><button data-a="creply" data-id="${c.id}" data-p="${p.id}">Reply</button>${c.uid === S.user.id ? `<button data-a="cedit" data-id="${c.id}">Edit</button><button data-a="cdel" data-id="${c.id}" data-p="${p.id}">Delete</button>` : `<button data-a="rep" data-t="comment" data-id="${c.id}" data-o="${c.uid}">Report</button>`}</div></div></div>`;
+    : `<div class="cmt${sub ? ' sub' : ''}${c.pin ? ' pinned' : ''}"><button class="cav" data-a="user" data-id="${c.uid}" aria-label="Profile">${avOf(c.uid, sub ? 26 : 34)}</button><div class="cbody"><div class="chead"><b>${esc(c.w)}</b>${c.uid === p.uid ? '<span class="cbadge">Creator</span>' : ''}${c.pin ? '<span class="cpin">📌 Pinned</span>' : ''}<span class="ls">${ago(c.at)}</span></div>${cText(c)}${c.ed ? ' <small class="ls">(edited)</small>' : ''}${cmMedia(c)}
+      <div class="cact"><button class="${c.liked ? 'on' : ''}" data-a="clike" data-id="${c.id}" data-p="${p.id}" aria-label="Like comment">${c.liked ? '♥' : '♡'}${c.likes ? ' ' + c.likes : ''}</button><button data-a="creply" data-id="${c.id}" data-p="${p.id}">Reply</button><button data-a="cmore" data-id="${c.id}" data-p="${p.id}" aria-label="More options">···</button></div></div></div>`;
   return top.map(c => { const ks = kids(c), open = S.cmExp.has(c.id); return row(c, false) + (ks.length ? (open ? ks.map(k => row(k, true)).join('') + `<button class="vrep" data-a="cexp" data-id="${c.id}">Hide replies</button>` : `<button class="vrep" data-a="cexp" data-id="${c.id}">View ${ks.length} repl${ks.length === 1 ? 'y' : 'ies'}</button>`) : ''); }).join('');
 }
 const replyChip = p => S.replyC && S.replyC.p === p.id ? `<div class="rchip">Replying to <b>${esc(S.replyC.name)}</b><button data-a="creplyx" aria-label="Cancel reply">${I.x}</button></div>` : '';
@@ -490,11 +504,25 @@ function viewVideo() {
       </div></section>`;
   }).join('')}</div>`;
 }
-const chatFilter = () => { const q = (S.cq || '').trim().toLowerCase(); return S.threads.filter(t => !q || nameOf(t.id).toLowerCase().includes(q)); };
-const chatRows = list => list.length ? list.map(t => { const last = t.msgs[t.msgs.length - 1], n = nameOf(t.id); return `<button class="thread" data-a="thread" data-id="${t.id}"><span class="tav">${avOf(t.id, 52)}</span><span class="tx"><span class="trow"><b>${esc(n)}</b><small class="tt">${last && last.at ? esc(ago(last.at)) : ''}</small></span><span class="l">${last ? (last.me ? 'You: ' : '') + esc(msgPreview(last)) : ''}</span></span></button>`; }).join('') : '<div class="empty" style="padding:40px 24px">No chats match.</div>';
+const dmUnread = t => t.msgs.filter(m => !m.me && !m.read && m.id && !m.del).length;
+const chatFilter = () => {
+  const q = (S.cq || '').trim().toLowerCase();
+  const dms = S.threads.map(t => { const last = t.msgs[t.msgs.length - 1]; return { kind: 'dm', t, at: last && last.at ? new Date(last.at).getTime() : 0, name: nameOf(t.id) }; });
+  const grs = (S.gchats || []).map(g => ({ kind: 'g', g, at: g.last_at ? new Date(g.last_at).getTime() : 0, name: g.name || 'Group' }));
+  return dms.concat(grs).filter(x => !q || x.name.toLowerCase().includes(q)).sort((a, b) => b.at - a.at);
+};
+const chatRows = list => list.length ? list.map(x => {
+  if (x.kind === 'g') { const g = x.g, snd = g.last_sender ? (g.last_sender === S.user.id ? 'You' : nameOf(g.last_sender)) : ''; return `<button class="thread" data-a="gopen" data-id="${g.id}"><span class="tav"><span class="gav">${safeUrl(g.avatar_url) ? `<img src="${esc(g.avatar_url)}" alt="">` : '👥'}</span></span><span class="tx"><span class="trow"><b>${esc(g.name || 'Group')} <small class="gm">· ${g.members} member${Number(g.members) === 1 ? '' : 's'}</small></b><small class="tt">${g.last_at ? esc(ago(g.last_at)) : ''}</small></span><span class="l">${g.last_body ? esc(snd) + ': ' + esc(SHARE_RE.test(g.last_body) ? 'Shared something' : g.last_body.slice(0, 70)) : 'No messages yet'}</span></span></button>`; }
+  const t = x.t, last = t.msgs[t.msgs.length - 1], n = nameOf(t.id), un = dmUnread(t);
+  return `<button class="thread${un ? ' unread' : ''}" data-a="thread" data-id="${t.id}"><span class="tav">${avOf(t.id, 52)}</span><span class="tx"><span class="trow"><b>${esc(n)}</b><small class="tt">${last && last.at ? esc(ago(last.at)) : ''}</small></span><span class="l">${last ? (last.me ? 'You: ' : '') + esc(msgPreview(last)) : ''}${un ? `<i class="ub">${un}</i>` : ''}</span></span></button>`;
+}).join('') : '<div class="empty" style="padding:40px 24px">No chats match.</div>';
+async function loadGroupChats() {
+  try { const { data } = await sb.rpc('my_group_chats'); S.gchats = data || []; const l = $('#clist'); if (l) l.innerHTML = chatRows(chatFilter()); } catch (e) {}
+}
 function viewChat() {
   if (gate()) return gate();
-  if (!S.threads.length) return `<div class="empty" style="padding:60px 24px">No chats yet.<br>Open an item in <b>${tr('market')}</b> and tap <b>Message seller</b>, or open someone's profile to message them.</div>`;
+  if (!S.gcAt || Date.now() - S.gcAt > 15000) { S.gcAt = Date.now(); loadGroupChats(); }
+  if (!S.threads.length && !(S.gchats || []).length) return `<div class="empty" style="padding:60px 24px">No chats yet.<br>Open an item in <b>${tr('market')}</b> and tap <b>Message seller</b>, or open someone's profile to message them.</div>`;
   return `<div class="msearch"><input id="cq" type="search" placeholder="Search chats" value="${esc(S.cq || '')}" aria-label="Search chats"></div><div id="clist">${chatRows(chatFilter())}</div>`;
 }
 function listingCard(l) {
@@ -643,6 +671,7 @@ async function openThread(id, draft) {
   let t = S.threads.find(x => x.id === id);
   if (!t) { t = { id, msgs: [], last: Date.now() }; S.threads.unshift(t); }
   S.openThread = id; S.reply = null; S.editM = null;
+  t.unreadFrom = (t.msgs.find(m => !m.me && !m.read && m.id) || {}).id || null;
   const n = nameOf(id);
   $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button><button class="thead" data-a="user" data-id="${id}" aria-label="View profile">${avOf(id, 40)}<span class="tn"><b>${esc(n)}</b><small>Tap to view profile</small></span></button><span style="flex:1"></span><button class="ibtn" data-a="call" data-id="${id}" data-k="audio" aria-label="Voice call">${I.phone}</button><button class="ibtn" data-a="call" data-id="${id}" data-k="video" aria-label="Video call">${I.cam}</button></header>
     <div class="msgs" id="msgs"></div>
@@ -650,7 +679,7 @@ async function openThread(id, draft) {
     <div id="emop" class="emop" hidden></div>
     <div class="compose" id="compose">
       <button class="ibtn" data-a="attach" aria-label="Attach">${I.clip}</button>
-      <input id="mi" placeholder="Message" maxlength="1000" value="${esc(draft || '')}" autocomplete="off">
+      <textarea id="mi" rows="1" placeholder="Message" maxlength="1000" autocomplete="off">${esc(draft || '')}</textarea>
       <button class="ibtn" data-a="emo" data-t="#mi" data-p="#emop" aria-label="Emoji">😊</button>
       <button class="send" id="sendb" data-a="send" data-id="${id}" aria-label="Send">${I.send}</button>
       <button class="send" id="micb" data-a="mic" aria-label="Record voice message">${I.mic}</button>
@@ -659,9 +688,10 @@ async function openThread(id, draft) {
     <input type="file" id="cph" accept="image/*,video/*" hidden><input type="file" id="ccam" accept="image/*" capture="environment" hidden><input type="file" id="cfile" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,audio/*" hidden></div>`;
   ['cph', 'ccam', 'cfile'].forEach(k => { $('#' + k).onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) sendAttachment(f); }; });
   syncSendBtn(); paintMsgs(t); setTimeout(() => $('#mi') && $('#mi').focus(), 50);
-  clearInterval(S.poll); S.poll = setInterval(() => pollThread(id), 5000); pollThread(id);
+  clearInterval(S.poll); S.poll = setInterval(() => pollThread(id), 5000); pollThread(id); startTyping(id);
 }
 function syncSendBtn() {
+  const i0 = $('#mi'); if (i0 && !i0.value) i0.style.height = 'auto';
   const i = $('#mi'), has = !!(i && i.value.trim()) || !!S.editM, s = $('#sendb'), m = $('#micb');
   if (s) s.hidden = !has; if (m) m.hidden = has;
 }
@@ -677,7 +707,7 @@ function paintCbar() {
 function paintMsgs(t) {
   const m = $('#msgs'); if (!m) return;
   const stick = !m.dataset.init || m.scrollHeight - m.scrollTop - m.clientHeight < 140;
-  m.innerHTML = t.msgs.length ? t.msgs.map((x, i) => daySep(t.msgs[i - 1], x) + bubble(x, t)).join('') : `<div class="empty">Say hello.</div>`;
+  m.innerHTML = t.msgs.length ? t.msgs.map((x, i) => daySep(t.msgs[i - 1], x) + (t.unreadFrom && x.id === t.unreadFrom ? '<div class="unreaddiv"><span>Unread messages</span></div>' : '') + bubble(x, t)).join('') : `<div class="empty">Say hello.</div>`;
   if (stick) m.scrollTop = m.scrollHeight;
   m.dataset.init = '1'; fillMedia();
 }
@@ -690,13 +720,13 @@ async function fillMedia() {
   }
   document.querySelectorAll('[data-mp]').forEach(e => { const s = S.sig[e.dataset.mp]; if (s && e.getAttribute('src') !== s.url) e.setAttribute('src', s.url); });
 }
-async function pollThread(id) {
+async function pollThread0(id) {
   if (S.openThread !== id) return;
   const me = S.user.id, t = S.threads.find(x => x.id === id);
   const { data } = await sb.from('messages').select(MSGCOLS).or(`and(sender_id.eq.${me},receiver_id.eq.${id}),and(sender_id.eq.${id},receiver_id.eq.${me})`).order('created_at', { ascending: true }).limit(200);
   if (!data || S.openThread !== id || !t || t.sending || S.rec) return;
   const msgs = data.map(m => mapMsg(m, me));
-  const sig = a => a.map(m => m.id + (m.ed ? 'e' : '') + (m.del ? 'd' : '')).join(',');
+  const sig = a => a.map(m => m.id + (m.ed ? 'e' : '') + (m.del ? 'd' : '') + (m.read ? 'r' : '')).join(',');
   if (sig(msgs) !== sig(t.msgs.filter(m => m.id))) { t.msgs = msgs; paintMsgs(t); }
 }
 async function insertMsg(to, extra) {
@@ -957,7 +987,7 @@ function bubble(x, t) {
   if (x.media) inner += mediaBubble(x.media);
   if (sm) inner += `<button class="sharecardb" data-a="openshared" data-k="${sm[1].toLowerCase()}" data-id="${sm[2]}"><span><b>${shareLabel(sm[1])}</b><br><small>Tap to open</small></span></button>`;
   else if (x.t) inner += `<div class="bt clamp${S.xp.has('m' + x.id) ? ' open' : ''}" data-xk="m${x.id}">${fmtText(txShow('m' + x.id, x.t))}</div>${txLink('m' + x.id, x.t)}`;
-  const core = `<div class="${cls}"${x.id ? ` data-a="mmenu" data-id="${x.id}"` : ''}>${inner}<small class="meta">${x.ed ? 'edited · ' : ''}${hm(x.at)}</small></div>`;
+  const core = `<div class="${cls}"${x.id ? ` data-a="mmenu" data-id="${x.id}"` : ''}>${inner}<small class="meta">${x.ed ? 'edited · ' : ''}${hm(x.at)}${x.me ? tickHTML(x) : ''}</small>${mrxChips(t, x)}</div>`;
   if (x.me || !t) return core;
   return `<div class="mrow">${avOf(t.id, 30)}<div class="mcol"><div class="gn">${esc(nameOf(t.id))}</div>${core}</div></div>`;
 }
@@ -1531,7 +1561,7 @@ async function loadGroupMsgs() {
   if (error || !S.g || S.g.id !== G.id) return;
   await loadProfiles(data.map(m => m.sender_id));
   const msgs = data.map(m => ({ id: m.id, uid: m.sender_id, t: m.deleted_at ? '' : m.body, at: m.created_at, ed: !!m.edited_at, del: !!m.deleted_at }));
-  const sig = a => a.map(m => m.id + (m.ed ? 'e' : '') + (m.del ? 'd' : '')).join(',');
+  const sig = a => a.map(m => m.id + (m.ed ? 'e' : '') + (m.del ? 'd' : '') + (m.read ? 'r' : '')).join(',');
   if (sig(msgs) !== sig(G.msgs.filter(m => m.id))) { G.msgs = msgs; paintGroupMsgs(); }
 }
 function gbubble(m) {
@@ -2679,20 +2709,23 @@ function cpShell(inner) {
   const list = $('#cplist'), top = list ? list.scrollTop : 0;
   el.innerHTML = inner; const nl = $('#cplist'); if (nl && !fresh) nl.scrollTop = top; return el;
 }
+const QEMO = ['❤️', '🙌', '🔥', '👏', '😢', '😍', '😮', '😂'];
+const qemoRow = t => `<div class="qemo">${QEMO.map(e => `<button data-a="qemoji" data-t="${t}" data-e="${e}" aria-label="${e}">${e}</button>`).join('')}</div>`;
 function paintComments() {
   const id = S.cmOpen; if (!id) { const e = $('#cpanel'); if (e && !S.vcOpen) e.remove(); return; }
   const p = findPost(id); if (!p) { closeCpanel(); return; }
-  const keep = $('#ci' + id) ? $('#ci' + id).value : (S.cdraft[id] || ''), rp = S.replyC && S.replyC.p === p.id;
-  cpShell(`<div class="cp-back" data-a="cpclose"></div><div class="cp-sheet"><div class="cp-grab"></div><div class="cp-head"><b>Comments${p.cm.length ? ' · ' + p.cm.length : ''}</b><button class="ibtn" data-a="cpclose" aria-label="Close">${I.x}</button></div>
+  const keep = $('#ci' + id) ? $('#ci' + id).value : (S.cdraft[id] || ''), rp = S.replyC && S.replyC.p === p.id, full = $('#cpanel .cp-sheet.full') ? ' full' : '';
+  cpShell(`<div class="cp-back" data-a="cpclose"></div><div class="cp-sheet${full}"><div class="cp-grab"></div><div class="cp-head"><b>Comments${p.cm.length ? ' · ' + p.cm.length : ''}</b><span><button class="ibtn" data-a="cpexpand" aria-label="Expand">⤢</button><button class="ibtn" data-a="cpclose" aria-label="Close">${I.x}</button></span></div>
+    ${p.cmOn !== false && p.cm.length > 1 ? `<div class="cp-sort">Sort: <button class="${S.cmSort !== 'new' ? 'on' : ''}" data-a="csort" data-id="top">Top</button> | <button class="${S.cmSort === 'new' ? 'on' : ''}" data-a="csort" data-id="new">Newest</button></div>` : ''}
     <div class="cp-list" id="cplist">${p.cmOn === false ? '<div class="empty" style="padding:40px 16px">Comments are turned off for this post.</div>' : (commentsHTML(p) || '<div class="empty" style="padding:40px 16px">No comments yet.<br>Be the first to comment.</div>')}</div>
-    ${p.cmOn === false ? '' : `${replyChip(p)}${cmPrev(p.id)}<div class="cp-bar">${avOf(S.user.id, 34)}<div class="cp-in"><input id="ci${p.id}" data-mention placeholder="${rp ? 'Reply to ' + esc(S.replyC.name) + '...' : 'Add a comment...'}" maxlength="1000" value="${esc(keep)}" autocomplete="off"><label class="cattach" aria-label="Attach a photo or video"><input type="file" data-cf="${p.id}" accept="image/*,video/*" hidden>📎</label><button class="cattach ${S.crec && S.crec.id == p.id ? 'rec' : ''}" data-a="crec" data-id="${p.id}" aria-label="Record a voice message">🎤</button></div><button class="send" data-a="addcmt" data-id="${p.id}" aria-label="Send comment">${I.send}</button></div>`}</div>`);
+    ${p.cmOn === false ? '' : `${replyChip(p)}${cmPrev(p.id)}<div id="cpemo" class="emop" hidden></div>${qemoRow('#ci' + p.id)}<div class="cp-bar">${avOf(S.user.id, 34)}<div class="cp-in"><input id="ci${p.id}" data-mention placeholder="${rp ? 'Reply to ' + esc(S.replyC.name) + '...' : 'Add a comment...'}" maxlength="1000" value="${esc(keep)}" autocomplete="off"><button class="cattach" data-a="emo" data-t="#ci${p.id}" data-p="#cpemo" aria-label="Emoji">😊</button><button class="cattach" data-a="cmat" data-id="${p.id}" aria-label="Mention someone">@</button><label class="cattach" aria-label="Attach a photo or video"><input type="file" data-cf="${p.id}" accept="image/*,video/*" hidden>📎</label><button class="cattach ${S.crec && S.crec.id == p.id ? 'rec' : ''}" data-a="crec" data-id="${p.id}" aria-label="Record a voice message">🎤</button></div><button class="send" data-a="addcmt" data-id="${p.id}" aria-label="Send comment">${I.send}</button></div>`}</div>`);
 }
 const _rp = repaint; repaint = function () { _rp.apply(this, arguments); if (S.cmOpen) paintComments(); };
 function paintVPanel() {
   const id = S.vcOpen; if (!id) return;
   cpShell(`<div class="cp-back" data-a="cpclose"></div><div class="cp-sheet"><div class="cp-grab"></div><div class="cp-head"><b>Comments</b><button class="ibtn" data-a="cpclose" aria-label="Close">${I.x}</button></div>
     <div class="cp-list" id="vcl"><div class="ls" style="padding:20px">Loading...</div></div>
-    <div class="cp-bar">${avOf(S.user.id, 34)}<div class="cp-in"><input id="vci" maxlength="1000" placeholder="Add a comment..." autocomplete="off"></div><button class="send" data-a="vaddcmt" data-id="${id}" aria-label="Send comment">${I.send}</button></div></div>`);
+    ${qemoRow('#vci')}<div class="cp-bar">${avOf(S.user.id, 34)}<div class="cp-in"><input id="vci" maxlength="1000" placeholder="Add a comment..." autocomplete="off"></div><button class="send" data-a="vaddcmt" data-id="${id}" aria-label="Send comment">${I.send}</button></div></div>`);
 }
 /* video helpers */
 document.addEventListener('play', e => { if (e.target && e.target.matches && e.target.matches('.vid video')) S.lastVid = e.target; }, true);
@@ -2785,6 +2818,47 @@ async function stopGuest(kicked) {
   try { await sb.rpc('respond_live_guest', { p_stream: L.id, p_accept: false }); } catch (e) {}
   if (kicked) toast('The host ended your guest spot');
 }
+
+/* ---------- v0.25: comment and chat polish ---------- */
+S.cmSort = 'top'; S.gchats = [];
+const tickHTML = x => x.id ? (x.read ? '<span class="tick r"> ✓✓</span>' : '<span class="tick"> ✓</span>') : '<span class="tick"> …</span>';
+const mrxChips = (t, x) => {
+  const L = t && t.rx && x.id && t.rx[x.id]; if (!L || !L.length) return '';
+  const c = {}; L.forEach(r => { c[r.emoji] = (c[r.emoji] || 0) + 1; });
+  return `<span class="mrx">${Object.entries(c).map(([e, n]) => e + (n > 1 ? ' ' + n : '')).join(' ')}</span>`;
+};
+async function pollThread(id) {
+  await pollThread0(id);
+  const t = S.threads.find(x => x.id === id); if (!t || S.openThread !== id) return;
+  if (t.msgs.some(m => !m.me && !m.read && m.id && !m.del)) { try { await sb.rpc('mark_thread_read', { p_peer: id }); t.msgs.forEach(m => { if (!m.me) m.read = true; }); } catch (e) {} }
+  const ids = t.msgs.filter(m => m.id).map(m => m.id);
+  if (ids.length) {
+    try {
+      const { data } = await sb.from('message_reactions').select('message_id,user_id,emoji').in('message_id', ids), sig = JSON.stringify(data || []);
+      if (sig !== t.rxSig) { t.rxSig = sig; t.rx = {}; (data || []).forEach(r => { (t.rx[r.message_id] = t.rx[r.message_id] || []).push(r); }); paintMsgs(t); }
+    } catch (e) {}
+  }
+}
+function startTyping(id) {
+  try {
+    if (S.tch) { try { sb.removeChannel(S.tch); } catch (e) {} S.tch = null; }
+    clearInterval(S.tchT);
+    const key = 'typing-' + [S.user.id, id].sort().join('_');
+    S.tch = sb.channel(key, { config: { broadcast: { self: false } } }).on('broadcast', { event: 'typing' }, ({ payload }) => { if (payload && payload.from === id && S.openThread === id) showTyping(id); }).subscribe();
+    S.tchT = setInterval(() => { if (S.openThread !== id && S.tch) { try { sb.removeChannel(S.tch); } catch (e) {} S.tch = null; clearInterval(S.tchT); } }, 3000);
+  } catch (e) {}
+}
+function showTyping(id) {
+  const sub = document.querySelector('.thead small'), box = $('#msgs');
+  if (sub) sub.textContent = 'typing...';
+  if (box && !$('#typing')) { const d = document.createElement('div'); d.id = 'typing'; d.className = 'typing'; d.innerHTML = '<i></i><i></i><i></i>'; box.appendChild(d); box.scrollTop = box.scrollHeight; }
+  clearTimeout(S.tyT); S.tyT = setTimeout(() => { const s2 = document.querySelector('.thead small'); if (s2) s2.textContent = 'Tap to view profile'; const d = $('#typing'); if (d) d.remove(); }, 3500);
+}
+document.addEventListener('input', e => {
+  if (e.target.id !== 'mi') return;
+  e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
+  const now = Date.now(); if (S.tch && S.openThread && now - (S.tySent || 0) > 2500) { S.tySent = now; try { S.tch.send({ type: 'broadcast', event: 'typing', payload: { from: S.user.id } }); } catch (x) {} }
+});
 
 /* ---------- settings + theme ---------- */
 function applyTheme() {
@@ -2973,6 +3047,36 @@ const ACT = {
     p.adl = v; p.dl = true; closeSheet(); toast(v ? 'People can now save this' : 'Saving turned off');
   },
   search: () => openSearch(),
+  clike: async (id, el) => {
+    const p = findPost(el.dataset.p), c = p && p.cm.find(x => String(x.id) === String(id)); if (!c) return;
+    const was = !!c.liked; c.liked = !was; c.likes = Math.max(0, (c.likes || 0) + (was ? -1 : 1)); repaint();
+    const { error } = was ? await sb.from('comment_likes').delete().eq('comment_id', c.id).eq('user_id', S.user.id) : await sb.from('comment_likes').insert({ comment_id: c.id, user_id: S.user.id });
+    if (error) { c.liked = was; c.likes = Math.max(0, (c.likes || 0) + (was ? 1 : -1)); repaint(); toast('Could not update'); }
+  },
+  cmore: (id, el) => {
+    const p = findPost(el.dataset.p), c = p && p.cm.find(x => String(x.id) === String(id)); if (!c) return; const own = c.uid === S.user.id, owner = p.uid === S.user.id;
+    sheet(`<h2>Comment</h2><button class="optrow" data-a="ccopy" data-id="${c.id}" data-p="${p.id}">Copy text</button>
+      <button class="optrow" data-a="ctr" data-id="${c.id}" data-p="${p.id}">🌐 Translate</button>
+      ${owner ? `<button class="optrow" data-a="cpin" data-id="${c.id}" data-p="${p.id}">${c.pin ? '📌 Unpin comment' : '📌 Pin comment'}</button>` : ''}
+      ${own ? `<button class="optrow" data-a="cedit" data-id="${c.id}">Edit</button><button class="optrow red" data-a="cdel" data-id="${c.id}" data-p="${p.id}">Delete</button>` : `<button class="optrow red" data-a="rep" data-t="comment" data-id="${c.id}" data-o="${c.uid}">🚩 Report</button><button class="optrow red" data-a="block" data-id="${c.uid}">Block ${esc(c.w)}</button>`}`);
+  },
+  ccopy: (id, el) => { const p = findPost(el.dataset.p), c = p && p.cm.find(x => String(x.id) === String(id)); closeSheet(); if (c) { try { navigator.clipboard.writeText(c.t); } catch (e) {} toast('Copied'); } },
+  ctr: (id, el) => { const p = findPost(el.dataset.p), c = p && p.cm.find(x => String(x.id) === String(id)); closeSheet(); if (!c) return; S.txsrc['c' + c.id] = c.t; ACT.txt(id, { dataset: { k: 'c' + c.id } }); },
+  cpin: async (id, el) => {
+    const p = findPost(el.dataset.p), c = p && p.cm.find(x => String(x.id) === String(id)); if (!c) return; const pin = !c.pin;
+    const { error } = await sb.rpc('pin_comment', { p_comment: c.id, p_pin: pin }); if (error) return toast('Could not pin');
+    p.cm.forEach(x => { x.pin = false; }); c.pin = pin; closeSheet(); repaint(); toast(pin ? 'Comment pinned' : 'Comment unpinned');
+  },
+  csort: id => { S.cmSort = id; paintComments(); },
+  cpexpand: () => { const s = document.querySelector('#cpanel .cp-sheet'); if (s) s.classList.toggle('full'); },
+  cmat: id => { const i = $('#ci' + id); if (!i) return; i.value += (i.value && !/\s$/.test(i.value) ? ' ' : '') + '@'; i.focus(); i.dispatchEvent(new Event('input', { bubbles: true })); },
+  qemoji: (id, el) => { const i = $(el.dataset.t); if (!i) return; i.value += el.dataset.e; i.focus(); if (/^ci\d+$/.test(i.id)) S.cdraft[i.id.slice(2)] = i.value; },
+  mreact: async (id, el) => {
+    const e = el.dataset.e, t = curThread(), mid = +id; closeSheet(); if (!t) return; t.rx = t.rx || {}; const arr = t.rx[mid] = t.rx[mid] || [], mine = arr.find(r => r.user_id === S.user.id);
+    if (mine && mine.emoji === e) { await sb.from('message_reactions').delete().eq('message_id', mid).eq('user_id', S.user.id); t.rx[mid] = arr.filter(r => r !== mine); }
+    else { const { error } = await sb.from('message_reactions').upsert({ message_id: mid, user_id: S.user.id, emoji: e }); if (error) return toast('Could not react'); if (mine) mine.emoji = e; else arr.push({ message_id: mid, user_id: S.user.id, emoji: e }); }
+    t.rxSig = null; paintMsgs(t);
+  },
   xmore: (id, el) => { const k = el.dataset.k, p = el.previousElementSibling; if (S.xp.has(k)) { S.xp.delete(k); if (p) p.classList.add('clamp'); el.textContent = 'See more'; } else { S.xp.add(k); if (p) p.classList.remove('clamp'); el.textContent = 'See less'; } },
   ptr: id => { const k = 'p' + id; const p = findPost(id); if (p) S.txsrc[k] = p.text; closeSheet(); if (!S.txsrc[k]) return toast('This post has no text to translate'); ACT.txt(id, { dataset: { k } }); },
   pdellist: async id => {
@@ -4114,6 +4218,7 @@ const ACT = {
     const m = msgById(id); if (!m || m.del) return;
     const textual = m.t && !SHARE_RE.test(m.t);
     sheet(`<h2>Message</h2>
+      <div class="qemo big">${['❤️', '😂', '😮', '😢', '🙏', '👍'].map(e => `<button data-a="mreact" data-id="${m.id}" data-e="${e}">${e}</button>`).join('')}</div>
       <button class="optrow" data-a="mreply" data-id="${m.id}">Reply</button>
       ${textual ? `<button class="optrow" data-a="mcopy" data-id="${m.id}">Copy text</button>` : ''}
       <button class="optrow" data-a="mfwd" data-id="${m.id}">Forward</button>
@@ -4286,7 +4391,7 @@ document.addEventListener('input', e => { if (e.target.id === 'ps') { clearTimeo
 document.addEventListener('change', e => { if (e.target.id === 'lang') { S.lang = e.target.value; saveSettings(); applyTheme(); render(true); openSettings(); } });
 if (window.matchMedia) { const mq = matchMedia('(prefers-color-scheme: dark)'); if (mq.addEventListener) mq.addEventListener('change', () => { if (S.mode === 'system') applyTheme(); }); }
 document.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && e.target.id === 'mi') { const b = document.querySelector('[data-a="send"]'); if (b) b.click(); }
+  if (e.key === 'Enter' && e.target.id === 'mi' && !e.shiftKey) { e.preventDefault(); const b = document.querySelector('[data-a="send"]'); if (b) b.click(); }
   if (e.key === 'Enter' && e.target.id === 'gi') ACT.gsend();
   if (e.key === 'Enter' && e.target.id === 'lvi') ACT.lvsend();
   if (e.key === 'Enter' && e.target.matches && e.target.matches('.lm')) e.target.click();
