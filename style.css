@@ -804,3 +804,20 @@ body.dark .mark{color:#fff}
 .thread .gm{font-weight:500;color:var(--mute);font-size:12px}
 .gav{width:52px;height:52px;border-radius:50%;background:var(--soft);display:grid;place-items:center;font-size:24px;overflow:hidden}
 .gav img{width:100%;height:100%;object-fit:cover}
+
+/* v0.26 */
+#head:empty{display:none}
+.hfollow{margin-inline-start:0;padding:5px 14px;border-radius:8px;background:var(--acc);color:var(--acc-ink);font-weight:700;font-size:13px}
+.hfollow::before{content:none!important}
+.prow .ibtn{flex:none}
+.cmt{position:relative}
+.crx{flex:none;width:40px;display:flex;flex-direction:column;align-items:center;gap:1px;background:none;color:var(--mute);padding:2px 0}
+.crx .e{font-size:19px;line-height:1.2}
+.crx small{font-size:12px;font-weight:600}
+.crx.on{color:#e5484d}
+.cmt.sub .crx .e{font-size:16px}
+@keyframes slL{from{transform:translateX(26px);opacity:.4}to{transform:none;opacity:1}}
+@keyframes slR{from{transform:translateX(-26px);opacity:.4}to{transform:none;opacity:1}}
+#main.slL{animation:slL .22s ease-out}
+#main.slR{animation:slR .22s ease-out}
+.cact button{padding-inline:0}
