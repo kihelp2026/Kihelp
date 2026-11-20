@@ -13,6 +13,7 @@ const I = {
   bell: ic('<path d="M6 17v-6a6 6 0 0 1 12 0v6l2 2H4zM10 21h4"/>'),
   user: ic('<circle cx="12" cy="8" r="4"/><path d="M4 21c1-6 15-6 16 0"/>'),
   heart: ic('<path d="M12 20s-8-5-8-11a4.5 4.5 0 0 1 8-2.5A4.5 4.5 0 0 1 20 9c0 6-8 11-8 11z"/>'),
+  repost: ic('<path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 013-3h15"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 01-3 3H3"/>'),
   cmt: ic('<path d="M4 5h16v11H9l-5 4z"/>'),
   share: ic('<path d="M14 4l7 7-7 7v-4.2c-5.5 0-8.6 1.4-11 5.2.6-6.2 4-9.9 11-10.8z"/>'),
   plus: ic('<path d="M12 5v14M5 12h14"/>'),
@@ -146,9 +147,9 @@ async function hydratePosts(posts) {
   try {
     const cids = []; out.forEach(p => p.cm.forEach(c => cids.push(c.id)));
     if (cids.length) {
-      const { data: cl } = await sb.from('comment_likes').select('comment_id,user_id').in('comment_id', cids); const by = {};
-      (cl || []).forEach(l => { (by[l.comment_id] = by[l.comment_id] || []).push(l.user_id); });
-      out.forEach(p => p.cm.forEach(c => { const a = by[c.id] || []; c.likes = a.length; c.liked = a.indexOf(S.user.id) >= 0; }));
+      const { data: cl } = await sb.from('comment_likes').select('comment_id,user_id,emoji').in('comment_id', cids); const by = {};
+      (cl || []).forEach(l => { (by[l.comment_id] = by[l.comment_id] || []).push(l); });
+      out.forEach(p => p.cm.forEach(c => { const a = by[c.id] || [], rx = {}; a.forEach(l => { rx[l.emoji || '❤️'] = (rx[l.emoji || '❤️'] || 0) + 1; }); const me = a.find(l => l.user_id === S.user.id); c.rx = rx; c.my = me ? (me.emoji || '❤️') : null; c.likes = a.length; c.liked = !!me; }));
     }
   } catch (e) {}
   const pids = [...new Set(out.map(p => p.productId).filter(Boolean))];
@@ -407,8 +408,9 @@ function head() {
   const prof = home && S.user ? `<button class="hav" data-a="tab" data-id="me" aria-label="Profile">${avOf(S.user.id, 34)}</button>` : '';
   const gear = t === 'me' ? `<button class="ibtn" data-a="settings" aria-label="${tr('settings')}">${I.sliders}</button>` : '';
   const sa = t === 'video' ? 'vsearch' : t === 'market' ? 'msearch' : 'search', sl = t === 'video' ? 'Search videos' : t === 'market' ? 'Search items' : 'Search people';
-  const bell = (t === 'video' || t === 'chat') ? '' : `<button class="ibtn" data-a="alerts" aria-label="${tr('alerts')}">${I.bell}</button>`;
-  return `${left}<div class="hr"><button class="ibtn" data-a="${sa}" aria-label="${sl}">${I.search}</button>${bell}${gear}${prof}</div>`;
+  const bell = (t === 'video' || t === 'chat' || t === 'market') ? '' : `<button class="ibtn" data-a="alerts" aria-label="${tr('alerts')}">${I.bell}</button>`;
+  if (t === 'market') return '';
+  return `${left}<div class="hr">${t === 'market' ? '' : `<button class="ibtn" data-a="${sa}" aria-label="${sl}">${I.search}</button>`}${bell}${gear}${prof}</div>`;
 }
 const postLists = () => $('#onep') ? [S.onePost] : $('#pposts') ? [S.profPosts] : $('#spl') ? [S.savedList] : S.tab === 'me' ? [S.myPosts] : [S.posts];
 const findPost = id => postLists()[0].find(x => x.id == id) || [...S.posts, ...S.myPosts, ...S.profPosts, ...S.savedList].find(x => x.id == id);
@@ -429,9 +431,19 @@ function mediaBlock(p) {
   };
   return `<div class="pcar ${single ? 'single' : ''}"><div class="rail">${m.map(item).join('')}</div>${single ? '' : `<span class="pcount">1 / ${m.length}</span>`}</div>${single ? '' : `<div class="pdots">${m.map((_, i) => `<i class="${i === 0 ? 'on' : ''}"></i>`).join('')}</div>`}`;
 }
-function cText(c) {
-  const key = 'c' + c.id, shown = txShow(key, c.t), long = shown.length > 200 || (shown.match(/\n/g) || []).length >= 4, open = S.xp.has(key);
+function cText(c, kp) {
+  const key = (kp || 'c') + c.id, shown = txShow(key, c.t), long = shown.length > 200 || (shown.match(/\n/g) || []).length >= 4, open = S.xp.has(key);
   return `<div class="ctext${long && !open ? ' clamp' : ''}">${fmtText(shown)}</div>${long ? `<button class="seemore" data-a="xmore" data-k="${key}" style="padding-inline:0">${open ? 'See less' : 'See more'}</button>` : ''}${txLink(key, c.t)}`;
+}
+const crxTop = c => { const e = Object.entries(c.rx || {}).sort((a, b) => b[1] - a[1]).slice(0, 2).map(x => x[0]); return e.length ? e.join('') : '♡'; };
+function crxHTML(c, o) {
+  const act = o.kind === 'v' ? 'vclike' : 'clike';
+  return `<button class="crx ${c.my ? 'on' : ''}" data-a="${act}" data-id="${c.id}" data-p="${o.pid}" aria-label="React to this comment"><span class="e">${crxTop(c)}</span>${c.likes ? `<small>${c.likes}</small>` : ''}</button>`;
+}
+function cRowShared(c, o) {
+  const v = o.kind === 'v';
+  return `<div class="cmt${o.sub ? ' sub' : ''}${c.pin ? ' pinned' : ''}"><button class="cav" data-a="user" data-id="${c.uid}" aria-label="Profile">${avOf(c.uid, o.sub ? 26 : 34)}</button><div class="cbody"><div class="chead"><b>${esc(c.w)}</b>${c.uid === o.ownerId ? '<span class="cbadge">Creator</span>' : ''}${c.pin ? '<span class="cpin">📌 Pinned</span>' : ''}<span class="ls">${ago(c.at)}</span></div>${cText(c, v ? 'vc' : 'c')}${cmMedia(c)}
+    <div class="cact"><button data-a="${v ? 'vcreply' : 'creply'}" data-id="${c.id}" data-p="${o.pid}">Reply</button><button data-a="${v ? 'vcmore' : 'cmore'}" data-id="${c.id}" data-p="${o.pid}" aria-label="More options">···</button></div></div>${crxHTML(c, o)}</div>`;
 }
 function commentsHTML(p) {
   const sortNew = S.cmSort === 'new', t0 = c => new Date(c.at).getTime();
@@ -439,8 +451,7 @@ function commentsHTML(p) {
   const kids = c => p.cm.filter(x => x.pid === c.id);
   const row = (c, sub) => (S.editC && S.editC.id === c.id)
     ? `<div class="cmt${sub ? ' sub' : ''}"><input id="ec${c.id}" value="${esc(c.t)}" maxlength="1000"><div class="crow"><button class="btn sm2" data-a="csave" data-id="${c.id}" data-p="${p.id}">Save</button><button class="btn alt sm2" data-a="ccancel">Cancel</button></div></div>`
-    : `<div class="cmt${sub ? ' sub' : ''}${c.pin ? ' pinned' : ''}"><button class="cav" data-a="user" data-id="${c.uid}" aria-label="Profile">${avOf(c.uid, sub ? 26 : 34)}</button><div class="cbody"><div class="chead"><b>${esc(c.w)}</b>${c.uid === p.uid ? '<span class="cbadge">Creator</span>' : ''}${c.pin ? '<span class="cpin">📌 Pinned</span>' : ''}<span class="ls">${ago(c.at)}</span></div>${cText(c)}${c.ed ? ' <small class="ls">(edited)</small>' : ''}${cmMedia(c)}
-      <div class="cact"><button class="${c.liked ? 'on' : ''}" data-a="clike" data-id="${c.id}" data-p="${p.id}" aria-label="Like comment">${c.liked ? '♥' : '♡'}${c.likes ? ' ' + c.likes : ''}</button><button data-a="creply" data-id="${c.id}" data-p="${p.id}">Reply</button><button data-a="cmore" data-id="${c.id}" data-p="${p.id}" aria-label="More options">···</button></div></div></div>`;
+    : cRowShared(c, { sub, ownerId: p.uid, pid: p.id, kind: 'p' });
   return top.map(c => { const ks = kids(c), open = S.cmExp.has(c.id); return row(c, false) + (ks.length ? (open ? ks.map(k => row(k, true)).join('') + `<button class="vrep" data-a="cexp" data-id="${c.id}">Hide replies</button>` : `<button class="vrep" data-a="cexp" data-id="${c.id}">View ${ks.length} repl${ks.length === 1 ? 'y' : 'ies'}</button>`) : ''); }).join('');
 }
 const replyChip = p => S.replyC && S.replyC.p === p.id ? `<div class="rchip">Replying to <b>${esc(S.replyC.name)}</b><button data-a="creplyx" aria-label="Cancel reply">${I.x}</button></div>` : '';
@@ -457,7 +468,7 @@ function postCard(p) {
   const chips = rxs.map(([e, n]) => `<button class="rxchip ${p.react === e ? 'on' : ''}" data-a="rxtap" data-id="${p.id}" data-e="${e}">${e}<span>${n}</span></button>`).join('');
   const canReact = !p.allowed || p.allowed.length > 0, cmOn = p.cmOn !== false;
   return `<article class="post">
-    <div class="prow"><button class="ph-row" data-a="user" data-id="${p.uid}">${avOf(p.uid)}<div><b>${esc(nameOf(p.uid))}${collabNames(p)}</b><small>${p.t}${p.ed ? ' · edited' : ''} · ${visIcon(p.vis)}${p.repostOf ? ' · 🔁 reposted' : ''}${p.promo ? ' · Paid promotion' : ''}${p.place ? ' · 📍 ' + esc(p.place) : ''}</small></div></button>${fChip(p.uid)}${p.pin ? '<span class="pbadge">Pinned</span>' : ''}<span style="flex:1"></span>${p.uid === S.user.id ? `<button class="ibtn dl" data-a="pdel" data-id="${p.id}" aria-label="Delete post">${I.trash}</button>` : ''}<button class="ibtn" data-a="pmenu" data-id="${p.id}" aria-label="More options">${I.more}</button></div>
+    <div class="prow"><button class="ph-row" data-a="user" data-id="${p.uid}">${avOf(p.uid)}<div><b>${esc(nameOf(p.uid))}${collabNames(p)}</b><small>${p.t}${p.vis !== 'public' ? ' · ' + visIcon(p.vis) : ''}${p.repostOf ? ' · 🔁 reposted' : ''}${p.promo ? ' · Paid promotion' : ''}${p.place ? ' · 📍 ' + esc(p.place) : ''}</small></div></button>${p.pin ? '<span class="pbadge">Pinned</span>' : ''}<span style="flex:1"></span>${hFollow(p.uid)}<button class="ibtn" data-a="pmenu" data-id="${p.id}" aria-label="More options">${I.more}</button></div>
     ${ptextHTML(p)}
     ${repostCard(p)}
     ${mediaBlock(p)}
@@ -465,6 +476,7 @@ function postCard(p) {
     <div class="acts">
       <button class="${p.react === '❤️' ? 'on' : ''}" data-a="like" data-id="${p.id}" aria-label="Love">${I.heart}</button>
       ${cmOn ? `<button data-a="cmt" data-id="${p.id}" aria-label="Comments">${I.cmt}${p.cm.length}</button>` : ''}
+      ${p.uid !== S.user.id ? `<button data-a="repost" data-id="${p.id}" aria-label="Repost">${I.repost}</button>` : ''}
       <button data-a="share" data-id="${p.id}" aria-label="Share">${I.share}</button>
       <button class="sp ${S.savedPosts.has(p.id) ? 'on' : ''}" data-a="psave" data-id="${p.id}" aria-label="Save post">${I.save}</button>
     </div>
@@ -612,12 +624,16 @@ async function countView(id) {
 }
 const videoDuration = url => new Promise(res => { const v = document.createElement('video'); v.preload = 'metadata'; v.onloadedmetadata = () => res(v.duration); v.onerror = () => res(NaN); v.src = url; });
 function paintLike(v) { const b = document.querySelector(`[data-lk="${v.id}"]`); if (b) { b.classList.toggle('on', v.liked); b.querySelector('.n').textContent = v.likes; } }
+function vcRows() { const v = S.videos.find(x => x.id === S.vcOpen); return (S.vcm || []).length ? S.vcm.map(c => cRowShared(c, { sub: false, ownerId: v ? v.uid : null, pid: c.vid, kind: 'v' })).join('') : '<div class="empty" style="padding:40px 16px">No comments yet.<br>Be the first to comment.</div>'; }
+function paintVList() { const box = $('#vcl'); if (box) box.innerHTML = vcRows(); }
 async function paintVComments(id) {
-  const { data, error } = await sb.from('video_comments').select('user_id,content,created_at').eq('video_id', id).order('created_at', { ascending: true }).limit(100);
+  const { data, error } = await sb.from('video_comments').select('id,user_id,content,created_at').eq('video_id', id).order('created_at', { ascending: true }).limit(100);
   const box = $('#vcl'); if (!box) return;
   if (error) { box.textContent = 'Could not load comments.'; return; }
   await loadProfiles(data.map(c => c.user_id));
-  box.innerHTML = data.length ? data.map(c => `<div class="cmt"><b>${esc(nameOf(c.user_id))}</b>${fmtText(c.content)}</div>`).join('') : '<div class="ls">No comments yet. Be the first.</div>';
+  let lk = []; if (data.length) { try { const r = await sb.from('video_comment_likes').select('comment_id,user_id,emoji').in('comment_id', data.map(c => c.id)); lk = r.data || []; } catch (e) {} }
+  S.vcm = data.map(c => { const a = lk.filter(l => l.comment_id === c.id), rx = {}; a.forEach(l => { rx[l.emoji || '❤️'] = (rx[l.emoji || '❤️'] || 0) + 1; }); const me = a.find(l => l.user_id === S.user.id); return { id: c.id, uid: c.user_id, w: nameOf(c.user_id), t: c.content, at: c.created_at, rx, my: me ? (me.emoji || '❤️') : null, likes: a.length, vid: id }; });
+  S.vcOpen = id; box.innerHTML = vcRows();
   const v = S.videos.find(x => x.id === id); if (v) { v.cc = data.length; const el = document.querySelector(`[data-cc="${id}"]`); if (el) el.textContent = data.length; }
 }
 
@@ -1172,12 +1188,12 @@ async function rxWho(id, emoji) {
   sheet(`<h2>${emoji} ${ids.length}</h2>${ids.length ? ids.map(u => `<div class="reqrow" style="padding-inline:0">${avOf(u, 40)}<div class="tx"><b>${esc(nameOf(u))}</b></div></div>`).join('') : '<div class="ls">No one yet.</div>'}`);
 }
 document.addEventListener('pointerdown', e => {
-  const b = e.target.closest('[data-a="like"],[data-a="rxtap"]'); if (!b) return;
+  const b = e.target.closest('[data-a="like"],[data-a="rxtap"],[data-a="clike"],[data-a="vclike"]'); if (!b) return;
   S.lpFired = false; clearTimeout(S.lpT);
-  S.lpT = setTimeout(() => { S.lpFired = true; if (b.dataset.a === 'like') showReactBar(b); else rxWho(b.dataset.id, b.dataset.e); }, 450);
+  S.lpT = setTimeout(() => { S.lpFired = true; if (b.dataset.a === 'like') showReactBar(b); else if (b.dataset.a === 'clike' || b.dataset.a === 'vclike') showCReactBar(b); else rxWho(b.dataset.id, b.dataset.e); }, 450);
 });
 ['pointerup', 'pointercancel', 'scroll'].forEach(ev => document.addEventListener(ev, () => clearTimeout(S.lpT), true));
-document.addEventListener('contextmenu', e => { if (e.target.closest('[data-a="like"],[data-a="rxtap"]')) e.preventDefault(); });
+document.addEventListener('contextmenu', e => { if (e.target.closest('[data-a="like"],[data-a="rxtap"],[data-a="clike"],[data-a="vclike"]')) e.preventDefault(); });
 function paintRxEdit() {
   const E = S.rxEdit; if (!E) return;
   sheet(`<h2>Allowed reactions</h2><p class="ls" style="margin-bottom:8px">People can only react with the emojis you pick.</p><div class="rxpick">${RXLIST.map(e => `<button class="${E.sel.has(e) ? 'on' : ''}" data-a="rxsel" data-e="${e}">${e}</button>`).join('')}</div><div class="dots" style="margin:12px 0"><button class="chip" data-a="rxall">All</button><button class="chip" data-a="rxnone">None</button></div><button class="btn" data-a="rxsave">Save</button>`);
@@ -2080,14 +2096,14 @@ const txShow = (k, raw) => (S.txon.has(k) && S.txout[k]) ? S.txout[k] : raw;
 function txLink(k, raw) {
   if (!txOk(raw)) return '';
   S.txsrc[k] = raw;
-  return S.txon.has(k) ? `<button class="txl" data-a="txt" data-k="${k}">Translated to ${esc(tlangName(S.tlang))} · See original</button><button class="txl" data-a="txchg">Change language</button>` : `<button class="txl" data-a="txt" data-k="${k}">Translate</button>`;
+  return S.txon.has(k) ? `<button class="txl" data-a="txt" data-k="${k}">Translated to ${esc(tlangName(S.tlang))} · See original</button><button class="txl" data-a="txchg">Change language</button>` : `<button class="txl" data-a="txt" data-k="${k}">See translation</button>`;
 }
 async function translateText(text, target) {
   const { data: { session } } = await sb.auth.getSession();
   const r = await fetch(SUPA_URL + '/functions/v1/translate', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (session ? session.access_token : ''), apikey: SUPA_KEY }, body: JSON.stringify({ text: text.slice(0, 1500), target }) });
   const j = await r.json().catch(() => ({})); if (!r.ok || !j.translated) throw new Error(j.error || 'translate'); return j.translated;
 }
-function txRepaint() { repaint(); if ($('#msgs')) { const t = curThread(); if (t) paintMsgs(t); } if ($('#gmsgs')) paintGroupMsgs(); }
+function txRepaint() { repaint(); if (S.vcOpen && $('#vcl')) paintVList(); if ($('#msgs')) { const t = curThread(); if (t) paintMsgs(t); } if ($('#gmsgs')) paintGroupMsgs(); }
 async function doTranslate(k) {
   const raw = S.txsrc[k]; if (!raw) return;
   if (!S.txout[k]) { toast('Translating...'); try { S.txout[k] = await translateText(raw, S.tlang); } catch (e) { return toast('Could not translate right now. Try again soon.'); } }
@@ -2689,7 +2705,7 @@ const defTlang = () => { const l = ((navigator.language || 'en').slice(0, 2) || 
 function txBtn(k, raw) {
   if (!txOk(raw)) return '';
   S.txsrc[k] = raw;
-  return S.txon.has(k) ? `<button class="txbtn on" data-a="txt" data-k="${k}">🌐 Translated to ${esc(tlangName(S.tlang))} · See original</button><button class="txbtn" data-a="txchg">Change language</button>` : `<button class="txbtn" data-a="txt" data-k="${k}">🌐 Translate</button>`;
+  return S.txon.has(k) ? `<button class="txbtn on" data-a="txt" data-k="${k}">Translated to ${esc(tlangName(S.tlang))} · See original</button><button class="txbtn" data-a="txchg">Change language</button>` : `<button class="txbtn" data-a="txt" data-k="${k}">See translation</button>`;
 }
 function ptextHTML(p) {
   if (!p.text) return '';
@@ -2723,7 +2739,7 @@ function paintComments() {
 const _rp = repaint; repaint = function () { _rp.apply(this, arguments); if (S.cmOpen) paintComments(); };
 function paintVPanel() {
   const id = S.vcOpen; if (!id) return;
-  cpShell(`<div class="cp-back" data-a="cpclose"></div><div class="cp-sheet"><div class="cp-grab"></div><div class="cp-head"><b>Comments</b><button class="ibtn" data-a="cpclose" aria-label="Close">${I.x}</button></div>
+  cpShell(`<div class="cp-back" data-a="cpclose"></div><div class="cp-sheet"><div class="cp-grab"></div><div class="cp-head"><b>Comments</b><span><button class="ibtn" data-a="cpexpand" aria-label="Expand">⤢</button><button class="ibtn" data-a="cpclose" aria-label="Close">${I.x}</button></span></div>
     <div class="cp-list" id="vcl"><div class="ls" style="padding:20px">Loading...</div></div>
     ${qemoRow('#vci')}<div class="cp-bar">${avOf(S.user.id, 34)}<div class="cp-in"><input id="vci" maxlength="1000" placeholder="Add a comment..." autocomplete="off"></div><button class="send" data-a="vaddcmt" data-id="${id}" aria-label="Send comment">${I.send}</button></div></div>`);
 }
@@ -2859,6 +2875,66 @@ document.addEventListener('input', e => {
   e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
   const now = Date.now(); if (S.tch && S.openThread && now - (S.tySent || 0) > 2500) { S.tySent = now; try { S.tch.send({ type: 'broadcast', event: 'typing', payload: { from: S.user.id } }); } catch (x) {} }
 });
+
+/* ---------- v0.26: reactions on comments, follow in header, swipe navigation ---------- */
+const hFollow = id => (id !== S.user.id && !S.following.has(id)) ? `<button class="fchip hfollow" data-a="qfollow" data-id="${id}">${S.requested.has(id) ? 'Requested' : 'Follow'}</button>` : '';
+const CRX = ['❤️', '😂', '😮', '😢', '😡', '👍'];
+function showCReactBar(btn) {
+  const old = $('#rxbar'); if (old) old.remove();
+  const r = btn.getBoundingClientRect(), bar = document.createElement('div'); bar.id = 'rxbar'; bar.className = 'rxbar'; const k = btn.dataset.a === 'vclike' ? 'v' : 'p';
+  bar.innerHTML = CRX.map(e => `<button data-a="creact" data-id="${btn.dataset.id}" data-p="${btn.dataset.p}" data-k="${k}" data-e="${e}" aria-label="${e}">${e}</button>`).join('');
+  document.body.appendChild(bar);
+  const w = bar.offsetWidth; bar.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.left - w + r.width)) + 'px'; bar.style.top = Math.max(8, r.top - bar.offsetHeight - 8) + 'px';
+}
+async function setCReaction(c, emoji, kind) {
+  const tbl = kind === 'v' ? 'video_comment_likes' : 'comment_likes', snap = { rx: Object.assign({}, c.rx), my: c.my, likes: c.likes, liked: c.liked }, prev = c.my || null;
+  c.rx = c.rx || {};
+  if (prev) { c.rx[prev] = Math.max(0, (c.rx[prev] || 1) - 1); if (!c.rx[prev]) delete c.rx[prev]; }
+  if (emoji) c.rx[emoji] = (c.rx[emoji] || 0) + 1;
+  c.my = emoji; c.likes = Object.values(c.rx).reduce((a, b) => a + b, 0); c.liked = !!emoji;
+  if (kind === 'v') paintVList(); else repaint();
+  let error = null;
+  if (!emoji) ({ error } = await sb.from(tbl).delete().eq('comment_id', c.id).eq('user_id', S.user.id));
+  else ({ error } = await sb.from(tbl).upsert({ comment_id: c.id, user_id: S.user.id, emoji }));
+  if (error) { Object.assign(c, snap); if (kind === 'v') paintVList(); else repaint(); toast('Could not update'); }
+}
+const postComment = el => { const p = findPost(el.dataset.p); return p && p.cm.find(x => String(x.id) === String(el.dataset.id)); };
+const videoComment = id => (S.vcm || []).find(x => String(x.id) === String(id));
+/* swipe between screens: Home, Video, Create (+), Chat, Market */
+const SWIPE = ['home', 'video', 'create', 'chat', 'market'];
+const _closeSheet = closeSheet; closeSheet = function () { S.createOpen = false; return _closeSheet.apply(this, arguments); };
+function slideMain(dir) { const m = $('#main'); if (!m || !m.classList) return; m.classList.remove('slL', 'slR'); void m.offsetWidth; m.classList.add(dir > 0 ? 'slL' : 'slR'); setTimeout(() => m.classList.remove('slL', 'slR'), 260); }
+function doSwipe(dir) {
+  const cur = S.createOpen ? 'create' : S.tab, i = SWIPE.indexOf(cur); if (i < 0) return false;
+  if (cur === 'video') { const modes = ['all', 'following'], ni = modes.indexOf(S.vmode || 'all') + dir; if (ni >= 0 && ni < modes.length) { slideMain(dir); ACT.vfeed(modes[ni]); return true; } }
+  const ni = i + dir; if (ni < 0 || ni >= SWIPE.length) return false; const nx = SWIPE[ni];
+  if (S.createOpen) closeSheet();
+  if (nx === 'create') { slideMain(dir); ACT.create(); S.createOpen = true; return true; }
+  slideMain(dir); ACT.tab(nx); return true;
+}
+function swipeAllowed(el) {
+  if (!el || !el.closest || !S.user) return false;
+  const ov = $('#over'); if (ov && ov.innerHTML && ov.innerHTML.trim()) return false;
+  for (const id of ['viewer', 'story', 'live', 'call']) { const e = document.getElementById(id); if (e && e.classList && e.classList.contains('open')) return false; }
+  if ($('#cpanel') || S.gc || document.querySelector('.imged')) return false;
+  const sh = $('#sheet'); if (sh && sh.classList && sh.classList.contains('open') && !S.createOpen) return false;
+  const ae = document.activeElement; if (ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)) return false;
+  for (let n = el; n && n !== document.body; n = n.parentElement) {
+    if (n.matches && n.matches('input[type=range],video[controls],audio,.rail,.noswipe')) return false;
+    if (n.scrollWidth > n.clientWidth + 4) { const ox = getComputedStyle(n).overflowX; if (ox === 'auto' || ox === 'scroll') return false; }
+  }
+  return true;
+}
+let swS = null;
+document.addEventListener('touchstart', e => { if (e.touches.length !== 1) { swS = null; return; } const t = e.touches[0]; swS = { x: t.clientX, y: t.clientY, t: Date.now(), el: e.target }; }, { passive: true });
+document.addEventListener('touchend', e => {
+  const s = swS; swS = null; if (!s || !e.changedTouches || !e.changedTouches[0]) return;
+  const t = e.changedTouches[0], dx = t.clientX - s.x, dy = t.clientY - s.y;
+  if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.8 || Date.now() - s.t > 800) return;
+  if (s.x < 24 || s.x > innerWidth - 24) return;
+  if (!swipeAllowed(s.el)) return;
+  doSwipe(dx < 0 ? 1 : -1);
+}, { passive: true });
 
 /* ---------- settings + theme ---------- */
 function applyTheme() {
@@ -3033,7 +3109,7 @@ const ACT = {
   },
   shext: () => {
     const sh = S.share; if (!sh) return;
-    const url = location.origin + location.pathname + ({ video: '#v=', group: '#g=' }[sh.kind] || '#p=') + sh.id;
+    const url = publicBase() + ({ video: '#v=', group: '#g=' }[sh.kind] || '#p=') + sh.id;
     if (navigator.share) navigator.share({ title: 'KiHelp', text: 'Take a look on KiHelp', url }).catch(() => {});
     else { try { navigator.clipboard.writeText(url); } catch (e) {} toast('Link copied'); }
   },
@@ -3047,16 +3123,22 @@ const ACT = {
     p.adl = v; p.dl = true; closeSheet(); toast(v ? 'People can now save this' : 'Saving turned off');
   },
   search: () => openSearch(),
-  clike: async (id, el) => {
-    const p = findPost(el.dataset.p), c = p && p.cm.find(x => String(x.id) === String(id)); if (!c) return;
-    const was = !!c.liked; c.liked = !was; c.likes = Math.max(0, (c.likes || 0) + (was ? -1 : 1)); repaint();
-    const { error } = was ? await sb.from('comment_likes').delete().eq('comment_id', c.id).eq('user_id', S.user.id) : await sb.from('comment_likes').insert({ comment_id: c.id, user_id: S.user.id });
-    if (error) { c.liked = was; c.likes = Math.max(0, (c.likes || 0) + (was ? 1 : -1)); repaint(); toast('Could not update'); }
+  vclike: async id => { const c = videoComment(id); if (c) await setCReaction(c, c.my ? null : '❤️', 'v'); },
+  creact: async (id, el) => { const bar = $('#rxbar'); if (bar) bar.remove(); const e = el.dataset.e, v = el.dataset.k === 'v', c = v ? videoComment(id) : postComment(el); if (c) await setCReaction(c, c.my === e ? null : e, v ? 'v' : 'p'); },
+  vcreply: id => { const c = videoComment(id), i = $('#vci'); if (!c || !i) return; i.value = '@' + c.w + ' '; i.focus(); },
+  vcmore: (id, el) => {
+    const c = videoComment(id); if (!c) return; const own = c.uid === S.user.id;
+    sheet(`<h2>Comment</h2><button class="optrow" data-a="vccopy" data-id="${c.id}">Copy text</button><button class="optrow" data-a="vctr" data-id="${c.id}">See translation</button>
+      ${own ? `<button class="optrow red" data-a="vcdel" data-id="${c.id}">Delete</button>` : `<button class="optrow red" data-a="rep" data-t="comment" data-id="${c.id}" data-o="${c.uid}">🚩 Report</button><button class="optrow red" data-a="block" data-id="${c.uid}">Block ${esc(c.w)}</button>`}`);
   },
+  vccopy: id => { const c = videoComment(id); closeSheet(); if (c) { try { navigator.clipboard.writeText(c.t); } catch (e) {} toast('Copied'); } },
+  vctr: id => { const c = videoComment(id); closeSheet(); if (!c) return; S.txsrc['vc' + c.id] = c.t; ACT.txt(id, { dataset: { k: 'vc' + c.id } }); },
+  vcdel: async id => { const c = videoComment(id); if (!c || !confirm('Delete this comment?')) return; closeSheet(); const { error } = await sb.from('video_comments').delete().eq('id', c.id).eq('user_id', S.user.id); if (error) return toast('Could not delete'); S.vcm = S.vcm.filter(x => x.id !== c.id); paintVList(); const v = S.videos.find(x => x.id === c.vid); if (v) { v.cc = Math.max(0, (v.cc || 1) - 1); const el = document.querySelector('[data-cc="' + c.vid + '"]'); if (el) el.textContent = v.cc; } },
+  clike: async (id, el) => { const c = postComment(el); if (c) await setCReaction(c, c.my ? null : '❤️', 'p'); },
   cmore: (id, el) => {
     const p = findPost(el.dataset.p), c = p && p.cm.find(x => String(x.id) === String(id)); if (!c) return; const own = c.uid === S.user.id, owner = p.uid === S.user.id;
     sheet(`<h2>Comment</h2><button class="optrow" data-a="ccopy" data-id="${c.id}" data-p="${p.id}">Copy text</button>
-      <button class="optrow" data-a="ctr" data-id="${c.id}" data-p="${p.id}">🌐 Translate</button>
+      <button class="optrow" data-a="ctr" data-id="${c.id}" data-p="${p.id}">See translation</button>
       ${owner ? `<button class="optrow" data-a="cpin" data-id="${c.id}" data-p="${p.id}">${c.pin ? '📌 Unpin comment' : '📌 Pin comment'}</button>` : ''}
       ${own ? `<button class="optrow" data-a="cedit" data-id="${c.id}">Edit</button><button class="optrow red" data-a="cdel" data-id="${c.id}" data-p="${p.id}">Delete</button>` : `<button class="optrow red" data-a="rep" data-t="comment" data-id="${c.id}" data-o="${c.uid}">🚩 Report</button><button class="optrow red" data-a="block" data-id="${c.uid}">Block ${esc(c.w)}</button>`}`);
   },
@@ -3383,12 +3465,12 @@ const ACT = {
     closeSheet(); S.wlPending = null; toast(error ? (error.code === '23505' ? 'Already in that list' : 'Could not add') : 'Added to your list');
   },
   wlshare: async () => { const L = S.curList; if (!L) return; const { error } = await sb.from('wishlists').update({ is_shared: !L.is_shared }).eq('id', L.id); if (error) return toast('Could not update'); openWishlist(L.id); },
-  wlcopy: async () => { const L = S.curList; if (!L) return; const link = location.origin + location.pathname + '#w=' + L.id; try { await navigator.clipboard.writeText(link); toast('Link copied'); } catch (e) { prompt('Copy this link', link); } },
+  wlcopy: async () => { const L = S.curList; if (!L) return; const link = publicBase() + '#w=' + L.id; try { await navigator.clipboard.writeText(link); toast('Link copied'); } catch (e) { prompt('Copy this link', link); } },
   wldel: async () => { const L = S.curList; if (!L || !confirm('Delete this list?')) return; const { error } = await sb.from('wishlists').delete().eq('id', L.id); if (error) return toast('Could not delete'); toast('List deleted'); S.ovStack.pop(); openLists(); },
   cmp: id => openCompare(id),
   cmpsort: id => { S.cmpSort = id; openCompare(S.cmpId); },
   qr: async id => {
-    const uid = id === 'me' ? S.user.id : id, link = location.origin + location.pathname + '#u=' + uid;
+    const uid = id === 'me' ? S.user.id : id, link = publicBase() + '#u=' + uid;
     try { await loadQR(); const q = window.qrcode(0, 'M'); q.addData(link); q.make(); S.qrLink = link;
       sheet(`<h2>Profile QR code</h2><div class="qrbox"><img src="${q.createDataURL(6, 2)}" alt="QR code for the profile link"></div><p class="ls" style="text-align:center">Scanning opens the profile. Privacy settings still decide what people can see.</p><div class="row2"><button class="btn alt" data-a="qrcopy">Copy link</button><button class="btn" data-a="qrshare">Share</button></div>`);
     } catch (e) { toast('Could not make the QR code. Check your connection.'); }
@@ -3934,7 +4016,7 @@ const ACT = {
   blocked: () => openBlocked(),
   unblock2: async id => { const { error } = await sb.from('blocks').delete().eq('blocker_id', S.user.id).eq('blocked_id', id); if (error) return toast('Could not unblock'); toast('Unblocked'); openBlocked(); },
   invite: () => {
-    const url = location.origin + location.pathname, text = 'Join me on KiHelp: connect, share videos and trade in one app.';
+    const url = publicBase(), text = 'Join me on KiHelp: connect, share videos and trade in one app.';
     if (navigator.share) navigator.share({ title: 'KiHelp', text, url }).catch(() => {});
     else { try { navigator.clipboard.writeText(url); } catch (e) {} toast('Invite link copied'); }
   },
@@ -3978,7 +4060,7 @@ const ACT = {
     if (p.uid === S.user.id) {
       sheet(`<h2>Your post</h2>
         <button class="optrow red" data-a="pdel" data-id="${p.id}">🗑️ Delete post</button>
-        <button class="optrow" data-a="ptr" data-id="${p.id}">🌐 Translate text</button>
+        <button class="optrow" data-a="ptr" data-id="${p.id}">See translation</button>
         <button class="optrow" data-a="pedit" data-id="${p.id}">Edit post</button>
         <button class="optrow" data-a="pcm" data-id="${p.id}">${p.cmOn === false ? '💬 Turn on comments' : '🚫 Turn off comments'}</button>
         <button class="optrow" data-a="prx" data-id="${p.id}">☺ Choose allowed reactions</button>
@@ -3992,7 +4074,7 @@ const ACT = {
     } else {
       sheet(`<h2>Post options</h2>
         <button class="optrow" data-a="psave" data-id="${p.id}">${S.savedPosts.has(p.id) ? 'Remove from saved' : 'Save post'}</button>
-        <button class="optrow" data-a="ptr" data-id="${p.id}">🌐 Translate text</button>
+        <button class="optrow" data-a="ptr" data-id="${p.id}">See translation</button>
         <button class="optrow" data-a="pint" data-id="${p.id}" data-v="1">👍 Interested</button>
         <button class="optrow" data-a="pint" data-id="${p.id}" data-v="0">🙈 Not interested</button>
         <button class="optrow" data-a="user" data-id="${p.uid}">View profile</button>
@@ -4379,7 +4461,7 @@ document.addEventListener('click', e => {
   const rb = $('#rxbar'); if (rb && !e.target.closest('#rxbar')) rb.remove();
   const a = e.target.closest('[data-a]'); if (!a) return;
   if (a.classList.contains('bd') && e.target !== a) return;
-  if ((a.dataset.a === 'like' || a.dataset.a === 'rxtap') && S.lpFired) { S.lpFired = false; return; }
+  if ((a.dataset.a === 'like' || a.dataset.a === 'rxtap' || a.dataset.a === 'clike' || a.dataset.a === 'vclike') && S.lpFired) { S.lpFired = false; return; }
   if (a.dataset.a === 'mmenu' && e.target.closest('audio,video')) return;
   if ((a.dataset.a === 'sprev' || a.dataset.a === 'snext') && S.sv && S.sv.held) { S.sv.held = false; return; }
   const f = ACT[a.dataset.a]; if (f) f(a.dataset.id, a);
@@ -4711,6 +4793,11 @@ async function wipeReplayFiles(s) {
   for (let k = 0; k < paths.length; k += 50) { try { await sb.storage.from('media').remove(paths.slice(k, k + 50)); } catch (e) {} }
 }
 
+/* Link base for sharing: inside an Android or iOS app the address is local, so use the public website address from index.html */
+function publicBase() {
+  const m = document.querySelector('meta[name="kihelp-public-url"]'), u = m && m.content ? m.content.trim() : '';
+  return u ? u.replace(/\/?$/, '/') : location.origin + location.pathname;
+}
 async function boot() {
   const hm = location.hash.match(/^#v=([0-9a-f-]{36})$/i); if (hm) S.focusVideo = hm[1];
   const hp = location.hash.match(/^#p=([0-9]{1,15})$/); if (hp) S.focusPost = hp[1];
