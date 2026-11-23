@@ -50,7 +50,9 @@ function fxConv(n, cur) {
 }
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const hue = s => { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
-const ago = iso => { const m = Math.floor((Date.now() - new Date(iso)) / 60000); if (m < 1) return 'now'; if (m < 60) return m + 'm'; const h = Math.floor(m / 60); if (h < 24) return h + 'h'; return Math.floor(h / 24) + 'd'; };
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sept', 'Oct', 'Nov', 'Dec'];
+const fmtDate = d => { d = new Date(d); if (isNaN(d)) return ''; const old = Math.abs(Date.now() - d.getTime()) > 365 * 864e5; return MON[d.getMonth()] + ' ' + String(d.getDate()).padStart(2, '0') + (old ? ', ' + d.getFullYear() : ''); };
+const ago = iso => { const m = Math.floor((Date.now() - new Date(iso)) / 60000); if (m < 1) return 'now'; if (m < 60) return m + 'm'; const h = Math.floor(m / 60); if (h < 24) return h + 'h'; return fmtDate(iso); };
 
 const safeUrl = u => (typeof u === 'string' && u.startsWith(SUPA_URL + '/storage/')) ? u : null;
 
@@ -103,7 +105,7 @@ function rxOf(list) {
   list.forEach(l => { const e = RXLEG[l.reaction] || l.reaction || '❤️'; rxs[e] = (rxs[e] || 0) + 1; if (l.user_id === S.user.id) mine = e; });
   return { rxs, react: mine, liked: !!mine, likes: list.length };
 }
-const POSTCOLS = 'id,user_id,content,created_at,media_url,media_type,visibility,pinned_at,allow_download,edited_at,allowed_reactions,comments_enabled,repost_of,product_id,is_paid_promo,place';
+const POSTCOLS = 'id,user_id,content,created_at,media_url,media_type,visibility,pinned_at,allow_download,edited_at,allowed_reactions,comments_enabled,repost_of,product_id,is_paid_promo,place,repost_video_id';
 async function hydratePosts(posts) {
   const ids = posts.map(p => p.id);
   let likes = [], cms = [], pm = [];
@@ -117,14 +119,14 @@ async function hydratePosts(posts) {
   }
   await loadProfiles([...posts.map(p => p.user_id), ...cms.map(c => c.user_id)]);
   const mediaOf = (p, rows) => {
-    let media = (rows || []).filter(x => x.post_id === p.id && safeUrl(x.url)).map(x => ({ type: x.type === 'video' ? 'video' : 'image', url: x.url }));
-    if (!media.length && safeUrl(p.media_url)) media = [{ type: p.media_type === 'video' ? 'video' : 'image', url: p.media_url }];
+    let media = (rows || []).filter(x => x.post_id === p.id && safeUrl(x.url)).map(x => ({ type: x.type === 'video' ? 'video' : x.type === 'audio' ? 'audio' : 'image', url: x.url }));
+    if (!media.length && safeUrl(p.media_url)) media = [{ type: p.media_type === 'video' ? 'video' : p.media_type === 'audio' ? 'audio' : 'image', url: p.media_url }];
     return media;
   };
   const out = posts.map(p => ({
-    id: p.id, uid: p.user_id, t: ago(p.created_at), text: p.content, media: mediaOf(p, pm),
+    id: p.id, uid: p.user_id, ts: p.created_at, t: ago(p.created_at), text: p.content, media: mediaOf(p, pm),
     adl: !!p.allow_download, dl: !!p.allow_download || p.user_id === S.user.id, ed: !!p.edited_at,
-    allowed: p.allowed_reactions || null, cmOn: p.comments_enabled !== false, repostOf: p.repost_of || null, productId: p.product_id || null, promo: !!p.is_paid_promo, place: p.place || null,
+    allowed: p.allowed_reactions || null, cmOn: p.comments_enabled !== false, repostOf: p.repost_of || null, repostVid: p.repost_video_id || null, productId: p.product_id || null, promo: !!p.is_paid_promo, place: p.place || null,
     vis: p.visibility || 'public', pin: !!p.pinned_at,
     ...rxOf(likes.filter(l => l.post_id === p.id)),
     cm: cms.filter(c => c.post_id === p.id).map(c => ({ id: c.id, uid: c.user_id, w: nameOf(c.user_id), t: c.content, pid: c.parent_id, ed: !!c.edited_at, at: c.created_at, mu: c.media_url, mt: c.media_type, pin: !!c.pinned_at }))
@@ -135,7 +137,7 @@ async function hydratePosts(posts) {
       const { data: od } = await sb.from('posts').select(POSTCOLS).in('id', rids);
       const { data: om2 } = await sb.from('post_media').select('post_id,url,type,position').in('post_id', rids).order('position', { ascending: true });
       await loadProfiles((od || []).map(o => o.user_id));
-      const map = {}; (od || []).forEach(o => { map[o.id] = { id: o.id, uid: o.user_id, text: o.content, media: mediaOf(o, om2) }; });
+      const map = {}; (od || []).forEach(o => { map[o.id] = { id: o.id, uid: o.user_id, text: o.content, at: o.created_at, media: mediaOf(o, om2) }; });
       out.forEach(p => { if (p.repostOf) p.orig = map[p.repostOf] || null; });
     } catch (e) {}
   }
@@ -152,6 +154,14 @@ async function hydratePosts(posts) {
       out.forEach(p => p.cm.forEach(c => { const a = by[c.id] || [], rx = {}; a.forEach(l => { rx[l.emoji || '❤️'] = (rx[l.emoji || '❤️'] || 0) + 1; }); const me = a.find(l => l.user_id === S.user.id); c.rx = rx; c.my = me ? (me.emoji || '❤️') : null; c.likes = a.length; c.liked = !!me; }));
     }
   } catch (e) {}
+  const vids = [...new Set(posts.map(p => p.repost_video_id).filter(Boolean))];
+  if (vids.length) {
+    try {
+      const { data: vd } = await sb.from('videos').select('id,user_id,video_url,caption,created_at').in('id', vids); await loadProfiles((vd || []).map(x => x.user_id)); const vm = {};
+      (vd || []).forEach(x => { vm[x.id] = { id: x.id, uid: x.user_id, url: x.video_url, cap: x.caption, at: x.created_at }; });
+      out.forEach(p => { if (p.repostVid) p.origV = vm[p.repostVid] || null; });
+    } catch (e) {}
+  }
   const pids = [...new Set(out.map(p => p.productId).filter(Boolean))];
   if (pids.length) {
     try {
@@ -187,7 +197,7 @@ async function loadProducts() {
     id: p.id, title: p.title, price: p.price, cur: p.currency, opt: p.price_type, cat: p.category,
     sid: p.seller_id, who: nameOf(p.seller_id), desc: p.description || '', h: hue(p.id + p.title),
     media: safeUrl(p.image_url) ? { type: 'image', url: p.image_url } : null,
-    cond: p.condition, brand: p.brand, model: p.model, origin: p.origin_country, modes: p.sale_modes || ['retail'],
+    at: p.created_at, cond: p.condition, brand: p.brand, model: p.model, origin: p.origin_country, modes: p.sale_modes || ['retail'],
     pmin: p.min_price, pmax: p.max_price, moq: p.moq || 1, stock: p.stock, tiers: Array.isArray(p.price_tiers) ? p.price_tiers : [],
     sample: p.sample_price, prep: p.prep_days, attrs: p.item_attributes || {}
   }));
@@ -269,7 +279,7 @@ async function loadMe() {
   S.myVideos = (vs.data || []).filter(v => safeUrl(v.video_url));
   const pin = await sb.from('posts').select(POSTCOLS).eq('user_id', me).not('pinned_at', 'is', null).order('pinned_at', { ascending: false });
   const rec = await sb.from('posts').select(POSTCOLS).eq('user_id', me).is('pinned_at', null).order('created_at', { ascending: false }).limit(20);
-  S.myPosts = await hydratePosts([...(pin.data || []), ...(rec.data || [])]);
+  { const base = await hydratePosts([...(pin.data || []), ...(rec.data || [])]); S.myPosts = mergeCollab(base, await collabPosts(S.user.id)); }
   await loadProducts(); S.ready.me = 1;
 }
 async function loadVideos() {
@@ -293,7 +303,7 @@ async function loadVideos() {
   }
   await loadProfiles(list.map(v => v.user_id));
   S.videos = list.filter(v => safeUrl(v.video_url)).map(v => ({
-    id: v.id, uid: v.user_id, url: v.video_url, cap: v.caption, views: Number(v.views) || 0,
+    id: v.id, uid: v.user_id, url: v.video_url, at: v.created_at, cap: v.caption, views: Number(v.views) || 0,
     likes: likes.filter(x => x.video_id === v.id).length,
     liked: likes.some(x => x.video_id === v.id && x.user_id === S.user.id),
     cc: cms.filter(x => x.video_id === v.id).length,
@@ -425,8 +435,9 @@ function mediaBlock(p) {
   const item = (it, i) => {
     const key = 'p' + p.id + '_' + i;
     if (S.saver && !S.loaded.has(key)) return `<div class="pit"><button class="ph saverph" style="--h:200;width:100%;height:100%;min-height:200px" data-a="load" data-id="${key}">Tap to load ${it.type}<br><small>Data saver is on</small></button></div>`;
+    if (it.type === 'audio') return `<div class="pit paud"><audio controls preload="metadata" src="${esc(it.url)}"></audio></div>`;
     return it.type === 'video'
-      ? `<div class="pit"><video src="${esc(it.url)}" controls playsinline preload="metadata"></video><button class="pexp" data-a="vopen" data-id="${p.id}" data-i="${i}" aria-label="Full screen">${I.expand}</button></div>`
+      ? `<div class="pit pvid"><video src="${esc(it.url)}#t=0.1" muted playsinline preload="metadata" data-a="pvplay" data-id="${p.id}" data-i="${i}"></video><button class="pvplay" data-a="pvplay" data-id="${p.id}" data-i="${i}" aria-label="Play video">▶</button></div>`
       : `<div class="pit"><img src="${esc(it.url)}" alt="" loading="lazy" data-dt="p" data-id="${p.id}" data-i="${i}">${tagChips(p, i)}</div>`;
   };
   return `<div class="pcar ${single ? 'single' : ''}"><div class="rail">${m.map(item).join('')}</div>${single ? '' : `<span class="pcount">1 / ${m.length}</span>`}</div>${single ? '' : `<div class="pdots">${m.map((_, i) => `<i class="${i === 0 ? 'on' : ''}"></i>`).join('')}</div>`}`;
@@ -456,19 +467,34 @@ function commentsHTML(p) {
 }
 const replyChip = p => S.replyC && S.replyC.p === p.id ? `<div class="rchip">Replying to <b>${esc(S.replyC.name)}</b><button data-a="creplyx" aria-label="Cancel reply">${I.x}</button></div>` : '';
 const fChip = id => (id !== S.user.id && !S.following.has(id)) ? `<button class="fchip" data-a="qfollow" data-id="${id}">${S.requested.has(id) ? 'Requested' : 'Follow'}</button>` : '';
+const repKey = p => p.repostVid ? 'v:' + p.repostVid : 'p:' + (p.repostOf || p.id);
+const collabIcon = '<span class="collabic" title="Collaboration" aria-label="Collaboration"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="7" r="3"/><circle cx="16" cy="7" r="3"/><path d="M2 20c0-3 2.5-5 6-5 1.3 0 2.4.3 3.4.8"/><path d="M22 20c0-3-2.5-5-6-5-1.3 0-2.4.3-3.4.8"/><path d="M9.5 16.5l2.5 2.5 2.5-2.5"/></svg></span>';
+function postHead(p) {
+  const meta = `<small>${p.t}${p.vis !== 'public' ? ' · ' + visIcon(p.vis) : ''}${p.repostOf || p.repostVid ? ' · reposted' : ''}${p.promo ? ' · Paid promotion' : ''}${p.place ? ' · 📍 ' + esc(p.place) : ''}</small>`;
+  if (p.collabs && p.collabs.length) {
+    const a = p.uid, b = p.collabs[0];
+    return `<div class="ph-row collab"><span class="cav2"><button data-a="user" data-id="${a}" aria-label="${esc(nameOf(a))}">${avOf(a, 40)}</button><button data-a="user" data-id="${b}" aria-label="${esc(nameOf(b))}">${avOf(b, 40)}</button></span><div><b><button class="nm" data-a="user" data-id="${a}">${esc(nameOf(a))}</button> and <button class="nm" data-a="user" data-id="${b}">${esc(nameOf(b))}</button>${p.collabs.length > 1 ? ' +' + (p.collabs.length - 1) : ''} ${collabIcon}</b>${meta}</div></div>`;
+  }
+  return `<button class="ph-row" data-a="user" data-id="${p.uid}">${avOf(p.uid)}<div><b>${esc(nameOf(p.uid))}</b>${meta}</div></button>`;
+}
 function repostCard(p) {
+  if (p.repostVid) {
+    const v = p.origV; if (!v) return '<div class="rpbox gone">This video is not available.</div>';
+    return `<div class="rpbox"><button class="rph" data-a="user" data-id="${v.uid}">${avOf(v.uid, 30)}<span><b>${esc(nameOf(v.uid))}</b><small>${v.at ? esc(fmtDate(v.at)) : ''}</small></span></button>${v.cap ? `<p class="ptext rpt">${fmtText(v.cap)}</p>` : ''}<video class="rpvid" src="${esc(v.url)}" controls playsinline preload="metadata"></video><button class="rpopen" data-a="watch" data-id="${v.id}">Watch in Videos</button></div>`;
+  }
   if (!p.repostOf) return '';
   const o = p.orig;
   if (!o) return '<div class="rpbox gone">This post is not available.</div>';
-  const m = o.media && o.media[0];
-  return `<button class="rpbox" data-a="openpost" data-id="${o.id}"><span class="rph">${avOf(o.uid, 26)}<b>${esc(nameOf(o.uid))}</b></span>${o.text ? `<span class="rpt">${esc(o.text.slice(0, 300))}</span>` : ''}${m ? (m.type === 'image' ? `<img src="${esc(m.url)}" alt="" loading="lazy">` : '<span class="rpv">▶ Video</span>') : ''}</button>`;
+  const key = 'r' + o.id, shown = txShow(key, o.text || ''), long = shown.length > 170 || (shown.match(/\n/g) || []).length >= 3, open = S.xp.has(key);
+  const media = (o.media || []).map(m => m.type === 'image' ? `<img class="rpimg" src="${esc(m.url)}" alt="" loading="lazy">` : m.type === 'audio' ? `<audio controls preload="metadata" src="${esc(m.url)}"></audio>` : `<video class="rpvid" src="${esc(m.url)}" controls playsinline preload="metadata"></video>`).join('');
+  return `<div class="rpbox"><button class="rph" data-a="user" data-id="${o.uid}">${avOf(o.uid, 30)}<span><b>${esc(nameOf(o.uid))}</b><small>${o.at ? esc(fmtDate(o.at)) : ''}</small></span></button>${o.text ? `<p class="ptext rpt${long && !open ? ' clamp' : ''}">${fmtText(shown)}</p>${long ? `<button class="seemore" data-a="xmore" data-k="${key}">${open ? 'See less' : 'See more'}</button>` : ''}<div class="txrow">${txBtn(key, o.text)}</div>` : ''}${media}<button class="rpopen" data-a="openpost" data-id="${o.id}">View original post</button></div>`;
 }
 function postCard(p) {
   const rxs = Object.entries(p.rxs || {}).filter(e => e[1] > 0).sort((a, b) => b[1] - a[1]);
   const chips = rxs.map(([e, n]) => `<button class="rxchip ${p.react === e ? 'on' : ''}" data-a="rxtap" data-id="${p.id}" data-e="${e}">${e}<span>${n}</span></button>`).join('');
   const canReact = !p.allowed || p.allowed.length > 0, cmOn = p.cmOn !== false;
   return `<article class="post">
-    <div class="prow"><button class="ph-row" data-a="user" data-id="${p.uid}">${avOf(p.uid)}<div><b>${esc(nameOf(p.uid))}${collabNames(p)}</b><small>${p.t}${p.vis !== 'public' ? ' · ' + visIcon(p.vis) : ''}${p.repostOf ? ' · 🔁 reposted' : ''}${p.promo ? ' · Paid promotion' : ''}${p.place ? ' · 📍 ' + esc(p.place) : ''}</small></div></button>${p.pin ? '<span class="pbadge">Pinned</span>' : ''}<span style="flex:1"></span>${hFollow(p.uid)}<button class="ibtn" data-a="pmenu" data-id="${p.id}" aria-label="More options">${I.more}</button></div>
+    <div class="prow">${postHead(p)}${p.pin ? '<span class="pbadge">Pinned</span>' : ''}<span style="flex:1"></span>${hFollow(p.uid)}<button class="ibtn" data-a="pmenu" data-id="${p.id}" aria-label="More options">${I.more}</button></div>
     ${ptextHTML(p)}
     ${repostCard(p)}
     ${mediaBlock(p)}
@@ -476,7 +502,7 @@ function postCard(p) {
     <div class="acts">
       <button class="${p.react === '❤️' ? 'on' : ''}" data-a="like" data-id="${p.id}" aria-label="Love">${I.heart}</button>
       ${cmOn ? `<button data-a="cmt" data-id="${p.id}" aria-label="Comments">${I.cmt}${p.cm.length}</button>` : ''}
-      ${p.uid !== S.user.id ? `<button data-a="repost" data-id="${p.id}" aria-label="Repost">${I.repost}</button>` : ''}
+      ${p.uid !== S.user.id ? `<button class="${S.myReposts.has(repKey(p)) ? 'on' : ''}" data-a="repost" data-id="${p.id}" aria-label="${S.myReposts.has(repKey(p)) ? 'Un-repost' : 'Repost'}" title="${S.myReposts.has(repKey(p)) ? 'Un-repost' : 'Repost'}">${I.repost}</button>` : ''}
       <button data-a="share" data-id="${p.id}" aria-label="Share">${I.share}</button>
       <button class="sp ${S.savedPosts.has(p.id) ? 'on' : ''}" data-a="psave" data-id="${p.id}" aria-label="Save post">${I.save}</button>
     </div>
@@ -495,22 +521,21 @@ const vgridHTML = list => list.length ? `<div class="vgrid">${list.map(v => `<bu
 function viewVideo() {
   if (gate()) return gate();
   const tabs = `<div class="vtabs"><button class="${S.vmode !== 'following' ? 'on' : ''}" data-a="vfeed" data-id="all">For You</button><button class="${S.vmode === 'following' ? 'on' : ''}" data-a="vfeed" data-id="following">Following</button></div>`;
-  const list = S.videos.filter(v => !S.vnot.has(v.id));
+  const list = (S.pv ? [S.pv] : []).concat(S.videos.filter(v => !S.vnot.has(v.id)));
   if (!list.length) return tabs + `<div class="empty" style="padding:120px 24px 0;color:#fff">${S.vmode === 'following' ? 'No videos from people you follow yet.<br>Follow creators in For You.' : 'No videos yet.<br>Tap <b>+</b> below to post the first video.'}</div>`;
   return tabs + `<div class="vidfeed" id="vf" tabindex="0">${list.map(v => {
-    const p = S.pf[v.uid] || {}, own = v.uid === S.user.id;
+    const p = S.pf[v.uid] || {}, own = v.uid === S.user.id, rk = v.pv ? repKey(findPost(v.postId) || { id: v.postId }) : 'v:' + v.id;
     return `<section class="vid" data-vid="${v.id}">
       <video data-dt="v" data-id="${v.id}" data-vid="${v.id}" src="${esc(v.url)}" ${S.vauto ? '' : 'loop'} playsinline preload="${S.saver ? 'none' : 'metadata'}"></video>
-      ${S.saver && !S.loaded.has('v' + v.id) ? `<button class="vplay" data-a="vplay" data-id="${v.id}">Tap to play<br><small>Data saver is on</small></button>` : ''}
-      <div class="vshade"></div>
+      ${S.saver && !v.pv && !S.loaded.has('v' + v.id) ? `<button class="vplay" data-a="vplay" data-id="${v.id}">Tap to play<br><small>Data saver is on</small></button>` : ''}
       <div class="vinfo"><b>${esc(nameOf(v.uid))}${p.username ? ' <span style="font-weight:500;opacity:.85">@' + esc(p.username) + '</span>' : ''}</b>
-        ${v.cap ? `<p>${esc(v.cap)}</p>` : ''}<div style="font-size:13px;opacity:.85;margin-top:4px" data-views="${v.id}">${v.views} views</div></div>
+        ${v.cap ? `<p>${esc(v.cap)}</p>` : ''}<div style="font-size:13px;opacity:.85;margin-top:4px" ${v.pv ? '' : `data-views="${v.id}"`}>${v.pv ? '' : v.views + ' views'}${v.at ? (v.pv ? '' : ' · ') + fmtDate(v.at) : ''}</div></div>
       <div class="vacts">
         <div class="vav"><button class="va" data-a="user" data-id="${v.uid}" aria-label="Creator">${avOf(v.uid, 48)}</button>${!own && !S.following.has(v.uid) ? `<button class="vplus" data-a="qfollow" data-id="${v.uid}" aria-label="Follow ${esc(nameOf(v.uid))}">${S.requested.has(v.uid) ? '✓' : '+'}</button>` : ''}</div>
         <button class="va ${v.liked ? 'on' : ''}" data-lk="${v.id}" data-a="vlike" data-id="${v.id}" aria-label="Like"><span class="c">${I.heart}</span><span class="n">${v.likes}</span></button>
         <button class="va" data-a="vcmt" data-id="${v.id}" aria-label="Comments"><span class="c">${I.cmt}</span><span data-cc="${v.id}">${v.cc}</span></button>
+        ${!own ? `<button class="va ${S.myReposts.has(rk) ? 'on' : ''}" data-a="vrepost" data-id="${v.id}" aria-label="${S.myReposts.has(rk) ? 'Un-repost' : 'Repost'}"><span class="c">${I.repost}</span>${S.myReposts.has(rk) ? 'Reposted' : 'Repost'}</button>` : ''}
         <button class="va" data-a="vshare" data-id="${v.id}" aria-label="Share"><span class="c">${I.share}</span>Share</button>
-        ${!own ? `<button class="va" data-a="gift" data-id="${v.uid}" data-t="video" data-i="${v.id}" aria-label="Send a gift"><span class="c">🎁</span>Gift</button>` : ''}
         <button class="va" data-a="vmore" data-id="${v.id}" aria-label="More options"><span class="c">${I.more}</span></button>
         <button class="vdisc" data-a="vsound" data-id="${v.id}" aria-label="Sound"><span class="vdiscin">${avOf(v.uid, 26)}</span></button>
       </div></section>`;
@@ -519,13 +544,13 @@ function viewVideo() {
 const dmUnread = t => t.msgs.filter(m => !m.me && !m.read && m.id && !m.del).length;
 const chatFilter = () => {
   const q = (S.cq || '').trim().toLowerCase();
-  const dms = S.threads.map(t => { const last = t.msgs[t.msgs.length - 1]; return { kind: 'dm', t, at: last && last.at ? new Date(last.at).getTime() : 0, name: nameOf(t.id) }; });
+  const dms = S.threads.map(t => { const vm0 = visMsgs(t), last = vm0[vm0.length - 1]; return { kind: 'dm', t, at: last && last.at ? new Date(last.at).getTime() : 0, name: nameOf(t.id) }; });
   const grs = (S.gchats || []).map(g => ({ kind: 'g', g, at: g.last_at ? new Date(g.last_at).getTime() : 0, name: g.name || 'Group' }));
   return dms.concat(grs).filter(x => !q || x.name.toLowerCase().includes(q)).sort((a, b) => b.at - a.at);
 };
 const chatRows = list => list.length ? list.map(x => {
   if (x.kind === 'g') { const g = x.g, snd = g.last_sender ? (g.last_sender === S.user.id ? 'You' : nameOf(g.last_sender)) : ''; return `<button class="thread" data-a="gopen" data-id="${g.id}"><span class="tav"><span class="gav">${safeUrl(g.avatar_url) ? `<img src="${esc(g.avatar_url)}" alt="">` : '👥'}</span></span><span class="tx"><span class="trow"><b>${esc(g.name || 'Group')} <small class="gm">· ${g.members} member${Number(g.members) === 1 ? '' : 's'}</small></b><small class="tt">${g.last_at ? esc(ago(g.last_at)) : ''}</small></span><span class="l">${g.last_body ? esc(snd) + ': ' + esc(SHARE_RE.test(g.last_body) ? 'Shared something' : g.last_body.slice(0, 70)) : 'No messages yet'}</span></span></button>`; }
-  const t = x.t, last = t.msgs[t.msgs.length - 1], n = nameOf(t.id), un = dmUnread(t);
+  const t = x.t, vm1 = visMsgs(t), last = vm1[vm1.length - 1], n = nameOf(t.id), un = dmUnread(t);
   return `<button class="thread${un ? ' unread' : ''}" data-a="thread" data-id="${t.id}"><span class="tav">${avOf(t.id, 52)}</span><span class="tx"><span class="trow"><b>${esc(n)}</b><small class="tt">${last && last.at ? esc(ago(last.at)) : ''}</small></span><span class="l">${last ? (last.me ? 'You: ' : '') + esc(msgPreview(last)) : ''}${un ? `<i class="ub">${un}</i>` : ''}</span></span></button>`;
 }).join('') : '<div class="empty" style="padding:40px 24px">No chats match.</div>';
 async function loadGroupChats() {
@@ -582,7 +607,7 @@ function viewAlerts() {
 function viewMe() {
   if (gate()) return gate();
   const p = S.profile || {}, mine = S.products.filter(l => l.sid === S.user.id);
-  return `${bannerHTML(p)}<div class="prof"><button class="avbtn" data-a="avview" data-id="${S.user.id}" aria-label="View profile photo">${avOf(S.user.id)}</button><div><div class="big">${esc(p.display_name || 'Member')} <span class="vis" title="Public profile">${I.globe}</span></div><div class="ls">${p.username ? '@' + esc(p.username) + ' · ' : ''}${esc(p.country || '')}</div>${p.username ? '' : '<div class="ls">Add a username in Edit profile</div>'}</div></div>
+  return `${bannerHTML(p)}<div class="prof"><button class="avbtn" data-a="avview" data-id="${S.user.id}" aria-label="View profile photo">${avOf(S.user.id)}</button><div><div class="big">${esc(p.display_name || 'Member')}</div><div class="ls">${p.username ? '@' + esc(p.username) + ' · ' : ''}${esc(p.country || '')}</div>${p.username ? '' : '<div class="ls">Add a username in Edit profile</div>'}</div></div>
     ${p.bio ? `<p style="padding:0 16px 10px;white-space:pre-wrap">${esc(p.bio)}</p>` : ''}${linksHTML(p)}${hlStrip(S.user.id)}<div style="padding:0 16px 8px"><button class="chip" data-a="qr" data-id="me">▦ My QR code</button></div>
     <div class="stats"><div><b>${S.me.videos}</b><span>Videos</span></div><button data-a="flist" data-id="${S.user.id}" data-k="followers"><b>${S.me.followers}</b><span>Followers</span></button><button data-a="flist" data-id="${S.user.id}" data-k="following"><b>${S.me.following}</b><span>Following</span></button><div><b>${S.me.posts}</b><span>Posts</span></div></div>
     <div style="padding:0 16px 8px;display:grid;grid-template-columns:1fr 1fr;gap:10px"><button class="btn alt" data-a="editprofile">Edit profile</button><button class="btn alt" data-a="opensaved">Saved posts</button></div>
@@ -723,7 +748,7 @@ function paintCbar() {
 function paintMsgs(t) {
   const m = $('#msgs'); if (!m) return;
   const stick = !m.dataset.init || m.scrollHeight - m.scrollTop - m.clientHeight < 140;
-  m.innerHTML = t.msgs.length ? t.msgs.map((x, i) => daySep(t.msgs[i - 1], x) + (t.unreadFrom && x.id === t.unreadFrom ? '<div class="unreaddiv"><span>Unread messages</span></div>' : '') + bubble(x, t)).join('') : `<div class="empty">Say hello.</div>`;
+  m.innerHTML = visMsgs(t).length ? visMsgs(t).map((x, i, arr) => daySep(arr[i - 1], x) + (t.unreadFrom && x.id === t.unreadFrom ? '<div class="unreaddiv"><span>Unread messages</span></div>' : '') + bubble(x, t)).join('') : `<div class="empty">Say hello.</div>`;
   if (stick) m.scrollTop = m.scrollHeight;
   m.dataset.init = '1'; fillMedia();
 }
@@ -908,7 +933,7 @@ async function loadProfileData(id, reset) {
     const r = await sb.from('posts').select(POSTCOLS).eq('user_id', id).is('pinned_at', null).order('created_at', { ascending: false }).range(P.offset, P.offset + 19);
     const rows = r.data || [];
     P.more = rows.length === 20; P.offset += rows.length;
-    P.posts = P.posts.concat(await hydratePosts(rows));
+    P.posts = P.posts.concat(await hydratePosts(rows)); if (P.offset === rows.length) P.posts = mergeCollab(P.posts, await collabPosts(id));
     if (S.prof !== P) return;
     S.profPosts = [...P.pinned, ...P.posts];
   } catch (e) { toast('Could not load this profile'); }
@@ -930,7 +955,7 @@ function paintProfile() {
   }
   if (pr.is_locked && !P.following && id !== S.user.id && !P.loading && !P.blocked) acts += '<div style="padding:0 16px 12px"><div class="note">🔒 This account is private. Name, photo and bio are public. Send a follow request to see posts, videos and stories.</div></div>';
   const all = [...P.pinned, ...P.posts];
-  b.innerHTML = `${bannerHTML(pr)}<div class="pcenter"><button class="avbtn" data-a="avview" data-id="${id}" aria-label="View profile photo">${avOf(id, 88)}</button><div class="big" style="margin-top:10px">${esc(pr.display_name || 'Member')} <span class="vis" title="Public profile">${I.globe}</span></div>
+  b.innerHTML = `${bannerHTML(pr)}<div class="pcenter"><button class="avbtn" data-a="avview" data-id="${id}" aria-label="View profile photo">${avOf(id, 88)}</button><div class="big" style="margin-top:10px">${esc(pr.display_name || 'Member')}</div>
       <div class="ls">${pr.username ? '@' + esc(pr.username) : ''}${pr.country ? (pr.username ? ' · ' : '') + esc(pr.country) : ''}</div>
       ${pr.bio ? `<p style="margin-top:10px;white-space:pre-wrap">${esc(pr.bio)}</p>` : ''}${linksHTML(pr)}</div><div style="text-align:center;padding-bottom:6px"><button class="chip" data-a="store" data-id="${id}">🏪 Shop</button></div>${hlStrip(id)}
     <div class="stats" style="justify-content:center"><div><b>${P.postsN}</b><span>Posts</span></div><button data-a="flist" data-id="${id}" data-k="followers"><b>${P.followers}</b><span>Followers</span></button><button data-a="flist" data-id="${id}" data-k="following"><b>${P.followingN}</b><span>Following</span></button></div>
@@ -1143,7 +1168,7 @@ document.addEventListener('input', e => {
 });
 function renderThumbs() {
   const box = $('#thumbs'); if (!box) return;
-  box.innerHTML = S.drafts.map((d, i) => `<div class="th">${d.type === 'video' ? `<video src="${d.prev}" muted playsinline preload="metadata"></video>` : `<img src="${d.prev}" alt="">`}${d.type === 'image' ? `<button class="thed" data-a="edth" data-id="${i}" aria-label="Edit photo">✎</button>` : ''}<button data-a="rmth" data-id="${i}" aria-label="Remove">${I.x}</button></div>`).join('');
+  box.innerHTML = S.drafts.map((d, i) => `<div class="th">${d.type === 'audio' ? '<span class="thaud">🎤</span>' : d.type === 'video' ? `<video src="${d.prev}" muted playsinline preload="metadata"></video>` : `<img src="${d.prev}" alt="">`}${d.type === 'image' ? `<button class="thed" data-a="edth" data-id="${i}" aria-label="Edit photo">✎</button>` : ''}<button data-a="rmth" data-id="${i}" aria-label="Remove">${I.x}</button></div>`).join('');
   const t = $('#addtxt'); if (t) t.textContent = S.drafts.length ? 'Add more (' + S.drafts.length + '/10)' : 'Add photos or videos';
 }
 function bindMulti() {
@@ -1321,8 +1346,8 @@ document.addEventListener('pointerdown', e => {
   S.sv.holdT = setTimeout(() => { if (S.sv) { S.sv.held = true; pauseStory(true); } }, 220);
 });
 ['pointerup', 'pointercancel'].forEach(ev => document.addEventListener(ev, () => { const v = S.sv; if (!v) return; clearTimeout(v.holdT); if (v.held) pauseStory(false); }));
-document.addEventListener('focusin', e => { if (S.sv && (e.target.id === 'sri' || e.target.id === 'sqa')) pauseStory(true); });
-document.addEventListener('focusout', e => { if (S.sv && (e.target.id === 'sri' || e.target.id === 'sqa')) pauseStory(false); });
+document.addEventListener('focusin', e => { if (S.sv && e.target.id === 'sqa') pauseStory(true); });
+document.addEventListener('focusout', e => { if (S.sv && e.target.id === 'sqa') pauseStory(false); });
 
 /* story composer */
 const BGS = ['teal', 'sunset', 'violet', 'night', 'forest', 'rose'];
@@ -1451,12 +1476,12 @@ const privIcon = p => `<span class="vis" title="${p === 'private' ? 'Private' : 
 const GCOLS = 'id,name,description,avatar_url,privacy,owner_id,created_at';
 const roleLabel = r => r === 'owner' ? 'Owner' : r === 'admin' ? 'Admin' : '';
 const EVS = { going: 'Going', maybe: 'Maybe', no: "Can't go" };
-const fmtWhen = (s, e) => {
-  const a = new Date(s), o = { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }; let t = a.toLocaleString([], o);
-  if (e) { const b = new Date(e); t += a.toDateString() === b.toDateString() ? ' - ' + b.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ' - ' + b.toLocaleString([], o); }
-  return t;
+const fmtWhen = (a, b) => {
+  const s = new Date(a), tm = d => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); let out = fmtDate(a) + ', ' + tm(s);
+  if (b) { const e = new Date(b); out += s.toDateString() === e.toDateString() ? ' – ' + tm(e) : ' – ' + fmtDate(b) + ', ' + tm(e); }
+  return out;
 };
-const eventRow = ev => `<button class="evrow" data-a="eopen" data-id="${ev.id}"><span class="evd"><b>${new Date(ev.starts_at).getDate()}</b><small>${esc(new Date(ev.starts_at).toLocaleString([], { month: 'short' }))}</small></span><span class="tx"><b>${esc(ev.title)}</b><span class="l">${esc(fmtWhen(ev.starts_at, ev.ends_at))}${ev.location ? ' · ' + esc(ev.location) : ''}</span>${ev.gname ? `<span class="l">${esc(ev.gname)}</span>` : ''}</span>${ev.mine ? `<span class="pbadge">${EVS[ev.mine] || ''}</span>` : ''}</button>`;
+const eventRow = ev => `<button class="evrow" data-a="eopen" data-id="${ev.id}"><span class="evd"><b>${String(new Date(ev.starts_at).getDate()).padStart(2, '0')}</b><small>${MON[new Date(ev.starts_at).getMonth()]}</small></span><span class="tx"><b>${esc(ev.title)}</b><span class="l">${esc(fmtWhen(ev.starts_at, ev.ends_at))}${ev.location ? ' · ' + esc(ev.location) : ''}</span>${ev.gname ? `<span class="l">${esc(ev.gname)}</span>` : ''}</span>${ev.mine ? `<span class="pbadge">${EVS[ev.mine] || ''}</span>` : ''}</button>`;
 const groupRow = (g, m) => `<button class="thread" data-a="gopen" data-id="${g.id}">${gav(g, 52)}<span class="tx"><b>${esc(g.name)} ${privIcon(g.privacy)}</b><span class="l">${m ? (m.status === 'pending' ? 'Request sent' : roleLabel(m.role) || 'Member') : esc(g.description || (g.privacy === 'private' ? 'Private group' : 'Public group'))}</span></span></button>`;
 
 async function loadMyGroups() {
@@ -1554,7 +1579,7 @@ function paintGroupTab() {
   const g = G.row, me = G.me, active = !!(me && me.status === 'active'), owner = active && me.role === 'owner', admin = active && (owner || me.role === 'admin');
   if (G.tab !== 'chat') clearInterval(S.gpoll);
   if (G.tab === 'chat') {
-    t.innerHTML = `<div class="msgs" id="gmsgs"></div><div id="gemop" class="emop" hidden></div><div class="compose"><input id="gi" placeholder="Message the group" maxlength="1000" autocomplete="off"><button class="ibtn" data-a="emo" data-t="#gi" data-p="#gemop" aria-label="Emoji">😊</button><button class="send" data-a="gsend" aria-label="Send">${I.send}</button></div>`;
+    t.innerHTML = `<div class="msgs" id="gmsgs"></div><div id="gemop" class="emop" hidden></div><div class="compose"><button class="ibtn" data-a="gmedia" aria-label="Photo or video">📎</button><input id="gi" placeholder="Message the group" maxlength="1000" autocomplete="off"><button class="ibtn" data-a="emo" data-t="#gi" data-p="#gemop" aria-label="Emoji">😊</button><button class="ibtn" data-a="gvoice" aria-label="Voice message">🎤</button><button class="ibtn" data-a="gvideo" aria-label="Video message">🎥</button><button class="send" data-a="gsend" aria-label="Send">${I.send}</button></div>`;
     paintGroupMsgs(); loadGroupMsgs();
     clearInterval(S.gpoll); S.gpoll = setInterval(() => { if (!$('#gmsgs')) { clearInterval(S.gpoll); return; } if (S.g && S.g.tab === 'chat') loadGroupMsgs(); }, 4000);
   } else if (G.tab === 'members') {
@@ -1585,14 +1610,14 @@ function gbubble(m) {
   if (m.del) return `<div class="${cls} del">Message deleted</div>`;
   const sm = SHARE_RE.exec(m.t || '');
   const body = sm ? `<button class="sharecardb" data-a="openshared" data-k="${sm[1].toLowerCase()}" data-id="${sm[2]}"><span><b>${shareLabel(sm[1])}</b><br><small>Tap to open</small></span></button>` : `<div class="bt clamp${S.xp.has('g' + m.id) ? ' open' : ''}" data-xk="g${m.id}">${fmtText(txShow('g' + m.id, m.t))}</div>${txLink('g' + m.id, m.t)}`;
-  const core = `<div class="${cls}"${m.id ? ` data-a="gmmenu" data-id="${m.id}"` : ''}>${body}<small class="meta">${m.ed ? 'edited · ' : ''}${hm(m.at)}</small></div>`;
+  const core = `<div class="${cls}"${m.id ? ` data-a="gmmenu" data-id="${m.id}"` : ''}>${m.mu ? cmMedia(m) : ''}${m.mu && /^(🎤|🎬|📷) /.test(m.t) ? '' : body}<small class="meta">${m.ed ? 'edited · ' : ''}${hm(m.at)}</small></div>`;
   if (mine) return core;
   return `<div class="mrow">${avOf(m.uid, 30)}<div class="mcol"><div class="gn">${esc(nameOf(m.uid))}</div>${core}</div></div>`;
 }
 function paintGroupMsgs() {
   const el = $('#gmsgs'), G = S.g; if (!el || !G) return;
   const stick = !el.dataset.init || el.scrollHeight - el.scrollTop - el.clientHeight < 140;
-  el.innerHTML = G.msgs.length ? G.msgs.map(gbubble).join('') : '<div class="empty">No messages yet. Say hello.</div>';
+  el.innerHTML = G.msgs.length ? visG().map((m, i, a) => daySep(a[i - 1], m) + gbubble(m)).join('') : '<div class="empty">No messages yet. Say hello.</div>';
   if (stick) el.scrollTop = el.scrollHeight; el.dataset.init = '1';
 }
 const refreshGroupViews = () => { if (S.g && $('#gtab')) loadGroup(S.g.id); };
@@ -1627,7 +1652,7 @@ const refreshEventViews = async () => {
   if ($('#evlist')) { try { S.evs = await loadEventsHub(); } catch (e) {} paintEventsList(); }
   if (S.g && $('#gtab')) loadGroup(S.g.id);
 };
-async function openEvent(id) {
+async function openEvent0(id) {
   const { data: e } = await sb.from('events').select('id,title,description,location,starts_at,ends_at,group_id,creator_id,canceled_at').eq('id', id).maybeSingle();
   if (!e) return toast('This event is not available');
   if (!S.myGroups) await loadMyGroups().catch(() => {});
@@ -2392,7 +2417,7 @@ async function openOrder(id) {
 
 /* wish lists and comparing */
 const mapProd = p => ({ id: p.id, title: p.title, price: Number(p.price), cur: p.currency || 'ETB', opt: p.price_type || 'fixed', cat: p.category || 'Other', sid: p.seller_id, who: nameOf(p.seller_id), desc: p.description || '', h: 100 + (p.id % 5) * 20,
-  media: safeUrl(p.image_url) ? { type: 'image', url: p.image_url } : null, cond: p.condition, brand: p.brand, model: p.model, origin: p.origin_country, modes: p.sale_modes || ['retail'], pmin: p.min_price, pmax: p.max_price, moq: p.moq || 1, stock: p.stock, tiers: Array.isArray(p.price_tiers) ? p.price_tiers : [], sample: p.sample_price, prep: p.prep_days, attrs: p.item_attributes || {} });
+  media: safeUrl(p.image_url) ? { type: 'image', url: p.image_url } : null, at: p.created_at, cond: p.condition, brand: p.brand, model: p.model, origin: p.origin_country, modes: p.sale_modes || ['retail'], pmin: p.min_price, pmax: p.max_price, moq: p.moq || 1, stock: p.stock, tiers: Array.isArray(p.price_tiers) ? p.price_tiers : [], sample: p.sample_price, prep: p.prep_days, attrs: p.item_attributes || {} });
 async function openLists() {
   $('#over').innerHTML = `<div class="screen"><header><button class="ibtn flip" data-a="back" aria-label="Back">${I.back}</button><b class="ttl">Wish lists</b><span style="flex:1"></span><button class="hbtn" data-a="wlnew">${I.plus}New list</button></header><div class="setbody" id="wlb"><div class="empty" style="padding:40px">Loading...</div></div></div>`;
   const { data, error } = await sb.from('wishlists').select('id,name,is_shared,wishlist_items(count)').eq('owner_id', S.user.id).order('created_at', { ascending: false });
@@ -2490,6 +2515,8 @@ async function loadSocial() {
     S.reqIn = (rq.data || []).filter(r => r.target_id === S.user.id).map(r => r.requester_id);
     S.notInt = new Set((pf.data || []).filter(x => !x.interested).map(x => x.post_id));
     S.intr = new Set((pf.data || []).filter(x => x.interested).map(x => x.post_id));
+    try { const rp = await sb.from('posts').select('id,repost_of,repost_video_id').eq('user_id', S.user.id).is('deleted_at', null).or('repost_of.not.is.null,repost_video_id.not.is.null').limit(500); S.myReposts = new Map((rp.data || []).map(r => [r.repost_video_id ? 'v:' + r.repost_video_id : 'p:' + r.repost_of, r.id])); } catch (e) {}
+    try { const h1 = await sb.from('message_hides').select('message_id').limit(5000), h2 = await sb.from('group_message_hides').select('message_id').limit(5000); S.mhide = new Set((h1.data || []).map(x => x.message_id)); S.gmhide = new Set((h2.data || []).map(x => x.message_id)); } catch (e) {}
     try { const vp = await sb.from('video_prefs').select('video_id,interested'); S.vnot = new Set((vp.data || []).filter(x => !x.interested).map(x => x.video_id)); } catch (e) {}
     try { const w = await sb.from('product_alerts').select('product_id'); S.watch = new Set((w.data || []).map(x => x.product_id)); } catch (e) {}
     if (S.ready.home) render(true);
@@ -2715,7 +2742,7 @@ function ptextHTML(p) {
 const collabNames = p => (p.collabs && p.collabs.length) ? ' <span class="with">with ' + p.collabs.map(u => esc(nameOf(u))).join(', ') + '</span>' : '';
 const CATEMO = { all: '🛍️', fashion: '👗', phones: '📱', home: '🏠', food: '🍲', electronics: '💻', other: '🏷️' };
 const catEmoji = c => CATEMO[String(c).toLowerCase()] || '🏷️';
-const daySep = (prev, cur) => { if (!cur || !cur.at) return ''; const d = new Date(cur.at); if (prev && prev.at && new Date(prev.at).toDateString() === d.toDateString()) return ''; const t = new Date(), y = new Date(Date.now() - 864e5); return `<div class="daysep">${d.toDateString() === t.toDateString() ? 'Today' : d.toDateString() === y.toDateString() ? 'Yesterday' : d.toLocaleDateString([], { month: 'short', day: 'numeric', year: d.getFullYear() === t.getFullYear() ? undefined : 'numeric' })}</div>`; };
+const daySep = (prev, cur) => { if (!cur || !cur.at) return ''; const d = new Date(cur.at); if (prev && prev.at && new Date(prev.at).toDateString() === d.toDateString()) return ''; const t = new Date(), y = new Date(Date.now() - 864e5); return `<div class="daysep">${d.toDateString() === t.toDateString() ? 'Today' : d.toDateString() === y.toDateString() ? 'Yesterday' : fmtDate(d)}</div>`; };
 document.addEventListener('input', e => { if (e.target.id === 'cq') { S.cq = e.target.value; const l = $('#clist'); if (l) l.innerHTML = chatRows(chatFilter()); } });
 /* comments panel */
 function closeCpanel() { S.cmOpen = null; S.vcOpen = null; const e = $('#cpanel'); if (e) e.remove(); setTimeout(syncHist, 0); }
@@ -2734,7 +2761,7 @@ function paintComments() {
   cpShell(`<div class="cp-back" data-a="cpclose"></div><div class="cp-sheet${full}"><div class="cp-grab"></div><div class="cp-head"><b>Comments${p.cm.length ? ' · ' + p.cm.length : ''}</b><span><button class="ibtn" data-a="cpexpand" aria-label="Expand">⤢</button><button class="ibtn" data-a="cpclose" aria-label="Close">${I.x}</button></span></div>
     ${p.cmOn !== false && p.cm.length > 1 ? `<div class="cp-sort">Sort: <button class="${S.cmSort !== 'new' ? 'on' : ''}" data-a="csort" data-id="top">Top</button> | <button class="${S.cmSort === 'new' ? 'on' : ''}" data-a="csort" data-id="new">Newest</button></div>` : ''}
     <div class="cp-list" id="cplist">${p.cmOn === false ? '<div class="empty" style="padding:40px 16px">Comments are turned off for this post.</div>' : (commentsHTML(p) || '<div class="empty" style="padding:40px 16px">No comments yet.<br>Be the first to comment.</div>')}</div>
-    ${p.cmOn === false ? '' : `${replyChip(p)}${cmPrev(p.id)}<div id="cpemo" class="emop" hidden></div>${qemoRow('#ci' + p.id)}<div class="cp-bar">${avOf(S.user.id, 34)}<div class="cp-in"><input id="ci${p.id}" data-mention placeholder="${rp ? 'Reply to ' + esc(S.replyC.name) + '...' : 'Add a comment...'}" maxlength="1000" value="${esc(keep)}" autocomplete="off"><button class="cattach" data-a="emo" data-t="#ci${p.id}" data-p="#cpemo" aria-label="Emoji">😊</button><button class="cattach" data-a="cmat" data-id="${p.id}" aria-label="Mention someone">@</button><label class="cattach" aria-label="Attach a photo or video"><input type="file" data-cf="${p.id}" accept="image/*,video/*" hidden>📎</label><button class="cattach ${S.crec && S.crec.id == p.id ? 'rec' : ''}" data-a="crec" data-id="${p.id}" aria-label="Record a voice message">🎤</button></div><button class="send" data-a="addcmt" data-id="${p.id}" aria-label="Send comment">${I.send}</button></div>`}</div>`);
+    ${p.cmOn === false ? '' : `${replyChip(p)}${cmPrev(p.id)}<div id="cpemo" class="emop" hidden></div>${qemoRow('#ci' + p.id)}<div class="cp-bar">${avOf(S.user.id, 34)}<div class="cp-in"><input id="ci${p.id}" data-mention placeholder="${rp ? 'Reply to ' + esc(S.replyC.name) + '...' : 'Add a comment...'}" maxlength="1000" value="${esc(keep)}" autocomplete="off"><button class="cattach" data-a="emo" data-t="#ci${p.id}" data-p="#cpemo" aria-label="Emoji">😊</button><button class="cattach" data-a="cmat" data-id="${p.id}" aria-label="Mention someone">@</button><label class="cattach" aria-label="Attach a photo or video"><input type="file" data-cf="${p.id}" accept="image/*,video/*" hidden>📎</label><button class="cattach ${S.crec && S.crec.id == p.id ? 'rec' : ''}" data-a="crec" data-id="${p.id}" aria-label="Record a voice message">🎤</button><button class="cattach" data-a="rcom" data-id="${p.id}" aria-label="Record a video message">🎥</button></div><button class="send" data-a="addcmt" data-id="${p.id}" aria-label="Send comment">${I.send}</button></div>`}</div>`);
 }
 const _rp = repaint; repaint = function () { _rp.apply(this, arguments); if (S.cmOpen) paintComments(); };
 function paintVPanel() {
@@ -2936,6 +2963,93 @@ document.addEventListener('touchend', e => {
   doSwipe(dx < 0 ? 1 : -1);
 }, { passive: true });
 
+/* ---------- v0.27: reposts, collaboration, recorder, delete for me, event media ---------- */
+S.myReposts = new Map(); S.mhide = new Set(); S.gmhide = new Set(); S.pv = null;
+const visMsgs = t => t.msgs.filter(m => !m.id || !S.mhide.has(m.id));
+const visG = () => ((S.g && S.g.msgs) || []).filter(m => !m.id || !S.gmhide.has(m.id));
+async function collabPosts(uid) {
+  try {
+    const { data } = await sb.from('post_collaborators').select('post_id').eq('user_id', uid).eq('status', 'accepted').limit(30); const ids = (data || []).map(x => x.post_id); if (!ids.length) return [];
+    const r = await sb.from('posts').select(POSTCOLS).in('id', ids).is('deleted_at', null); return await hydratePosts(r.data || []);
+  } catch (e) { return []; }
+}
+const mergeCollab = (list, extra) => { const seen = new Set(list.map(p => p.id)); return list.concat((extra || []).filter(p => !seen.has(p.id))).sort((a, b) => (b.pin ? 1 : 0) - (a.pin ? 1 : 0) || String(b.ts || '').localeCompare(String(a.ts || ''))); };
+function repostSheet() { sheet('<h2>Repost</h2><div class="fld"><textarea id="rpt" maxlength="500" placeholder="Add a comment (optional)"></textarea></div><button class="btn" id="rpb" data-a="repostgo">Repost to my profile</button>'); }
+async function unrepostKey(key) {
+  const pid = S.myReposts.get(key); if (!pid) return toast('Nothing to remove'); if (!confirm('Remove your repost?')) return; closeSheet();
+  const { error } = await sb.from('posts').update({ deleted_at: new Date().toISOString() }).eq('id', pid).eq('user_id', S.user.id); if (error) return toast('Could not remove');
+  S.myReposts.delete(key); S.posts = S.posts.filter(x => x.id !== pid); S.myPosts = (S.myPosts || []).filter(x => x.id !== pid); render(true); toast('Repost removed');
+}
+/* uploads: voice messages go to the media bucket as audio */
+const _um = uploadMedia; uploadMedia = async function (file) { return (file && (file.type || '').indexOf('audio') === 0) ? uploadAudio(file) : _um.apply(this, arguments); };
+/* recorder for voice and video messages */
+const fmtSecs = n => Math.floor(n / 60) + ':' + String(n % 60).padStart(2, '0');
+const recMime = kind => (kind === 'video' ? ['video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'] : ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg']).find(m => MediaRecorder.isTypeSupported(m)) || '';
+function openRecorder(kind, cb) {
+  if (!navigator.mediaDevices || !window.MediaRecorder) return toast('Recording is not supported on this browser');
+  closeRecorder(); S.rcv = { kind, cb, facing: 'user', secs: 0, chunks: [], blob: null, url: null, state: 'idle', max: kind === 'video' ? 60 : 120 };
+  const root = document.createElement('div'); root.id = 'recov'; root.className = 'recov'; document.body.appendChild(root); setTimeout(syncHist, 0); paintRecorder(); startRecStream();
+}
+async function startRecStream() {
+  const R = S.rcv; if (!R) return;
+  try { if (R.stream) R.stream.getTracks().forEach(t => t.stop()); R.stream = await navigator.mediaDevices.getUserMedia(R.kind === 'video' ? { video: { facingMode: R.facing }, audio: true } : { audio: true }); paintRecorder(); }
+  catch (e) { toast('Camera or microphone permission is needed'); closeRecorder(); }
+}
+function paintRecorder() {
+  const R = S.rcv, root = $('#recov'); if (!R || !root) return; const done = R.state === 'done';
+  root.innerHTML = `<div class="rc-top"><button class="ibtn" data-a="rcx" aria-label="Cancel">${I.x}</button><b>${R.kind === 'video' ? 'Video message' : 'Voice message'}</b><span id="rct">${fmtSecs(R.secs)} / ${fmtSecs(R.max)}</span></div>
+    <div class="rc-stage">${R.kind === 'video' ? (done ? `<video id="rpv" src="${R.url}" controls playsinline autoplay></video>` : `<video id="rpv" autoplay muted playsinline class="${R.facing === 'user' ? 'mir' : ''}"></video>`) : (done ? `<audio controls src="${R.url}" autoplay></audio>` : `<div class="rc-mic ${R.state === 'rec' ? 'on' : ''}">🎤</div>`)}</div>
+    <div class="rc-bar">${done ? '<button class="btn alt" data-a="rcretry">Retake</button><button class="btn" data-a="rcsend">Send</button>' : `${R.kind === 'video' && R.state !== 'rec' ? '<button class="gb" data-a="rcflip" aria-label="Switch camera">🔄</button>' : ''}<button class="rc-rec ${R.state === 'rec' ? 'on' : ''}" data-a="rcgo" aria-label="${R.state === 'rec' ? 'Stop' : 'Record'}"></button>`}</div>`;
+  if (!done && R.kind === 'video' && R.stream) { const v = $('#rpv'); if (v) { v.srcObject = R.stream; v.play().catch(() => {}); } }
+}
+function stopRecording() { const R = S.rcv; if (R && R.rec && R.rec.state !== 'inactive') { try { R.rec.stop(); } catch (e) {} } }
+function closeRecorder() {
+  const R = S.rcv; if (R) { clearInterval(R.timer); try { stopRecording(); } catch (e) {} try { if (R.stream) R.stream.getTracks().forEach(t => t.stop()); } catch (e) {} if (R.url) URL.revokeObjectURL(R.url); }
+  S.rcv = null; const r = $('#recov'); if (r) r.remove(); setTimeout(syncHist, 0);
+}
+async function sendGroupMedia(file) {
+  const G = S.g; if (!G) return; const type = file.type.indexOf('audio') === 0 ? 'audio' : file.type.indexOf('video') === 0 ? 'video' : file.type.indexOf('image') === 0 ? 'image' : null;
+  if (!type) return toast('Choose a photo, video or voice message'); toast('Sending...'); let up;
+  try { up = type === 'audio' ? await uploadAudio(file) : await uploadMedia(file); } catch (e) { return toast(typeof upErr === 'function' ? upErr(e) : 'Upload failed'); }
+  const body = type === 'audio' ? '🎤 Voice message' : type === 'video' ? '🎬 Video message' : '📷 Photo';
+  const gid = G.id || (G.row && G.row.id), { data, error } = await sb.from('group_messages').insert({ group_id: gid, sender_id: S.user.id, body, media_url: up.url, media_type: type }).select('id,created_at').single();
+  if (error) return toast('Message not sent'); G.msgs.push({ id: data.id, uid: S.user.id, t: body, at: data.created_at, mu: up.url, mt: type }); paintGroupMsgs();
+}
+document.addEventListener('change', async e => {
+  const t = e.target; if (!t || !t.id) return;
+  if (t.id === 'gfile' && t.files && t.files[0]) { const f = t.files[0]; t.value = ''; sendGroupMedia(f); }
+  if (t.id === 'evfile' && t.files && t.files.length) {
+    const id = t.dataset.ev, files = [].slice.call(t.files).slice(0, 6); t.value = ''; toast('Uploading...');
+    for (const f of files) { const type = f.type.indexOf('video') === 0 ? 'video' : f.type.indexOf('image') === 0 ? 'image' : null; if (!type) continue; try { const up = await uploadMedia(f); await sb.from('event_media').insert({ event_id: id, user_id: S.user.id, url: up.url, type }); } catch (x) { toast(typeof upErr === 'function' ? upErr(x) : 'Upload failed'); } }
+    paintEventMedia(id, true);
+  }
+});
+async function openEvent(id) { await openEvent0(id); try { await paintEventMedia(id); } catch (e) {} }
+async function paintEventMedia(id, again) {
+  const panel = document.querySelector('#sheet .panel'); if (!panel) return; if (again) { const o = $('#evmedia'); if (o) o.remove(); }
+  const { data } = await sb.from('event_media').select('id,user_id,url,type,created_at').eq('event_id', id).order('created_at', { ascending: false }).limit(60);
+  const L = data || [], ev = S.ev || {}; S.evm = L; await loadProfiles(L.map(x => x.user_id)); if (!document.querySelector('#sheet .panel')) return;
+  const box = document.createElement('div'); box.id = 'evmedia';
+  box.innerHTML = `<h3 class="sub" style="padding:14px 0 6px">Photos and videos</h3><label class="btn alt" style="display:block;text-align:center"><input type="file" id="evfile" data-ev="${id}" accept="image/*,video/*" multiple hidden>➕ Add photos or videos</label>
+    ${L.length ? `<div class="mgrid" style="padding:8px 0">${L.map((x, i) => `<div class="evm"><button data-a="evview" data-id="${i}">${x.type === 'video' ? `<video src="${esc(x.url)}#t=0.1" muted playsinline preload="metadata"></video><span class="evp">▶</span>` : `<img src="${esc(x.url)}" alt="" loading="lazy">`}</button>${(x.user_id === S.user.id || ev.creator_id === S.user.id) ? `<button class="evx" data-a="evmdel" data-id="${x.id}" aria-label="Delete">✕</button>` : ''}</div>`).join('')}</div>` : '<div class="ls" style="padding:8px 0">No photos or videos yet. Be the first to add one.</div>'}`;
+  panel.appendChild(box);
+}
+const msgOf = id => { const t = curThread(); return t && t.msgs.find(m => String(m.id) === String(id)); };
+function chatDeleteSheet(b) {
+  const kind = b.dataset.a, id = b.dataset.id;
+  if (kind === 'thread') { const n = nameOf(id); sheet(`<h2>Delete chat with ${esc(n)}</h2><p class="ls" style="margin-bottom:8px">Choose how to delete the conversation.</p><button class="optrow red" data-a="dmdel" data-id="${id}" data-e="0">🗑️ Delete for me</button><button class="optrow red" data-a="dmdel" data-id="${id}" data-e="1">🗑️ Delete for me and ${esc(n)}<span class="ls"> (removes your messages for them too)</span></button>`); return; }
+  const g = (S.gchats || []).find(x => x.id === id); const mr = (S.myGroups || []).find(m => m.group_id === id && m.status === 'active'); const admin = mr && (mr.role === 'owner' || mr.role === 'admin');
+  sheet(`<h2>Delete chat: ${esc((g && g.name) || 'Group')}</h2><button class="optrow red" data-a="gchatme" data-id="${id}">🗑️ Delete for me</button>${admin ? `<button class="optrow red" data-a="gchatall" data-id="${id}">🗑️ Delete for everyone</button>` : '<p class="ls" style="margin-top:6px">Only group admins can delete for everyone.</p>'}`);
+}
+let cdT; document.addEventListener('pointerdown', e => {
+  const b = e.target.closest && e.target.closest('.thread[data-a="thread"],.thread[data-a="gopen"]'); if (!b) return; S.lpFired = false; clearTimeout(cdT);
+  cdT = setTimeout(async () => { S.lpFired = true; if (b.dataset.a === 'gopen' && !S.myGroups) { try { await loadMyGroups(); } catch (x) {} } chatDeleteSheet(b); }, 600);
+});
+['pointerup', 'pointercancel', 'pointermove'].forEach(ev => document.addEventListener(ev, () => clearTimeout(cdT), true));
+document.addEventListener('contextmenu', e => { const b = e.target.closest && e.target.closest('.thread[data-a="thread"],.thread[data-a="gopen"]'); if (b) { e.preventDefault(); chatDeleteSheet(b); } });
+
+function addPostFile(f, type) { if (!S.drafts) S.drafts = []; if (S.drafts.length >= 10) return toast('Up to 10 attachments'); S.drafts.push({ file: f, type, prev: URL.createObjectURL(f) }); try { renderThumbs(); } catch (e) {} toast(type === 'audio' ? 'Voice message added' : 'Video message added'); }
+
 /* ---------- settings + theme ---------- */
 function applyTheme() {
   const dark = S.mode === 'dark' || (S.mode === 'system' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
@@ -3054,7 +3168,7 @@ async function openDashboard(pro) {
 /* ---------- actions ---------- */
 const busy = (sel, on, label) => { const b = $(sel); if (b) { b.disabled = on; if (label) b.textContent = label; } };
 const ACT = {
-  tab: id => { S.tab = id; render(); refresh(); },
+  tab: id => { if (id !== 'video') S.pv = null; S.tab = id; render(); refresh(); },
   retry: () => { S.ready[S.tab] = 0; render(true); refresh(); },
   amode: id => { S.authMode = id; showAuth(); },
   settings: () => openSettingsHub(),
@@ -3123,6 +3237,77 @@ const ACT = {
     p.adl = v; p.dl = true; closeSheet(); toast(v ? 'People can now save this' : 'Saving turned off');
   },
   search: () => openSearch(),
+  repost: id => { const p = findPost(id); if (!p) return; if (S.myReposts.has(repKey(p))) return unrepostKey(repKey(p)); S.repostVid = null; return ACT.repost_old(id); },
+  unrepost: id => { const p = findPost(id); if (p) unrepostKey(repKey(p)); },
+  vrepost: id => {
+    const v = (S.pv && S.pv.id === id) ? S.pv : S.videos.find(x => x.id === id); if (!v) return; closeSheet();
+    if (v.pv) return ACT.repost(v.postId);
+    if (S.myReposts.has('v:' + id)) return unrepostKey('v:' + id);
+    S.repostVid = id; S.repostId = null; setTimeout(repostSheet, 60);
+  },
+  repostgo: async () => {
+    const id = S.repostId, vid = S.repostVid; if (!id && !vid) return; busy('#rpb', true, '...');
+    const row = { user_id: S.user.id, content: (($('#rpt') || {}).value || '').trim(), visibility: 'public' }; if (vid) row.repost_video_id = vid; else row.repost_of = id;
+    const { data, error } = await sb.from('posts').insert(row).select('id').single();
+    if (error) { busy('#rpb', false, 'Repost to my profile'); return toast('Could not repost'); }
+    S.myReposts.set(vid ? 'v:' + vid : 'p:' + id, data.id); S.repostVid = null; closeSheet(); toast('Reposted to your profile'); try { await loadFeed(); } catch (e) {} render(true);
+  },
+  vlike: async (id, el) => {
+    if (S.pv && S.pv.id === id) {
+      const v = S.pv, p = findPost(v.postId); if (!p) return; await ACT.like(v.postId); v.liked = !!p.react; v.likes = p.likes;
+      const b = document.querySelector('[data-lk="' + id + '"]'); if (b) { b.classList.toggle('on', v.liked); const n = b.querySelector('.n'); if (n) n.textContent = v.likes; } return;
+    }
+    return ACT.vlike_old(id, el);
+  },
+  vshare: (id, el) => { if (S.pv && S.pv.id === id) return ACT.share(S.pv.postId); return ACT.vshare_old(id, el); },
+  vreward: id => { const v = S.videos.find(x => x.id === id); if (!v) return; closeSheet(); setTimeout(() => openGift(v.uid, 'video', v.id), 60); },
+  pvplay: (id, el) => {
+    const p = findPost(id); if (!p) return; const m = (p.media || [])[+el.dataset.i || 0]; if (!m) return;
+    S.pv = { id: 'p' + p.id + '_' + (+el.dataset.i || 0), uid: p.uid, url: m.url, cap: p.text || '', views: 0, likes: p.likes, liked: !!p.react, cc: p.cm.length, dl: !!p.dl, postId: p.id, at: p.ts, pv: true };
+    S.vmode = 'all'; S.tab = 'video'; S.ready.video = 1; render(); if (!S.videos.length) loadVideos().then(() => render(true)).catch(() => {});
+  },
+  mhide: async id => {
+    const m = msgOf(id); closeSheet(); if (!m) return; const { error } = await sb.from('message_hides').upsert({ user_id: S.user.id, message_id: m.id }); if (error) return toast('Could not delete');
+    S.mhide.add(m.id); paintMsgs(curThread()); toast('Deleted for you');
+  },
+  gmhide: async id => {
+    const m = S.g && S.g.msgs.find(x => String(x.id) === String(id)); closeSheet(); if (!m) return; const { error } = await sb.from('group_message_hides').upsert({ user_id: S.user.id, message_id: m.id }); if (error) return toast('Could not delete');
+    S.gmhide.add(m.id); paintGroupMsgs(); toast('Deleted for you');
+  },
+  dmdel: async (id, el) => {
+    const everyone = el.dataset.e === '1'; if (everyone && !confirm('This removes your messages for both of you. Continue?')) return; closeSheet();
+    const { error } = await sb.rpc('delete_dm_thread', { p_peer: id, p_everyone: everyone }); if (error) return toast('Could not delete the chat');
+    const t = S.threads.find(x => x.id === id); if (t) { t.msgs.forEach(m => { if (m.id) S.mhide.add(m.id); if (everyone && m.me) { m.del = true; m.t = ''; } }); }
+    const l = $('#clist'); if (l) l.innerHTML = chatRows(chatFilter()); toast('Chat deleted');
+  },
+  gchatme: async id => { closeSheet(); const { error } = await sb.rpc('hide_group_chat', { p_group: id }); if (error) return toast('Could not delete the chat'); S.gmhide = new Set(S.gmhide); await loadGroupChats(); toast('Chat deleted for you'); },
+  gchatall: async id => { if (!confirm('Delete every message in this group for everyone?')) return; closeSheet(); const { error } = await sb.rpc('clear_group_chat', { p_group: id }); if (error) return toast((error.message || 'Could not delete').replace(/^.*?:\s*/, '')); await loadGroupChats(); toast('Chat deleted for everyone'); },
+  gmedia: () => { let i = $('#gfile'); if (!i) { i = document.createElement('input'); i.type = 'file'; i.id = 'gfile'; i.accept = 'image/*,video/*,audio/*'; i.hidden = true; document.body.appendChild(i); } i.click(); },
+  gvoice: () => openRecorder('audio', f => sendGroupMedia(f)),
+  gvideo: () => openRecorder('video', f => sendGroupMedia(f)),
+  vmsg: () => { closeSheet(); setTimeout(() => openRecorder('video', f => sendAttachment(f)), 60); },
+  rcom: id => { const el = $('#ci' + id); if (el) S.cdraft[id] = el.value; openRecorder('video', f => { S.cmedia[id] = { file: f, type: 'video' }; repaint(); }); },
+  precv: () => openRecorder('video', f => addPostFile(f, 'video')),
+  preca: () => openRecorder('audio', f => addPostFile(f, 'audio')),
+  rcx: () => closeRecorder(),
+  rcflip: () => { const R = S.rcv; if (!R || R.state === 'rec') return; R.facing = R.facing === 'user' ? 'environment' : 'user'; startRecStream(); },
+  rcgo: () => {
+    const R = S.rcv; if (!R || !R.stream) return;
+    if (R.state === 'rec') { stopRecording(); return; }
+    const mime = recMime(R.kind); let rec; try { rec = new MediaRecorder(R.stream, mime ? { mimeType: mime } : undefined); } catch (e) { return toast('Recording is not supported here'); }
+    R.rec = rec; R.chunks = [];
+    rec.ondataavailable = e => { if (e.data && e.data.size) R.chunks.push(e.data); };
+    rec.onstop = () => { clearInterval(R.timer); R.blob = new Blob(R.chunks, { type: rec.mimeType || mime || (R.kind === 'video' ? 'video/webm' : 'audio/webm') }); if (R.blob.size < 800) { R.state = 'idle'; toast('Nothing was recorded'); paintRecorder(); return; } R.url = URL.createObjectURL(R.blob); R.state = 'done'; try { R.stream.getTracks().forEach(t => t.stop()); } catch (e) {} paintRecorder(); };
+    R.secs = 0; R.state = 'rec'; rec.start(); paintRecorder();
+    R.timer = setInterval(() => { R.secs++; const t = $('#rct'); if (t) t.textContent = fmtSecs(R.secs) + ' / ' + fmtSecs(R.max); if (R.secs >= R.max) stopRecording(); }, 1000);
+  },
+  rcretry: () => { const R = S.rcv; if (!R) return; if (R.url) URL.revokeObjectURL(R.url); R.url = null; R.blob = null; R.state = 'idle'; R.secs = 0; startRecStream(); },
+  rcsend: () => {
+    const R = S.rcv; if (!R || !R.blob) return; const base = (R.blob.type || '').split(';')[0] || (R.kind === 'video' ? 'video/webm' : 'audio/webm'), ext = base.indexOf('mp4') >= 0 ? (R.kind === 'video' ? 'mp4' : 'm4a') : base.indexOf('ogg') >= 0 ? 'ogg' : 'webm';
+    const file = new File([R.blob], (R.kind === 'video' ? 'video-message.' : 'voice-message.') + ext, { type: base }), cb = R.cb; closeRecorder(); if (cb) cb(file);
+  },
+  evview: id => { const L = S.evm || []; const items = L.map(x => ({ type: x.type, url: x.url })); if (items.length) openViewer(items, +id || 0, true); },
+  evmdel: async id => { if (!confirm('Delete this photo or video?')) return; const { error } = await sb.from('event_media').delete().eq('id', +id); if (error) return toast('Could not delete'); toast('Deleted'); if (S.ev) paintEventMedia(S.ev.id, true); },
   vclike: async id => { const c = videoComment(id); if (c) await setCReaction(c, c.my ? null : '❤️', 'v'); },
   creact: async (id, el) => { const bar = $('#rxbar'); if (bar) bar.remove(); const e = el.dataset.e, v = el.dataset.k === 'v', c = v ? videoComment(id) : postComment(el); if (c) await setCReaction(c, c.my === e ? null : e, v ? 'v' : 'p'); },
   vcreply: id => { const c = videoComment(id), i = $('#vci'); if (!c || !i) return; i.value = '@' + c.w + ' '; i.focus(); },
@@ -3169,23 +3354,26 @@ const ACT = {
   cmt: id => { S.cmOpen = +id; paintComments(); },
   cpclose: () => closeCpanel(),
   cexp: id => { const c = +id; if (S.cmExp.has(c)) S.cmExp.delete(c); else S.cmExp.add(c); if (S.cmOpen) paintComments(); else repaint(); },
-  vcmt: async id => { S.vcOpen = id; S.cmOpen = null; paintVPanel(); await paintVComments(id); },
+  vcmt: async id => { if (S.pv && S.pv.id === id) return ACT.cmt(S.pv.postId); S.vcOpen = id; S.cmOpen = null; paintVPanel(); await paintVComments(id); },
   vfeed: id => { S.vmode = id; S.ready.video = 0; render(true); loadVideos().then(() => render(true)).catch(() => toast('Could not load videos')); },
   vsearch: () => openVideoSearch(''),
   vplaysearch: id => { $('#over').innerHTML = ''; S.ovStack.length = 0; setPageKey = null; ACT.watch(id); },
   msearch: () => { const i = $('#q'); if (i) { try { i.scrollIntoView({ block: 'center' }); } catch (e) {} i.focus(); } },
   myshop: () => openStore(S.user.id),
   vmore: id => {
-    const v = S.videos.find(x => x.id === id); if (!v) return; const own = v.uid === S.user.id;
+    const v = (S.pv && S.pv.id === id) ? S.pv : S.videos.find(x => x.id === id); if (!v) return; const own = v.uid === S.user.id;
     sheet(`<h2>Video options</h2>
-      <button class="optrow" data-a="vq" data-id="${v.id}">🎞️ Video quality</button>
-      <button class="optrow" data-a="vdl2" data-id="${v.id}">⬇️ Download</button>
-      <button class="optrow" data-a="vcc" data-id="${v.id}">💬 Captions</button>
+      ${v.pv ? '' : `<button class="optrow" data-a="vq" data-id="${v.id}">🎞️ Video quality</button>`}
+      ${v.dl || own ? `<button class="optrow" data-a="vdl2" data-id="${v.id}">⬇️ Download</button>` : ''}
+      ${v.pv ? '' : `<button class="optrow" data-a="vcc" data-id="${v.id}">💬 Captions</button>`}
       <button class="optrow" data-a="vspeedmenu">⏩ Speed <span class="ls">${S.rate}x</span></button>
       <button class="optrow" data-a="vauto">⏭️ Auto-scroll <span class="ls">${S.vauto ? 'On' : 'Off'}</span></button>
       <button class="optrow" data-a="vpip" data-id="${v.id}">🖼️ Picture-in-picture</button>
       <button class="optrow" data-a="vbg">🎧 Background audio <span class="ls">${S.bgAudio ? 'On' : 'Off'}</span></button>
-      ${own ? `<button class="optrow red" data-a="vdel" data-id="${v.id}">🗑️ Delete video</button>` : `<button class="optrow" data-a="vint" data-id="${v.id}" data-v="1">👍 Interested</button><button class="optrow" data-a="vint" data-id="${v.id}" data-v="0">🙈 Not interested</button><button class="optrow red" data-a="rep" data-t="video" data-id="${v.id}" data-o="${v.uid}">🚩 Report video</button><button class="optrow red" data-a="block" data-id="${v.uid}">Block ${esc(nameOf(v.uid))}</button>`}`);
+      ${own ? (v.pv ? `<button class="optrow red" data-a="pdel" data-id="${v.postId}">🗑️ Delete post</button>` : `<button class="optrow red" data-a="vdel" data-id="${v.id}">🗑️ Delete video</button>`)
+        : `${v.pv ? '' : `<button class="optrow" data-a="vreward" data-id="${v.id}">🎁 Send a reward</button>`}<button class="optrow" data-a="vrepost" data-id="${v.id}">${S.myReposts.has(v.pv ? repKey(findPost(v.postId) || { id: v.postId }) : 'v:' + v.id) ? '↩ Un-repost' : '🔁 Repost'}</button>
+        ${v.pv ? '' : `<button class="optrow" data-a="vint" data-id="${v.id}" data-v="1">👍 Interested</button><button class="optrow" data-a="vint" data-id="${v.id}" data-v="0">🙈 Not interested</button>`}
+        <button class="optrow red" data-a="rep" data-t="${v.pv ? 'post' : 'video'}" data-id="${v.pv ? v.postId : v.id}" data-o="${v.uid}">🚩 Report</button><button class="optrow red" data-a="block" data-id="${v.uid}">Block ${esc(nameOf(v.uid))}</button>`}`);
   },
   vdl2: id => { const v = S.videos.find(x => x.id === id); if (!v) return; if (!v.dl && v.uid !== S.user.id) return toast('The creator turned off downloads for this video'); closeSheet(); downloadMedia({ type: 'video', url: v.url }); },
   vq: id => {
@@ -3534,6 +3722,7 @@ const ACT = {
     sheet(`<div class="dm">${l.media ? media(l.media, '') : `<div class="ph" style="--h:${l.h}"></div>`}</div>
       <h2>${esc(l.title)}</h2><div class="big">${priceMain}</div>
       ${tiers.length ? `<div class="tiers"><b>Quantity prices</b>${tiers.map(t => `<div><span>${t.min_qty}+ items</span><b>${fmt(t.price, l.cur)} each</b></div>`).join('')}</div>` : ''}
+      ${l.at ? `<div class="ls">Posted ${esc(fmtDate(l.at))}</div>` : ''}
       <div class="dots" style="margin:6px 0">${modes.map(m => `<span class="pbadge">${m}</span>`).join('')}</div>
       <div class="note"><b>${OPT[l.opt] || esc(l.opt)}.</b> ${info}</div>
       ${rows.length ? `<div class="specs">${rows.map(([k, v]) => `<div><span>${esc(k)}</span><b>${esc(String(v))}</b></div>`).join('')}</div>` : ''}
@@ -3904,7 +4093,7 @@ const ACT = {
     const mine = m.uid === S.user.id, admin = !!(G.me && G.me.status === 'active' && (G.me.role === 'owner' || G.me.role === 'admin')), textual = m.t && !SHARE_RE.test(m.t);
     sheet(`<h2>Message</h2>${textual ? `<button class="optrow" data-a="gmcopy" data-id="${m.id}">Copy text</button>` : ''}
       ${mine && textual ? `<button class="optrow" data-a="gmedit" data-id="${m.id}">Edit</button>` : ''}
-      ${mine || admin ? `<button class="optrow red" data-a="gmdel" data-id="${m.id}">Delete</button>` : ''}`);
+      ${mine || admin ? `<button class="optrow red" data-a="gmhide" data-id="${m.id}">🗑️ Delete for me</button><button class="optrow red" data-a="gmdel" data-id="${m.id}">🗑️ Delete for everyone</button>` : ''}`);
   },
   gmcopy: id => { const m = S.g && S.g.msgs.find(x => String(x.id) === String(id)); closeSheet(); if (m) { try { navigator.clipboard.writeText(m.t); } catch (e) {} toast('Copied'); } },
   gmedit: id => {
@@ -4075,6 +4264,7 @@ const ACT = {
       sheet(`<h2>Post options</h2>
         <button class="optrow" data-a="psave" data-id="${p.id}">${S.savedPosts.has(p.id) ? 'Remove from saved' : 'Save post'}</button>
         <button class="optrow" data-a="ptr" data-id="${p.id}">See translation</button>
+        ${S.myReposts.has(repKey(p)) ? `<button class="optrow" data-a="unrepost" data-id="${p.id}">Un-repost</button>` : ''}
         <button class="optrow" data-a="pint" data-id="${p.id}" data-v="1">👍 Interested</button>
         <button class="optrow" data-a="pint" data-id="${p.id}" data-v="0">🙈 Not interested</button>
         <button class="optrow" data-a="user" data-id="${p.uid}">View profile</button>
@@ -4117,7 +4307,7 @@ const ACT = {
     document.querySelectorAll('.vid video').forEach(v => { v.muted = S.muted; });
     document.querySelectorAll('.vmute').forEach(b => { b.innerHTML = S.muted ? I.mute : I.volume; });
   },
-  vlike: async id => {
+  vlike_old: async id => {
     const v = S.videos.find(x => x.id === id), was = v.liked;
     v.liked = !was; v.likes += was ? -1 : 1; paintLike(v);
     const q = was ? sb.from('video_likes').delete().eq('video_id', id).eq('user_id', S.user.id) : sb.from('video_likes').insert({ video_id: id, user_id: S.user.id });
@@ -4135,7 +4325,7 @@ const ACT = {
     if (error) return toast('Could not comment');
     el.value = ''; await paintVComments(id);
   },
-  vshare: id => openShare('video', id),
+  vshare_old: id => openShare('video', id),
   vupload: () => {
     S.allowDl = false;
     sheet(`<h2>New video</h2>
@@ -4201,18 +4391,12 @@ const ACT = {
     const { error } = await sb.from('posts').update({ allowed_reactions: allowed }).eq('id', p.id).eq('user_id', S.user.id);
     if (error) return toast('Could not save'); p.allowed = allowed; closeSheet(); repaint(); toast('Saved');
   },
-  repost: id => {
+  repost_old: id => {
     closeSheet(); const p = findPost(id); if (!p) return;
     const base = p.repostOf ? p.orig : p; if (!base) return toast('This post is not available');
     if (!p.repostOf && p.vis !== 'public') return toast('Only public posts can be reposted');
     S.repostId = p.repostOf || p.id;
     setTimeout(() => sheet(`<h2>Repost</h2><div class="fld"><textarea id="rpt" maxlength="500" placeholder="Add a comment (optional)"></textarea></div><button class="btn" id="rpb" data-a="repostgo">Repost to my profile</button>`), 60);
-  },
-  repostgo: async () => {
-    const id = S.repostId; if (!id) return; busy('#rpb', true, '...');
-    const { error } = await sb.from('posts').insert({ user_id: S.user.id, content: ($('#rpt').value || '').trim(), repost_of: id, visibility: 'public' });
-    if (error) { busy('#rpb', false, 'Repost to my profile'); return toast('Could not repost'); }
-    closeSheet(); toast('Reposted to your profile'); try { await loadFeed(); } catch (e) {} render(true);
   },
   txt: async (id, el) => { const k = el.dataset.k; if (S.txon.has(k)) { S.txon.delete(k); return txRepaint(); } if (!S.tlang) { S.tlang = defTlang(); saveSettings(); } doTranslate(k); },
   txchg: () => openTxLang(),
@@ -4305,7 +4489,7 @@ const ACT = {
       ${textual ? `<button class="optrow" data-a="mcopy" data-id="${m.id}">Copy text</button>` : ''}
       <button class="optrow" data-a="mfwd" data-id="${m.id}">Forward</button>
       ${m.me && !m.media && textual ? `<button class="optrow" data-a="medit" data-id="${m.id}">Edit</button>` : ''}
-      ${m.me ? `<button class="optrow red" data-a="mdel" data-id="${m.id}">Delete</button>` : ''}`);
+      <button class="optrow red" data-a="mhide" data-id="${m.id}">🗑️ Delete for me</button>${m.me ? `<button class="optrow red" data-a="mdel" data-id="${m.id}">🗑️ Delete for everyone</button>` : ''}`);
   },
   mreply: id => { const m = msgById(id); closeSheet(); if (!m) return; S.reply = { id: m.id, me: m.me }; S.editM = null; paintCbar(); const i = $('#mi'); if (i) i.focus(); },
   mcopy: id => { const m = msgById(id); closeSheet(); if (m && m.t) { try { navigator.clipboard.writeText(m.t); } catch (e) {} toast('Copied'); } },
@@ -4405,6 +4589,7 @@ const ACT = {
       <div class="fld"><label class="up"><input type="file" id="files" accept="image/*,video/mp4,video/webm,video/quicktime" multiple hidden><span id="prev">${I.plus}</span><span id="addtxt">Add photos or videos</span></label><div class="thumbs" id="thumbs"></div></div>
       <div class="fld"><label>Who can see this post?</label><div class="seg c3" id="pvs">${[['public', 'Public'], ['friends', 'Friends'], ['private', 'Only me']].map(([k, l]) => `<button data-a="pvsel" data-id="${k}" class="${k === S.postVis ? 'on' : ''}">${l}</button>`).join('')}</div></div>
       <div class="srow" style="padding:6px 0 14px;border:0"><div><div class="lbl">Allow saving</div><div class="ls">Let people save your photos and videos to their phone</div></div><button class="switch" id="dlsw" role="switch" aria-checked="false" data-a="tgldl"><i></i></button></div>
+      <div class="fld"><label>Record a message</label><div class="dots"><button class="chip" type="button" data-a="precv">🎥 Video message</button><button class="chip" type="button" data-a="preca">🎤 Voice message</button></div></div>
       <div class="fld"><label for="pplace">Place (optional)</label><div style="display:flex;gap:8px"><input id="pplace" maxlength="80" placeholder="City or area" style="flex:1"><button class="btn alt sm2" type="button" data-a="useplace">📍 My area</button></div><div class="ls">Never shared automatically. Only the city name is saved, not your exact location.</div></div>
       <div class="fld"><label for="pprod">Attach one of your listings (optional)</label><select id="pprod"><option value="">None</option></select></div>
       <div class="srow" style="padding:4px 0 10px;border:0"><div><div class="lbl">Paid promotion</div><div class="ls">Turn on if you were paid or received free products to post this</div></div><button class="switch" id="ppromo" role="switch" aria-checked="false" data-a="tglpromo"><i></i></button></div>
@@ -4461,7 +4646,7 @@ document.addEventListener('click', e => {
   const rb = $('#rxbar'); if (rb && !e.target.closest('#rxbar')) rb.remove();
   const a = e.target.closest('[data-a]'); if (!a) return;
   if (a.classList.contains('bd') && e.target !== a) return;
-  if ((a.dataset.a === 'like' || a.dataset.a === 'rxtap' || a.dataset.a === 'clike' || a.dataset.a === 'vclike') && S.lpFired) { S.lpFired = false; return; }
+  if ((a.dataset.a === 'like' || a.dataset.a === 'rxtap' || a.dataset.a === 'clike' || a.dataset.a === 'vclike' || a.dataset.a === 'thread' || a.dataset.a === 'gopen') && S.lpFired) { S.lpFired = false; return; }
   if (a.dataset.a === 'mmenu' && e.target.closest('audio,video')) return;
   if ((a.dataset.a === 'sprev' || a.dataset.a === 'snext') && S.sv && S.sv.held) { S.sv.held = false; return; }
   const f = ACT[a.dataset.a]; if (f) f(a.dataset.id, a);
@@ -4610,6 +4795,7 @@ function layers() {
   if (on('live')) L.push('live');
   if (S.gc) L.push('gcall');
   if ($('#cpanel')) L.push('cpanel');
+  if ($('#recov')) L.push('recov');
   if (on('viewer')) L.push('viewer');
   const ov = $('#over') && $('#over').innerHTML.trim() ? Math.max(1, S.ovStack.length) : 0;
   for (let i = 0; i < ov; i++) L.push('over');
@@ -4628,6 +4814,7 @@ function closeTop(name) {
   if (name === 'live') { if (S.live && S.live.role === 'viewer') { leaveLive(); return true; } toast('Tap End to finish your live'); return false; }
   if (name === 'gcall') { toast('Tap Leave to leave the call'); return false; }
   if (name === 'cpanel') { closeCpanel(); return true; }
+  if (name === 'recov') { closeRecorder(); return true; }
   if (name === 'viewer') { closeViewer(); return true; }
   if (name === 'over') {
     clearInterval(S.gpoll); clearInterval(S.poll); S.openThread = null; stopRecCancel(); S.reply = null; S.editM = null;
